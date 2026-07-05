@@ -13,9 +13,20 @@ Use these commands in the Hostinger Node.js app settings:
 corepack enable && corepack pnpm install --frozen-lockfile
 ```
 
+If Hostinger's pnpm version rejects the freshly cloned upstream lockfile with
+`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`, inspect that `pnpm-lock.yaml` still
+matches the trusted GitHub commit and rerun:
+
+```sh
+corepack enable && corepack pnpm install --frozen-lockfile --trust-lockfile
+```
+
 ```sh
 corepack enable && corepack pnpm build
 ```
+
+For low-memory Node.js hosts, set `NODE_OPTIONS=--max-old-space-size=8192` in
+the Hostinger environment before running the build.
 
 ```sh
 node hostinger-start.mjs
