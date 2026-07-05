@@ -12,6 +12,7 @@
     "build": "vite build",
     "start:all": "concurrently \"hermes gateway run\" \"pnpm dev\"",
     "start": "node server-entry.js",
+    "start:hostinger": "node hostinger-start.mjs",
     "start:dev": "vite dev",
     "preview": "vite preview",
     "test": "vitest run",
@@ -25,6 +26,9 @@
     "electron:build:mac": "pnpm build && pnpm electron:bundle-server && electron-builder --mac --config electron-builder.config.cjs",
     "electron:build:win": "pnpm build && pnpm electron:bundle-server && electron-builder --win --config electron-builder.config.cjs",
     "electron:bundle-server": "esbuild dist/server/server.js --bundle --platform=node --format=cjs --outfile=electron/server-bundle.cjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "@base-ui/react": "^1.1.0",

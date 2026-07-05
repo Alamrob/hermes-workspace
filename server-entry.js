@@ -1,11 +1,12 @@
 import { createServer } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { join, extname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import server from './dist/server/server.js'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const CLIENT_DIR = join(__dirname, 'dist', 'client')
+const startedAt = Date.now()
 
 // Content Security Policy — emitted as an HTTP response header on EVERY
 // response so the policy survives any edge body transformations (e.g.
@@ -39,11 +40,9 @@ const ALWAYS_HEADERS = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
 }
 
-const port = parseInt(process.env.PORT || '3000', 10)
 // Default HOST to localhost-only. Operators who want the workspace reachable
 // on a LAN / Tailscale / public surface must opt in explicitly with
 // HOST=0.0.0.0 *and* set CLAUDE_PASSWORD (enforced below). See #122.
-const host = process.env.HOST || '127.0.0.1'
 
 function isNonLoopbackHost(h) {
   if (!h) return false
@@ -54,7 +53,9 @@ function isNonLoopbackHost(h) {
   return true
 }
 
-if (isNonLoopbackHost(host)) {
+function validateRemoteBind(host) {
+  if (!isNonLoopbackHost(host)) return
+
   // Honor HERMES_PASSWORD (current name) with CLAUDE_PASSWORD as a back-compat
   // fallback for deployments configured pre-rename.
   const password = (
@@ -199,6 +200,33 @@ async function tryServeStatic(req, res) {
 }
 
 async function requestHandler(req, res) {
+  const url = new URL(
+    req.url || '/',
+    `http://${req.headers.host || 'localhost'}`,
+  )
+
+  if (url.pathname === '/api/health') {
+    const body = JSON.stringify({
+      ok: true,
+      phase: 'server-entry',
+      uptimeMs: Date.now() - startedAt,
+      deploymentMode: process.env.HERMES_DASHBOARD_URL
+        ? 'hermes-agent-full'
+        : process.env.HERMES_API_URL
+          ? 'portable-openai-compatible'
+          : 'unconfigured',
+    })
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+      Pragma: 'no-cache',
+      Expires: '0',
+    })
+    res.end(body)
+    return
+  }
+
   // Try static files first (client assets)
   if (req.method === 'GET' || req.method === 'HEAD') {
     const served = await tryServeStatic(req, res)
@@ -206,11 +234,6 @@ async function requestHandler(req, res) {
   }
 
   // Fall through to SSR handler
-  const url = new URL(
-    req.url || '/',
-    `http://${req.headers.host || 'localhost'}`,
-  )
-
   const headers = new Headers()
   for (const [key, value] of Object.entries(req.headers)) {
     if (value) headers.set(key, Array.isArray(value) ? value.join(', ') : value)
@@ -287,7 +310,7 @@ async function requestHandler(req, res) {
   }
 }
 
-function listenOn(bindHost) {
+function listenOn(bindHost, port) {
   const httpServer = createServer(requestHandler)
   httpServer.listen(port, bindHost, () => {
     console.log(`Hermes Workspace running at http://${bindHost}:${port}`)
@@ -295,13 +318,51 @@ function listenOn(bindHost) {
   return httpServer
 }
 
-listenOn(host)
+function adoptExistingServer(httpServer, bindHost, port) {
+  httpServer.removeAllListeners('request')
+  httpServer.on('request', requestHandler)
+  console.log(
+    `Hermes Workspace adopted existing server at http://${bindHost}:${port}`,
+  )
+  return httpServer
+}
 
-// Cloudflared remote-managed ingress currently points at http://localhost:10280.
-// On macOS, localhost may resolve to ::1 before 127.0.0.1; if Workspace only
-// listens on IPv4 loopback, tunneled requests intermittently fail with
-// `dial tcp [::1]:10280: connect: connection refused`. Keep the default
-// local-only security posture while also serving IPv6 loopback.
-if (host === '127.0.0.1') {
-  listenOn('::1')
+export function startServer(options = {}) {
+  const port = Number.parseInt(
+    String(options.port || process.env.PORT || '3000'),
+    10,
+  )
+  const host = options.host || process.env.HOST || '127.0.0.1'
+
+  validateRemoteBind(host)
+
+  const existingServer =
+    options.server ||
+    (process.env.HERMES_HOSTINGER_EARLY_LISTEN === 'true'
+      ? globalThis.__HERMES_WORKSPACE_HOSTINGER_EARLY_SERVER
+      : null)
+
+  if (existingServer) {
+    return [adoptExistingServer(existingServer, host, port)]
+  }
+
+  const servers = [listenOn(host, port)]
+
+  // Cloudflared remote-managed ingress currently points at http://localhost:10280.
+  // On macOS, localhost may resolve to ::1 before 127.0.0.1; if Workspace only
+  // listens on IPv4 loopback, tunneled requests intermittently fail with
+  // `dial tcp [::1]:10280: connect: connection refused`. Keep the default
+  // local-only security posture while also serving IPv6 loopback.
+  if (host === '127.0.0.1') {
+    servers.push(listenOn('::1', port))
+  }
+
+  return servers
+}
+
+const isDirectRun =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+
+if (isDirectRun) {
+  startServer()
 }
