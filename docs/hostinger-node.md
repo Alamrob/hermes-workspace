@@ -32,6 +32,15 @@ the Hostinger environment before running the build.
 node hostinger-start.mjs
 ```
 
+If Hostinger asks for a Node.js entry file instead of a start command, enter:
+
+```text
+hostinger-start.mjs
+```
+
+Do not put `node hostinger-start.mjs` in an entry-file field. Use the `node ...`
+form only when the field explicitly asks for a command.
+
 The `hostinger-start.mjs` entrypoint opens the assigned port immediately and
 serves diagnostic output on `/api/health` until the built app is ready. This is
 useful when Hostinger checks the port while dependencies, build output, or
