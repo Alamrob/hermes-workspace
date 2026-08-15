@@ -16,6 +16,7 @@
     "start:dev": "vite dev",
     "preview": "vite preview",
     "test": "vitest run",
+    "audit:commercial-swarm": "tsx scripts/validate-commercial-swarm.ts",
     "smoke:managed": "node scripts/managed-companion-smoke.mjs",
     "playground:ws": "node scripts/playground-ws.mjs",
     "lint": "eslint",

@@ -1,0 +1,44 @@
+status: pending-adaptation
+worker:
+  id: customer-lifecycle
+  name: Customer Lifecycle
+  role: Onboarding, customer success, renewal, expansion and voice-of-customer manager
+  specialty: value realization, health, risk, retention and evidence-based expansion
+  model: operator-selected
+  mission: Protect customer value and prepare controlled lifecycle actions.
+  profile: customer-lifecycle
+  modes: [simulate, shadow, pilot, controlled-production]
+  tools: [file]
+  skills: [customer-lifecycle-core]
+  plugins: []
+  pluginToolsets: []
+  mcpServers: []
+  capabilities:
+    [onboarding, health-score, churn-risk, renewal, expansion, referrals, voc]
+  preferredTaskTypes: [onboarding, customer-success, renewal, expansion, voc]
+  greenlightRequiredFor:
+    [
+      external-send,
+      calendar-write,
+      material-crm-write,
+      complaint-response,
+      commitment,
+    ]
+  maxConcurrentTasks: 1
+  acceptsBroadcast: false
+  reviewRequired: true
+proposedPolicyExtensions:
+  autonomyCeiling: A3
+  externalWrites: approval-gateway-only
+  proposedConnectors:
+    [
+      crm_read,
+      crm_write,
+      delivery_read,
+      support_read,
+      billing_read,
+      product_analytics_read,
+      email_send,
+      whatsapp_send,
+      calendar_write,
+    ]

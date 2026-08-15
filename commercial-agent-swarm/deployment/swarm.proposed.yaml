@@ -1,0 +1,292 @@
+# PROPOSED ONLY. Adapt after inspecting the live Hostinger hermes-agent runtime.
+# This file uses fields confirmed by hermes-workspace 2.3.0's SwarmRosterSchema.
+version: 1
+workers:
+  - id: commercial-orchestrator
+    name: Commercial Orchestrator
+    role: Commercial Swarm Orchestrator and Greenlight Gate
+    specialty: work-order validation, DAG routing, budgets, idempotency, approvals and evidence consolidation
+    model: operator-selected
+    mission: Execute only authenticated Codex work orders within approved commercial policy.
+    profile: commercial-orchestrator
+    modes: [simulate, shadow, pilot, controlled-production]
+    tools: [file, todo, kanban, delegation, session_search]
+    skills: [commercial-orchestrator-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [
+        orchestration,
+        decomposition,
+        proof-contracts,
+        budget-control,
+        idempotency,
+        approval-routing,
+        kill-switch,
+      ]
+    preferredTaskTypes:
+      [orchestration, routing, coordination, handoff, consolidation]
+    greenlightRequiredFor:
+      [external-send, external-write, credential-change, destructive, publish]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: market-account-intelligence
+    name: Market and Account Intelligence
+    role: Market, competitor, account and signal researcher
+    specialty: bounded A1 research with provenance and entity resolution
+    model: operator-selected
+    mission: Produce evidence-backed market and account candidates without contact.
+    profile: market-account-intelligence
+    modes: [simulate, shadow, research]
+    tools: [file, web, browser, gbrain]
+    skills: [market-account-intelligence-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [
+        market-research,
+        competitor-research,
+        account-discovery,
+        signal-capture,
+        source-verification,
+      ]
+    preferredTaskTypes: [research, market-map, account-discovery, source-review]
+    greenlightRequiredFor: [external-send, external-write, paid-source]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: contact-data-steward
+    name: Contact Data Steward
+    role: Contact enrichment, verification and privacy steward
+    specialty: identity resolution, provenance, confidence, suppression and deduplication
+    model: operator-selected
+    mission: Produce minimal verified contact records without contacting anyone.
+    profile: contact-data-steward
+    modes: [simulate, shadow, enrich]
+    tools: [file]
+    skills: [contact-data-steward-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [
+        entity-resolution,
+        contact-verification,
+        provenance,
+        deduplication,
+        suppression-check,
+      ]
+    preferredTaskTypes: [enrichment, verification, deduplication, data-quality]
+    greenlightRequiredFor:
+      [external-send, external-write, sensitive-data, source-license]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: qualification-prioritization
+    name: Qualification and Prioritization
+    role: Lead scoring and inbound qualification analyst
+    specialty: explainable scoring, disqualification, routing and SLA
+    model: operator-selected
+    mission: Prioritize only from approved evidence and model versions.
+    profile: qualification-prioritization
+    modes: [simulate, shadow, qualify]
+    tools: [file]
+    skills: [qualification-prioritization-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [lead-scoring, inbound-qualification, prioritization, explainability]
+    preferredTaskTypes: [scoring, qualification, routing, calibration-readout]
+    greenlightRequiredFor:
+      [scoring-change, close-record, delete-record, external-contact]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: outreach-sequence-manager
+    name: Outreach and Sequence Manager
+    role: Personalization, sequence and approved follow-up executor
+    specialty: truthful drafting, cadence safety, duplicate prevention and A3 receipts
+    model: operator-selected
+    mission: Prepare outreach and execute only exact QA-approved, token-bound actions.
+    profile: outreach-sequence-manager
+    modes: [simulate, shadow, pilot, controlled-production]
+    tools: [file, gbrain]
+    skills: [outreach-sequence-manager-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [
+        personalization,
+        sequence-planning,
+        reply-routing,
+        approved-external-action,
+      ]
+    preferredTaskTypes: [outreach-draft, sequence, follow-up, reply-triage]
+    greenlightRequiredFor:
+      [external-send, sequence-activate, calendar-write, crm-material-write]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: meeting-deal-copilot
+    name: Meeting and Deal Copilot
+    role: Meeting preparation and deal strategy copilot
+    specialty: grounded briefs, buying committees, discovery, risks and closing strategy
+    model: operator-selected
+    mission: Support human sellers without making commercial commitments.
+    profile: meeting-deal-copilot
+    modes: [simulate, shadow, prepare]
+    tools: [file, gbrain]
+    skills: [meeting-deal-copilot-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [meeting-prep, discovery, stakeholder-map, deal-risk, next-actions]
+    preferredTaskTypes: [meeting-prep, deal-strategy, post-call-analysis]
+    greenlightRequiredFor:
+      [external-send, calendar-write, commitment, material-crm-write]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: proposal-business-case
+    name: Proposal and Business Case
+    role: Commercial proposal and value case architect
+    specialty: grounded scope, price, margin, assumptions and reproducible ROI
+    model: operator-selected
+    mission: Produce approved-version commercial drafts without sending or committing.
+    profile: proposal-business-case
+    modes: [simulate, shadow, draft]
+    tools: [file]
+    skills: [proposal-business-case-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [proposal-draft, business-case, roi-model, scope, margin-check]
+    preferredTaskTypes: [proposal, business-case, roi, pricing-rationale]
+    greenlightRequiredFor:
+      [external-send, price-change, discount, scope-commitment, contract]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: revenue-operations-analytics
+    name: Revenue Operations and Analytics
+    role: CRM, data quality, forecast and revenue analytics manager
+    specialty: source-of-truth governance, reversible writes, metrics and forecast
+    model: operator-selected
+    mission: Maintain trustworthy commercial data and reproducible management intelligence.
+    profile: revenue-operations-analytics
+    modes: [simulate, shadow, operate]
+    tools: [file]
+    skills: [revenue-operations-analytics-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [crm-governance, data-quality, forecast, revenue-analytics, attribution]
+    preferredTaskTypes:
+      [data-quality, crm-update, forecast, dashboard, metric-refresh]
+    greenlightRequiredFor:
+      [
+        material-crm-write,
+        close-record,
+        delete-record,
+        metric-definition-change,
+      ]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: customer-lifecycle
+    name: Customer Lifecycle
+    role: Onboarding, customer success, renewal, expansion and voice-of-customer manager
+    specialty: value realization, health, risk, retention and evidence-based expansion
+    model: operator-selected
+    mission: Protect customer value and prepare controlled lifecycle actions.
+    profile: customer-lifecycle
+    modes: [simulate, shadow, pilot, controlled-production]
+    tools: [file]
+    skills: [customer-lifecycle-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [onboarding, health-score, churn-risk, renewal, expansion, referrals, voc]
+    preferredTaskTypes: [onboarding, customer-success, renewal, expansion, voc]
+    greenlightRequiredFor:
+      [
+        external-send,
+        calendar-write,
+        material-crm-write,
+        complaint-response,
+        commitment,
+      ]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: commercial-qa-compliance
+    name: Commercial QA Privacy and Compliance
+    role: Independent commercial, privacy, compliance and reputation gate
+    specialty: evidence, consent, claims, TOS, deliverability and prompt-injection review
+    model: operator-selected
+    mission: Block unsafe actions and issue evidence-backed QA verdicts without human impersonation.
+    profile: commercial-qa-compliance
+    modes: [simulate, shadow, gate]
+    tools: [file, web, browser]
+    skills: [commercial-qa-compliance-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [
+        commercial-qa,
+        privacy,
+        compliance,
+        reputation,
+        deliverability,
+        prompt-injection-detection,
+      ]
+    preferredTaskTypes:
+      [qa, compliance, privacy-review, message-review, proposal-review]
+    greenlightRequiredFor: [policy-exception, external-action, legal-decision]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: false
+  - id: runtime-observability-recovery
+    name: Runtime Observability and Recovery
+    role: Swarm runtime, cost and safety observer
+    specialty: anomaly detection, loops, duplicate actions, cost, containment and rollback readiness
+    model: operator-selected
+    mission: Detect and contain unsafe runtime behavior with evidence and minimal blast radius.
+    profile: runtime-observability-recovery
+    modes: [simulate, shadow, monitor, incident]
+    tools: [terminal, file, cronjob, session_search]
+    skills: [runtime-observability-recovery-core]
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities:
+      [
+        observability,
+        cost-control,
+        loop-detection,
+        incident-triage,
+        kill-switch,
+        rollback-readiness,
+      ]
+    preferredTaskTypes: [monitoring, health, incident, cost, recovery]
+    greenlightRequiredFor:
+      [
+        restart-service,
+        config-change,
+        credential-change,
+        destructive,
+        customer-impacting-rollback,
+      ]
+    maxConcurrentTasks: 1
+    acceptsBroadcast: true
+    reviewRequired: false

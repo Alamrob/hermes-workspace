@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/schemas/commercial-swarm/proposal-business-case/output.schema.json",
+  "allOf": [
+    { "$ref": "../../contracts/agent-result.schema.json" },
+    { "properties": { "agent_id": { "const": "proposal-business-case" } } }
+  ]
+}

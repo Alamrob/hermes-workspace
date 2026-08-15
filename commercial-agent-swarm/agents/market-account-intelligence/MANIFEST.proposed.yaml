@@ -1,0 +1,33 @@
+status: pending-adaptation
+worker:
+  id: market-account-intelligence
+  name: Market and Account Intelligence
+  role: Market, competitor, account and signal researcher
+  specialty: bounded A1 research with provenance and entity resolution
+  model: operator-selected
+  mission: Produce evidence-backed market and account candidates without contact.
+  profile: market-account-intelligence
+  modes: [simulate, shadow, research]
+  tools: [file, web, browser, gbrain]
+  skills: [market-account-intelligence-core]
+  plugins: []
+  pluginToolsets: []
+  mcpServers: []
+  capabilities:
+    [
+      market-research,
+      competitor-research,
+      account-discovery,
+      signal-capture,
+      source-verification,
+    ]
+  preferredTaskTypes: [research, market-map, account-discovery, source-review]
+  greenlightRequiredFor:
+    [external-send, external-write, download-execute, paid-source]
+  maxConcurrentTasks: 1
+  acceptsBroadcast: false
+  reviewRequired: true
+proposedPolicyExtensions:
+  autonomyCeiling: A1
+  externalWrites: deny
+  internetAccess: allowlisted-read-only

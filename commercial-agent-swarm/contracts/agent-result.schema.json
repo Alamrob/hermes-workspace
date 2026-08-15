@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/schemas/commercial-swarm/agent-result.schema.json",
+  "title": "Hermes Commercial Agent Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mission_id",
+    "trace_id",
+    "assignment_id",
+    "agent_id",
+    "status",
+    "summary",
+    "facts",
+    "inferences",
+    "actions_taken",
+    "external_changes",
+    "evidence",
+    "artifacts",
+    "metrics",
+    "cost",
+    "errors",
+    "risks",
+    "pending_approvals",
+    "recommended_next_actions",
+    "started_at",
+    "finished_at"
+  ],
+  "properties": {
+    "mission_id": { "type": "string", "format": "uuid" },
+    "trace_id": { "type": "string", "format": "uuid" },
+    "assignment_id": { "type": "string", "format": "uuid" },
+    "agent_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+    "status": {
+      "enum": ["completed", "partial", "blocked", "failed", "approval_required"]
+    },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "facts": { "type": "array", "items": { "$ref": "#/$defs/fact" } },
+    "inferences": { "type": "array", "items": { "$ref": "#/$defs/inference" } },
+    "actions_taken": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+    "external_changes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/externalChange" }
+    },
+    "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+    "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["number", "string", "boolean", "null"]
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "currency",
+        "llm",
+        "tools",
+        "total",
+        "input_tokens",
+        "output_tokens"
+      ],
+      "properties": {
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "llm": { "type": "number", "minimum": 0 },
+        "tools": { "type": "number", "minimum": 0 },
+        "total": { "type": "number", "minimum": 0 },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "errors": { "type": "array", "items": { "$ref": "#/$defs/error" } },
+    "risks": { "type": "array", "items": { "$ref": "#/$defs/risk" } },
+    "pending_approvals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/pendingApproval" }
+    },
+    "recommended_next_actions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_type",
+        "source_name",
+        "locator",
+        "obtained_at",
+        "verification_method"
+      ],
+      "properties": {
+        "source_type": {
+          "enum": [
+            "crm",
+            "database",
+            "public_web",
+            "api",
+            "document",
+            "email",
+            "message",
+            "meeting",
+            "user_provided",
+            "system_log",
+            "derived"
+          ]
+        },
+        "source_name": { "type": "string", "minLength": 1 },
+        "locator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "URL or stable identifier; never a secret."
+        },
+        "obtained_at": { "type": "string", "format": "date-time" },
+        "last_verified_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "verification_method": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fact_id", "statement", "source", "confidence", "freshness"],
+      "properties": {
+        "fact_id": { "type": "string", "minLength": 1 },
+        "statement": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/source" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "freshness": { "enum": ["current", "stale", "unknown"] },
+        "conflicts_with": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "inference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "inference_id",
+        "statement",
+        "based_on_fact_ids",
+        "confidence",
+        "validation_needed"
+      ],
+      "properties": {
+        "inference_id": { "type": "string", "minLength": 1 },
+        "statement": { "type": "string", "minLength": 1 },
+        "based_on_fact_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "validation_needed": { "type": "string", "minLength": 1 }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "action_type",
+        "tool",
+        "started_at",
+        "finished_at",
+        "outcome",
+        "idempotency_key",
+        "external"
+      ],
+      "properties": {
+        "action_id": { "type": "string", "minLength": 1 },
+        "action_type": { "type": "string", "minLength": 1 },
+        "tool": { "type": "string", "minLength": 1 },
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "outcome": { "enum": ["success", "no_change", "failed", "uncertain"] },
+        "idempotency_key": { "type": "string", "minLength": 8 },
+        "external": { "type": "boolean" },
+        "approval_id": { "type": ["string", "null"], "format": "uuid" }
+      }
+    },
+    "externalChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_hash",
+        "system",
+        "record_or_target",
+        "change",
+        "receipt",
+        "reversible",
+        "approval_id"
+      ],
+      "properties": {
+        "action_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "system": { "type": "string", "minLength": 1 },
+        "record_or_target": { "type": "string", "minLength": 1 },
+        "change": { "type": "string", "minLength": 1 },
+        "receipt": { "type": "string", "minLength": 1 },
+        "reversible": { "type": "boolean" },
+        "approval_id": { "type": "string", "format": "uuid" },
+        "rollback_reference": { "type": ["string", "null"] }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "kind",
+        "source",
+        "content_hash",
+        "summary",
+        "confidence"
+      ],
+      "properties": {
+        "evidence_id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "enum": [
+            "source_capture",
+            "query_result",
+            "api_response",
+            "screenshot",
+            "document",
+            "receipt",
+            "log",
+            "calculation"
+          ]
+        },
+        "source": { "$ref": "#/$defs/source" },
+        "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "summary": { "type": "string", "minLength": 1 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "artifact_ref": { "type": ["string", "null"] }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifact_id",
+        "name",
+        "uri",
+        "content_hash",
+        "version",
+        "classification"
+      ],
+      "properties": {
+        "artifact_id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "uri": { "type": "string", "minLength": 1 },
+        "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "version": { "type": "string", "minLength": 1 },
+        "classification": {
+          "enum": ["public", "internal", "confidential", "restricted"]
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "recoverable", "attempts"],
+      "properties": {
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "recoverable": { "type": "boolean" },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "next_safe_step": { "type": ["string", "null"] }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "risk_id",
+        "category",
+        "description",
+        "severity",
+        "likelihood",
+        "control"
+      ],
+      "properties": {
+        "risk_id": { "type": "string", "minLength": 1 },
+        "category": {
+          "enum": [
+            "commercial",
+            "privacy",
+            "compliance",
+            "security",
+            "reputation",
+            "deliverability",
+            "data_quality",
+            "cost",
+            "runtime"
+          ]
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "severity": { "enum": ["low", "medium", "high", "critical"] },
+        "likelihood": { "enum": ["low", "medium", "high"] },
+        "control": { "type": "string", "minLength": 1 }
+      }
+    },
+    "pendingApproval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_hash",
+        "action_type",
+        "reason",
+        "subject",
+        "expires_requested_at"
+      ],
+      "properties": {
+        "action_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "action_type": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string", "minLength": 1 },
+        "expires_requested_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

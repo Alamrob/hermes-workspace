@@ -1,0 +1,19 @@
+status: pending-adaptation
+default: deny
+autonomyCeiling: A2
+confirmedLogicalTools:
+  file: { read: true, writeMissionArtifacts: true }
+proposedAdapters:
+  crm_read: { read: true, write: false }
+  policy_store_read: { read: true, write: false }
+  control_db: { read: true, writeDerivedScore: true }
+  crm_notes_write: { read: false, writeReversible: true, compareAndSwap: true }
+deniedActions:
+  [
+    external-contact,
+    scoring-model-change,
+    suppression-override,
+    close-record,
+    delete-record,
+    sensitive-attribute-score,
+  ]

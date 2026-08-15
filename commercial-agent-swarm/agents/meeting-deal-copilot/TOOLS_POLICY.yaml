@@ -1,0 +1,22 @@
+status: pending-adaptation
+default: deny
+autonomyCeiling: A2
+confirmedLogicalTools:
+  file: { read: true, writeMissionArtifacts: true }
+  gbrain: { readScoped: true, write: false }
+proposedAdapters:
+  crm_read: { read: true, write: false }
+  calendar_read: { read: true, write: false }
+  meeting_read: { read: true, write: false }
+  knowledge_read: { read: true, write: false }
+deniedActions:
+  [
+    external-send,
+    calendar-write,
+    negotiate,
+    discount,
+    commitment,
+    contract,
+    payment,
+    material-crm-write,
+  ]

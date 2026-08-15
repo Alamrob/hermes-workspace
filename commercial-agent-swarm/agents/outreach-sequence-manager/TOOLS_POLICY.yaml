@@ -1,0 +1,23 @@
+status: pending-adaptation
+default: deny
+autonomyCeiling: A3
+confirmedLogicalTools:
+  file: { read: true, writeMissionArtifacts: true }
+  gbrain: { readScoped: true, write: false }
+proposedAdapters:
+  crm_read: { read: true, write: false }
+  policy_store_read: { read: true, write: false }
+  email_send: { externalWrite: approval-gateway-only, idempotent: required }
+  whatsapp_send: { externalWrite: approval-gateway-only, idempotent: required }
+  calendar_write: { externalWrite: approval-gateway-only, idempotent: required }
+  sequence_write: { externalWrite: approval-gateway-only, idempotent: required }
+deniedActions:
+  [
+    send-without-token,
+    mutate-approved-content,
+    suppression-contact,
+    blind-retry,
+    fake-personalization,
+    unapproved-claim,
+    a4,
+  ]

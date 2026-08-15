@@ -1,0 +1,26 @@
+status: pending-adaptation
+default: deny
+autonomyCeiling: A3
+confirmedLogicalTools:
+  file: { read: true, writeMissionArtifacts: true }
+proposedAdapters:
+  crm_read: { read: true, write: false }
+  crm_write: { writeReversibleA2: true, materialWrite: approval-gateway-only }
+  delivery_read: { read: true, write: false }
+  support_read: { read: true, write: false }
+  billing_read: { read: true, write: false }
+  product_analytics_read: { read: true, write: false }
+  email_send: { externalWrite: approval-gateway-only }
+  whatsapp_send: { externalWrite: approval-gateway-only }
+  calendar_write: { externalWrite: approval-gateway-only }
+deniedActions:
+  [
+    send-without-token,
+    complaint-auto-response,
+    unapproved-commitment,
+    discount,
+    contract,
+    payment,
+    fake-testimonial,
+    cross-customer-disclosure,
+  ]

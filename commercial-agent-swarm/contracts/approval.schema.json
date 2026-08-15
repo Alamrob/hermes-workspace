@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/schemas/commercial-swarm/approval.schema.json",
+  "title": "Commercial A3 Approval Grant",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approval_id",
+    "mission_id",
+    "trace_id",
+    "action_hash",
+    "action_type",
+    "subject",
+    "channel",
+    "content_version",
+    "content_hash",
+    "volume_maximum",
+    "issued_at",
+    "expires_at",
+    "approved_by",
+    "nonce",
+    "status",
+    "token_display",
+    "signature"
+  ],
+  "properties": {
+    "approval_id": { "type": "string", "format": "uuid" },
+    "mission_id": { "type": "string", "format": "uuid" },
+    "trace_id": { "type": "string", "format": "uuid" },
+    "action_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "action_type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._:-]{1,127}$"
+    },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "contact_id", "target_locator"],
+      "properties": {
+        "account_id": { "type": ["string", "null"] },
+        "contact_id": { "type": ["string", "null"] },
+        "target_locator": { "type": "string", "minLength": 1 }
+      }
+    },
+    "channel": {
+      "enum": [
+        "crm",
+        "email",
+        "whatsapp",
+        "calendar",
+        "web_chat",
+        "telephone",
+        "internal"
+      ]
+    },
+    "content_version": { "type": "string", "minLength": 1 },
+    "content_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "volume_maximum": { "type": "integer", "minimum": 1 },
+    "issued_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "approved_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user_id", "display_name", "role", "authentication_context"],
+      "properties": {
+        "user_id": { "type": "string", "minLength": 1 },
+        "display_name": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
+        "authentication_context": { "type": "string", "minLength": 1 }
+      }
+    },
+    "nonce": { "type": "string", "minLength": 16, "maxLength": 256 },
+    "status": {
+      "enum": ["issued", "consumed", "expired", "revoked", "denied"]
+    },
+    "token_display": {
+      "type": "string",
+      "pattern": "^APPROVAL::[0-9a-fA-F-]{36}::[0-9a-f]{64}::[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "algorithm", "value"],
+      "properties": {
+        "key_id": { "type": "string", "minLength": 1 },
+        "algorithm": { "enum": ["EdDSA", "ES256", "RS256"] },
+        "value": { "type": "string", "minLength": 32 }
+      }
+    },
+    "consumed_at": { "type": ["string", "null"], "format": "date-time" },
+    "execution_receipt": { "type": ["string", "null"] }
+  }
+}

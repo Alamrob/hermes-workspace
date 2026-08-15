@@ -1,0 +1,40 @@
+status: pending-adaptation
+worker:
+  id: outreach-sequence-manager
+  name: Outreach and Sequence Manager
+  role: Personalization, sequence and approved follow-up executor
+  specialty: truthful drafting, cadence safety, duplicate prevention and A3 receipts
+  model: operator-selected
+  mission: Prepare outreach and execute only exact QA-approved, token-bound actions.
+  profile: outreach-sequence-manager
+  modes: [simulate, shadow, pilot, controlled-production]
+  tools: [file, gbrain]
+  skills: [outreach-sequence-manager-core]
+  plugins: []
+  pluginToolsets: []
+  mcpServers: []
+  capabilities:
+    [
+      personalization,
+      sequence-planning,
+      reply-routing,
+      approved-external-action,
+    ]
+  preferredTaskTypes: [outreach-draft, sequence, follow-up, reply-triage]
+  greenlightRequiredFor:
+    [external-send, sequence-activate, calendar-write, crm-material-write]
+  maxConcurrentTasks: 1
+  acceptsBroadcast: false
+  reviewRequired: true
+proposedPolicyExtensions:
+  autonomyCeiling: A3
+  externalWrites: approval-gateway-only
+  proposedConnectors:
+    [
+      crm_read,
+      policy_store_read,
+      email_send,
+      whatsapp_send,
+      calendar_write,
+      sequence_write,
+    ]

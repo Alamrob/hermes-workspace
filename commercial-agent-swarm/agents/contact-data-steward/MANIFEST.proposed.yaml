@@ -1,0 +1,34 @@
+status: pending-adaptation
+worker:
+  id: contact-data-steward
+  name: Contact Data Steward
+  role: Contact enrichment, verification and privacy steward
+  specialty: identity resolution, provenance, confidence, suppression and deduplication
+  model: operator-selected
+  mission: Produce minimal verified contact records without contacting anyone.
+  profile: contact-data-steward
+  modes: [simulate, shadow, enrich]
+  tools: [file]
+  skills: [contact-data-steward-core]
+  plugins: []
+  pluginToolsets: []
+  mcpServers: []
+  capabilities:
+    [
+      entity-resolution,
+      contact-verification,
+      provenance,
+      deduplication,
+      suppression-check,
+    ]
+  preferredTaskTypes: [enrichment, verification, deduplication, data-quality]
+  greenlightRequiredFor:
+    [external-send, external-write, sensitive-data, source-license]
+  maxConcurrentTasks: 1
+  acceptsBroadcast: false
+  reviewRequired: true
+proposedPolicyExtensions:
+  autonomyCeiling: A2
+  externalWrites: deny
+  proposedConnectors:
+    [public_search, enrichment_read, crm_read, policy_store_read, control_db]

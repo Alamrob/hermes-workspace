@@ -1,0 +1,42 @@
+status: pending-adaptation
+reason: Live Hostinger VPS hermes-agent version and capabilities not inspected
+targetEvidence:
+  workspaceVersion: 2.3.0
+  rosterSchema: C:/VibeCoding/WorkAgent/hermes-workspace/src/server/swarm-roster.ts
+worker:
+  id: commercial-orchestrator
+  name: Commercial Orchestrator
+  role: Commercial Swarm Orchestrator and Greenlight Gate
+  specialty: work-order validation, DAG routing, budgets, idempotency, approvals and evidence consolidation
+  model: operator-selected
+  mission: Execute only authenticated Codex work orders within approved commercial policy.
+  profile: commercial-orchestrator
+  modes: [simulate, shadow, pilot, controlled-production]
+  tools: [file, todo, kanban, delegation, session_search]
+  skills: [commercial-orchestrator-core]
+  plugins: []
+  pluginToolsets: []
+  mcpServers: []
+  capabilities:
+    [
+      orchestration,
+      decomposition,
+      proof-contracts,
+      budget-control,
+      idempotency,
+      approval-routing,
+      kill-switch,
+    ]
+  preferredTaskTypes:
+    [orchestration, routing, coordination, handoff, consolidation]
+  greenlightRequiredFor:
+    [external-send, external-write, credential-change, destructive, publish]
+  maxConcurrentTasks: 1
+  acceptsBroadcast: false
+  reviewRequired: true
+proposedPolicyExtensions:
+  autonomyCeiling: A2
+  externalWrites: deny
+  workOrderSchema: ../../contracts/work-order.schema.json
+  resultSchema: ../../contracts/agent-result.schema.json
+  approvalSchema: ../../contracts/approval.schema.json

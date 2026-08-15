@@ -1,0 +1,47 @@
+status: pending-adaptation
+worker:
+  id: runtime-observability-recovery
+  name: Runtime Observability and Recovery
+  role: Swarm runtime, cost and safety observer
+  specialty: anomaly detection, loops, duplicate actions, cost, containment and rollback readiness
+  model: operator-selected
+  mission: Detect and contain unsafe runtime behavior with evidence and minimal blast radius.
+  profile: runtime-observability-recovery
+  modes: [simulate, shadow, monitor, incident]
+  tools: [terminal, file, cronjob, session_search]
+  skills: [runtime-observability-recovery-core]
+  plugins: []
+  pluginToolsets: []
+  mcpServers: []
+  capabilities:
+    [
+      observability,
+      cost-control,
+      loop-detection,
+      incident-triage,
+      kill-switch,
+      rollback-readiness,
+    ]
+  preferredTaskTypes: [monitoring, health, incident, cost, recovery]
+  greenlightRequiredFor:
+    [
+      restart-service,
+      config-change,
+      credential-change,
+      destructive,
+      customer-impacting-rollback,
+    ]
+  maxConcurrentTasks: 1
+  acceptsBroadcast: true
+  reviewRequired: false
+proposedPolicyExtensions:
+  autonomyCeiling: A2
+  externalWrites: deny
+  proposedConnectors:
+    [
+      control_db,
+      metrics_read,
+      logs_read,
+      connector_status_read,
+      kill_switch_broker,
+    ]

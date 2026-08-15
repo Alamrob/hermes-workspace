@@ -1,0 +1,24 @@
+status: pending-adaptation
+default: deny
+autonomyCeiling: A2
+confirmedLogicalTools:
+  terminal: { readOnlyAllowlist: true, arbitraryCommand: false }
+  file: { readLogsAndArtifacts: true, writeIncidentArtifacts: true }
+  cronjob: { read: true, writeSchedule: false }
+  session_search: { readScoped: true }
+proposedAdapters:
+  control_db: { read: true, writeAlertAndHold: true }
+  metrics_read: { read: true, write: false }
+  logs_read: { readRedacted: true, write: false }
+  connector_status_read: { read: true, write: false }
+  kill_switch_broker: { activateByApprovedPolicy: true, deactivate: false }
+deniedActions:
+  [
+    secret-print,
+    arbitrary-shell,
+    external-send,
+    credential-rotate,
+    config-change,
+    destructive,
+    blind-restart,
+  ]
