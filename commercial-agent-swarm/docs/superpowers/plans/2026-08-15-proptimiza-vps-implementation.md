@@ -1,0 +1,76 @@
+# Proptimiza Commercial Swarm VPS Implementation Plan
+
+> Execute with subagent-driven development. Production code follows strict TDD; configuration and runbooks require static validation and dry-run tests before deployment.
+
+**Goal:** Secure the Hostinger VPS, convert the existing proposed swarm into six native Hermes 0.20.1 profiles, add a deterministic approval/mail broker, establish PostgreSQL as the control source of truth, deploy an isolated fail-closed stack, and qualify it through simulation and shadow mode before one separately approved internal email test.
+
+**Architecture:** Codex is the control plane. A dedicated `commercial-swarm` stack contains Hermes execution profiles and a deterministic Node/TypeScript broker. PostgreSQL stores versioned catalog/control/mail state. Hostinger Mail and Telegram secrets are broker-only. A3 remains globally disabled except for a one-time, exact internal action authorized through the Approval Gateway.
+
+## Global Constraints
+
+- Project is Proptimiza; offer is `Operación Sin Planillas` from CLP 1,800,000; no autonomous changes.
+- ICP is Chilean B2B service companies with 10-100 employees and manual Excel/WhatsApp/email operations.
+- No external prospect contact, campaign, proposal, discount, promise, contract, payment or purchase.
+- Only `ventas@proptimiza.com` to `contacto@proptimiza.com` may later be authorized as a real mail test.
+- Direct Hostinger Mail MCP access from Hermes is prohibited.
+- Secrets never enter Git, agent profiles, model memory, n8n or logs.
+- Existing apps stay running; rollback affects only `commercial-swarm`.
+- Pin deployable images and source revisions; default deny, least privilege and auditable idempotency are mandatory.
+
+### Task 1: Secure Access and Capture Rollback Evidence
+
+- [ ] Verify a FireLucky administrative key in a second SSH session before revocation.
+- [ ] Back up and hash current Compose/config/profile/database metadata without exporting secrets to Git.
+- [ ] Remove the agent-readable host key and its authorized entry.
+- [ ] Remove broad passwordless sudo from `ops` and verify no container has host/socket/SSH/root mounts.
+- [ ] Verify root break-glass access and existing application health.
+
+### Task 2: Runtime Contracts and Approval Broker
+
+- [ ] Write failing tests for work-order validation, action hashing, approval expiry/replay/content binding, kill switch, webhook authentication/deduplication and mail allowlisting.
+- [ ] Implement the minimum TypeScript broker and PostgreSQL repository interfaces to pass them.
+- [ ] Expose the approved internal endpoints and structured observability fields.
+- [ ] Keep mail and Telegram transports behind injectable adapters; tests use controlled fakes.
+
+### Task 3: Native Hermes 0.20.1 Profiles
+
+- [ ] Retain exactly six active profiles: sales-orchestrator, market-account-intelligence, contact-data-steward, qualification-prioritization, outreach-draft-manager and commercial-qa-compliance.
+- [ ] Add native `distribution.yaml`, prompts, config and least-privilege tool policies for each.
+- [ ] Make A3 unavailable to all profiles and preserve A4 as human-only.
+- [ ] Update the package validator and tests for the native roster and T01-T16 matrix.
+
+### Task 4: Data Model, Director Migration and Infra Repository
+
+- [ ] Add idempotent migrations for `catalog`, `control` and `mail` schemas plus versioned Proptimiza seed data.
+- [ ] Preserve empty legacy approval/run tables under explicit legacy names and provide compatibility views only if required.
+- [ ] Export and redact the old Director Sales evidence, classifying decisions, assumptions, evidence, obsolete configuration and pending work.
+- [ ] Prepare a sanitized private `sales-platform-infra` repository with pinned Compose, Caddy, migrations and runbooks.
+
+### Task 5: Isolated VPS Deployment
+
+- [ ] Create pre-deploy backup and validate Compose/migrations offline.
+- [ ] Deploy the pinned `commercial-swarm` stack on a private network without Docker socket or host mounts.
+- [ ] Apply migrations, seed the frozen offer/ICP/policies and install native profiles.
+- [ ] Keep A3 kill switch active and verify health/readiness, resource limits, logs and rollback.
+
+### Task 6: Simulation and Shadow Qualification
+
+- [ ] Run all 16 scenarios for all six profiles plus broker/webhook security tests.
+- [ ] Require 100% critical authorization/privacy/deduplication/security/schema checks and at least 95% evidence coverage.
+- [ ] Start shadow mode with at most ten real public companies, no contact and no critical-system writes.
+- [ ] Record human comparison decisions without promoting automatically.
+
+### Task 7: Hostinger Mail, DNS and Telegram Preparation
+
+- [ ] In hPanel, verify/create `contacto@proptimiza.com` and `ventas@proptimiza.com` with the user present.
+- [ ] Verify MX/SPF/DKIM/DMARC, create `mailhooks.proptimiza.com`, configure Caddy TLS and a bearer-authenticated `message.received` webhook.
+- [ ] Create mailbox-scoped Hostinger and dedicated Telegram bot secrets in the broker only.
+- [ ] Restrict outbound mail to the internal mailbox and verify all secret-redaction controls.
+
+### Task 8: Internal Mail Test and Final Gate
+
+- [ ] Generate a neutral versioned internal message and QA verdict.
+- [ ] Obtain one-time Telegram approval bound to exact sender, recipient, content, volume and expiry.
+- [ ] Send once, receive one manual reply, verify webhook/threading/audit/idempotency and re-enable the A3 kill switch.
+- [ ] Stop before any external pilot and report the separate approvals required.
+
