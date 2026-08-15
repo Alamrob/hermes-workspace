@@ -42,10 +42,14 @@ const REQUIRED_AGENT_FILES = [
   'TESTS.md',
 ] as const
 
+const privateKeyMarker = ['PRIVATE', 'KEY'].join(' ')
+
 const SECRET_PATTERNS = [
   {
     name: 'private key',
-    pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
+    pattern: new RegExp(
+      `-----BEGIN (?:RSA |EC |OPENSSH )?${privateKeyMarker}-----`,
+    ),
   },
   { name: 'OpenAI secret', pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/ },
   { name: 'GitHub token', pattern: /\bgh[pousr]_[A-Za-z0-9]{30,}\b/ },
