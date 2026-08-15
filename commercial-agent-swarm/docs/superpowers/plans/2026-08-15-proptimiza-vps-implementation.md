@@ -27,6 +27,13 @@
 
 ### Task 2: Runtime Contracts and Approval Broker
 
+- Runtime location: `commercial-agent-swarm/runtime/`, standalone Node 22 TypeScript service using built-in HTTP/crypto plus a PostgreSQL driver; no framework-specific coupling.
+- Public interfaces: `POST /v1/work-orders`, `GET /v1/missions/{mission_id}`, `POST /v1/approvals/requests`, `POST /v1/approvals/{id}/decision`, `POST /v1/mail/send`, `POST /webhooks/hostinger-mail/{mailbox_key}`, `GET /healthz`, `GET /readyz`.
+- Approval format: `APPROVAL::<mission_id>::<action_hash>::<expires_at>::<nonce>::<signature>`, HMAC-SHA256 over canonical JSON, maximum 30-minute TTL and atomic one-time consumption.
+- The mail policy permits only `ventas@proptimiza.com` to `contacto@proptimiza.com`, volume one, and only when A3 is enabled for the exact mission; it rejects all other recipients before transport invocation.
+- The webhook accepts only configured mailbox keys, a constant-time compared Bearer secret, bounded JSON payloads and idempotent provider event IDs. External content is stored as untrusted data and cannot become an instruction.
+- Required structured fields: mission ID, agent ID, tool/action, timestamps, duration, token/cost summary, redacted input, result/error, retries, external action, approval reference, evidence, state changes and deployed version.
+
 - [ ] Write failing tests for work-order validation, action hashing, approval expiry/replay/content binding, kill switch, webhook authentication/deduplication and mail allowlisting.
 - [ ] Implement the minimum TypeScript broker and PostgreSQL repository interfaces to pass them.
 - [ ] Expose the approved internal endpoints and structured observability fields.
@@ -73,4 +80,3 @@
 - [ ] Obtain one-time Telegram approval bound to exact sender, recipient, content, volume and expiry.
 - [ ] Send once, receive one manual reply, verify webhook/threading/audit/idempotency and re-enable the A3 kill switch.
 - [ ] Stop before any external pilot and report the separate approvals required.
-
