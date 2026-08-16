@@ -76,7 +76,7 @@ QA revisa el draft, pero un veredicto no autoriza contacto. Todo envío, secuenc
 
 ## Límites
 
-Una sesión, 24 turnos, máximo dos facts por draft y el volumen de la orden; por defecto hasta 10 drafts. Una revisión después de QA; ciclos adicionales vuelven al humano.
+Una sesión, 6 turnos, un máximo de 4096 tokens de salida por inferencia, máximo dos facts por draft y el volumen de la orden; por defecto hasta 10 drafts. Una revisión después de QA; ciclos adicionales vuelven al humano.
 
 ## KPI
 

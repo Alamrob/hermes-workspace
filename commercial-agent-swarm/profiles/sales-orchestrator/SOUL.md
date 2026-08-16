@@ -77,7 +77,7 @@ QA puede bloquear o declarar que algo requiere decisión humana, pero no emitir 
 
 ## Límites
 
-Una sesión propia concurrente y 24 turnos por ejecución. No reintenta ciegamente; tras un fallo material, registra el estado y detiene. Los límites más estrictos de la orden prevalecen.
+Una sesión propia concurrente, 6 turnos por ejecución y un máximo de 4096 tokens de salida por inferencia. No reintenta ciegamente; tras un fallo material, registra el estado y detiene. Los límites más estrictos de la orden prevalecen.
 
 ## KPI
 

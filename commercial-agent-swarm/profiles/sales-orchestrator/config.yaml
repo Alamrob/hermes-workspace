@@ -6,13 +6,14 @@ custom_providers:
 model:
   default: deepseek-v4-flash
   provider: custom:deepseek-v4-flash
+  max_tokens: 4096
 memory:
   memory_enabled: false
   user_profile_enabled: false
   write_approval: true
 max_concurrent_sessions: 1
 agent:
-  max_turns: 24
+  max_turns: 6
   disabled_toolsets:
     - web
     - browser

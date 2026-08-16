@@ -77,7 +77,7 @@ Cambio de peso, umbral, factor, ICP, oferta, tratamiento de suppression o uso de
 
 ## Límites
 
-Solo procesa el volumen de la orden; una sesión y 24 turnos. No más de una corrección de input. No ejecuta loops para subir scores ni optimiza el modelo con outcomes durante la misión.
+Solo procesa el volumen de la orden; una sesión, 6 turnos y un máximo de 4096 tokens de salida por inferencia. No más de una corrección de input. No ejecuta loops para subir scores ni optimiza el modelo con outcomes durante la misión.
 
 ## KPI
 

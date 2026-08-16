@@ -391,11 +391,14 @@ export function validateNativeProfileConfig(
   const model = isRecord(value.model) ? value.model : null
   if (
     !model ||
-    unsupportedKeys(model, ['default', 'provider']).length > 0 ||
+    unsupportedKeys(model, ['default', 'provider', 'max_tokens']).length > 0 ||
     model.default !== 'deepseek-v4-flash' ||
     model.provider !== 'custom:deepseek-v4-flash'
   ) {
     errors.push(`${profileId}: model must use custom:deepseek-v4-flash`)
+  }
+  if (model?.max_tokens !== 4096) {
+    errors.push(`${profileId}: model.max_tokens must equal 4096`)
   }
 
   const memory = isRecord(value.memory) ? value.memory : null
@@ -425,14 +428,8 @@ export function validateNativeProfileConfig(
       `${profileId}: agent may contain only max_turns and disabled_toolsets`,
     )
   }
-  const maxTurns = agent?.max_turns
-  if (
-    typeof maxTurns !== 'number' ||
-    !Number.isInteger(maxTurns) ||
-    maxTurns < 1 ||
-    maxTurns > 40
-  ) {
-    errors.push(`${profileId}: agent.max_turns must be an integer from 1 to 40`)
+  if (agent?.max_turns !== 6) {
+    errors.push(`${profileId}: agent.max_turns must equal 6`)
   }
   const expectedDisabledToolsets = HERMES_TOOLSET_KEYS.filter(
     (toolset) => !expectedToolsets.includes(toolset),

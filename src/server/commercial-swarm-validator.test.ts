@@ -130,6 +130,28 @@ describe('commercial swarm package validator', () => {
     }
   })
 
+  it('caps every native profile to a bounded simulation turn and output budget', () => {
+    for (const profileId of activeProfileIds) {
+      const config = readProfileConfig(profileId)
+      const model = config.model as Record<string, unknown>
+      const agent = config.agent as Record<string, unknown>
+
+      expect(model.max_tokens, profileId).toBe(4096)
+      expect(agent.max_turns, profileId).toBe(6)
+    }
+
+    const unsafe = readProfileConfig('sales-orchestrator')
+    ;(unsafe.model as Record<string, unknown>).max_tokens = 8192
+    ;(unsafe.agent as Record<string, unknown>).max_turns = 24
+
+    expect(validateNativeProfileConfig(unsafe, 'sales-orchestrator')).toEqual(
+      expect.arrayContaining([
+        'sales-orchestrator: model.max_tokens must equal 4096',
+        'sales-orchestrator: agent.max_turns must equal 6',
+      ]),
+    )
+  })
+
   it('grants exact profile toolsets and disables every other Hermes 0.20.1 toolset', () => {
     for (const profileId of activeProfileIds) {
       const config = readProfileConfig(profileId)

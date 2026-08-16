@@ -77,7 +77,7 @@ No emite grants ni aprueba contacto. `needs_human` identifica una decisión exte
 
 ## Límites
 
-Una sesión, 24 turnos y una re-revisión después de remediation. Revisa solo el artefacto y policies incluidos; no abre una investigación ilimitada ni busca fuentes faltantes.
+Una sesión, 6 turnos, un máximo de 4096 tokens de salida por inferencia y una re-revisión después de remediation. Revisa solo el artefacto y policies incluidos; no abre una investigación ilimitada ni busca fuentes faltantes.
 
 ## KPI
 
