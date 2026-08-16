@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url'
 import { ApprovalBroker } from './approvals.js'
+import { ApprovalModeCoordinator } from './approval-mode.js'
 import { BrokerApplication } from './application.js'
 import { DisabledExternalMailTransport } from './disabled-transports.js'
 import { MailService } from './mail.js'
@@ -34,9 +35,15 @@ export async function startSimulationBroker(
       repository: persistence.repository,
       hmacSecret: secrets.approvalHmac,
     })
+    const approvalCoordinator = new ApprovalModeCoordinator({
+      mode: config.approvalMode,
+      store: persistence.approvalEvidenceStore,
+      grants: approvals,
+    })
     const app = new BrokerApplication({
       repository: persistence.repository,
       approvals,
+      approvalCoordinator,
       mail: new MailService({
         repository: persistence.repository,
         approvals,
@@ -56,10 +63,18 @@ export async function startSimulationBroker(
           keys: { [config.workOrderAuthority.keyId]: secrets.workOrderHmac },
         },
         controlPlane: secrets.controlPlane,
-        approvalGateway: secrets.approvalGateway,
         connector: secrets.connector,
         internal: secrets.internal,
-        approvers: config.approverIds,
+        approvalGateways: {
+          sales: {
+            bearer: secrets.approvalSalesGateway,
+            actors: config.approvalActors.sales,
+          },
+          telegram: {
+            bearer: secrets.approvalTelegramGateway,
+            actors: config.approvalActors.telegram,
+          },
+        },
       },
     })
     const server = createBrokerHttpServer(app, { maxBodyBytes: 262_144 })

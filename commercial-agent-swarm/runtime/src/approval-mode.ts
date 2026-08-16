@@ -30,6 +30,31 @@ export interface ApprovalGrantPort {
   ): Promise<{ status: 'approved' | 'denied'; token?: string }>
 }
 
+export class InMemoryApprovalEvidenceStore
+  implements ApprovalEvidenceStorePort
+{
+  private readonly evidence = new Map<string, ApprovalChannelEvidence>()
+
+  async record(value: ApprovalChannelEvidence): Promise<void> {
+    validateEvidence(value)
+    const key = `${value.approvalId}:${value.channel}`
+    const existing = this.evidence.get(key)
+    if (existing) {
+      if (JSON.stringify(existing) !== JSON.stringify(value))
+        throw new Error('APPROVAL_EVIDENCE_CONFLICT')
+      return
+    }
+    this.evidence.set(key, structuredClone(value))
+  }
+
+  async list(approvalId: string): Promise<ApprovalChannelEvidence[]> {
+    return [...this.evidence.values()]
+      .filter((value) => value.approvalId === approvalId)
+      .sort((left, right) => left.channel.localeCompare(right.channel))
+      .map((value) => structuredClone(value))
+  }
+}
+
 export function parseApprovalMode(value: unknown): ApprovalMode {
   if (value === undefined || value === null || value === '') return 'either'
   if (

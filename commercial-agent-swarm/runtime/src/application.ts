@@ -1,9 +1,13 @@
-import type { ApprovalBroker } from './approvals.js'
+import { ApprovalError, type ApprovalBroker } from './approvals.js'
+import type {
+  ApprovalChannel,
+  ApprovalModeCoordinator,
+} from './approval-mode.js'
 import { hashAction } from './canonical.js'
-import type { MailService } from './mail.js'
+import { MailPolicyError, type MailService } from './mail.js'
 import type { AuditSink } from './observability.js'
 import type { RuntimeRepository } from './repository.js'
-import type { WebhookService } from './webhook.js'
+import { WebhookError, type WebhookService } from './webhook.js'
 import { AuthenticationError, requireBearer, type WorkOrderAuthConfig, verifyWorkOrder } from './security.js'
 import { ValidationError, validateWorkOrder } from './work-orders.js'
 
@@ -23,6 +27,7 @@ export interface ApplicationResponse {
 interface ApplicationOptions {
   repository: RuntimeRepository
   approvals: ApprovalBroker
+  approvalCoordinator: ApprovalModeCoordinator
   mail: MailService
   webhook: WebhookService
   audit: AuditSink
@@ -31,10 +36,12 @@ interface ApplicationOptions {
   authentication: {
     workOrders: WorkOrderAuthConfig
     controlPlane: string
-    approvalGateway: string
     connector: string
     internal: string
-    approvers: string[]
+    approvalGateways: Record<
+      ApprovalChannel,
+      { bearer: string; actors: string[] }
+    >
   }
 }
 
@@ -51,8 +58,12 @@ export class BrokerApplication {
     if (!route) return { status: 404, body: { error: 'not_found' } }
     if (route.action === 'health') return { status: 200, body: { status: 'ok' } }
     if (route.action === 'ready') {
-      const ready = await this.options.repository.ready()
-      return { status: ready ? 200 : 503, body: { status: ready ? 'ready' : 'not_ready' } }
+      try {
+        const ready = await this.options.repository.ready()
+        return { status: ready ? 200 : 503, body: { status: ready ? 'ready' : 'not_ready' } }
+      } catch {
+        return { status: 503, body: { error: 'service_unavailable' } }
+      }
     }
     const started = this.now()
     try {
@@ -60,11 +71,20 @@ export class BrokerApplication {
       await this.audit(request, route.auditAction, missionId, started, response, null)
       return response
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown_error'
-      await this.audit(request, route.auditAction, missionId, started, null, message)
+      const failure = publicFailure(error)
+      await this.audit(
+        request,
+        route.auditAction,
+        missionId,
+        started,
+        null,
+        failure.error,
+      )
       return {
-        status: error instanceof ValidationError ? 400 : 403,
-        body: { error: message, issues: error instanceof ValidationError ? error.issues : undefined },
+        status: failure.status,
+        body: failure.issues
+          ? { error: failure.error, issues: failure.issues }
+          : { error: failure.error },
       }
     }
   }
@@ -95,9 +115,29 @@ export class BrokerApplication {
       return { status: 201, body: await this.options.approvals.request(request.body) }
     }
     if (route.action === 'decideApproval') {
-      requireBearer(request.headers?.authorization, this.options.authentication.approvalGateway)
-      if (!this.options.authentication.approvers.includes(request.body?.approved_by)) throw new AuthenticationError('UNAUTHORIZED_APPROVER')
-      return { status: 200, body: await this.options.approvals.decide(route.id!, request.body) }
+      const channel = route.channel!
+      const gateway = this.options.authentication.approvalGateways[channel]
+      requireBearer(request.headers?.authorization, gateway.bearer)
+      const decision = validateEvidenceDecision(request.body)
+      if (!gateway.actors.includes(decision.actorId))
+        throw new AuthenticationError('FORBIDDEN')
+      const approval = await this.options.repository.getApprovalRequest(route.id!)
+      if (!approval || approval.status !== 'pending')
+        throw new ApprovalError('NOT_PENDING')
+      return {
+        status: 200,
+        body: await this.options.approvalCoordinator.submit(
+          {
+            approvalId: route.id!,
+            actionHash: approval.action_hash,
+            channel,
+            decision: decision.decision,
+            actorId: decision.actorId,
+            decidedAt: decision.decidedAt,
+          },
+          decision.expiresAt,
+        ),
+      }
     }
     if (route.action === 'sendMail') {
       requireBearer(request.headers?.authorization, this.options.authentication.connector)
@@ -147,7 +187,9 @@ export class BrokerApplication {
 function approvalReference(request: ApplicationRequest, response: ApplicationResponse | null): string | null {
   return responseReference(response, 'approval_reference') ??
     responseReference(response, 'approval_id') ??
-    /^\/v1\/approvals\/([^/]+)\/decision$/.exec(request.path)?.[1] ??
+    /^\/v1\/approvals\/([^/]+)\/decisions\/(?:sales|telegram)$/.exec(
+      request.path,
+    )?.[1] ??
     null
 }
 
@@ -157,7 +199,12 @@ function responseReference(response: ApplicationResponse | null, field: string):
   return typeof value === 'string' ? value : null
 }
 
-type Route = { action: string; auditAction: string; id?: string }
+type Route = {
+  action: string
+  auditAction: string
+  id?: string
+  channel?: ApprovalChannel
+}
 
 function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/healthz') return { action: 'health', auditAction: 'health' }
@@ -167,8 +214,15 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'POST' && path === '/v1/mail/send') return { action: 'sendMail', auditAction: 'mail.send' }
   const mission = /^\/v1\/missions\/([^/]+)$/.exec(path)
   if (method === 'GET' && mission) return { action: 'getMission', auditAction: 'mission.get', id: mission[1] }
-  const decision = /^\/v1\/approvals\/([^/]+)\/decision$/.exec(path)
-  if (method === 'POST' && decision) return { action: 'decideApproval', auditAction: 'approval.decision', id: decision[1] }
+  const decision =
+    /^\/v1\/approvals\/([^/]+)\/decisions\/(sales|telegram)$/.exec(path)
+  if (method === 'POST' && decision)
+    return {
+      action: 'decideApproval',
+      auditAction: 'approval.decision',
+      id: decision[1],
+      channel: decision[2] as ApprovalChannel,
+    }
   const webhook = /^\/webhooks\/hostinger-mail\/([^/]+)$/.exec(path)
   if (method === 'POST' && webhook) return { action: 'webhook', auditAction: 'webhook.ingest', id: webhook[1] }
   return null
@@ -181,4 +235,100 @@ function missionIdFrom(request: ApplicationRequest): string | null {
 function redactMission(mission: Record<string, unknown>): Record<string, unknown> {
   const { authority: _authority, approval_token: _approvalToken, business_context: _context, ...safe } = mission
   return safe
+}
+
+function validateEvidenceDecision(value: unknown): {
+  decision: 'approved' | 'denied'
+  actorId: string
+  decidedAt: string
+  expiresAt: string
+} {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value)
+  )
+    throw new ValidationError(['approval decision must be an object'])
+  const record = value as Record<string, unknown>
+  const allowed = new Set([
+    'decision',
+    'actor_id',
+    'decided_at',
+    'expires_at',
+  ])
+  if (
+    Object.keys(record).some((field) => !allowed.has(field)) ||
+    (record.decision !== 'approved' && record.decision !== 'denied') ||
+    typeof record.actor_id !== 'string' ||
+    !/^[A-Za-z0-9._:@-]{1,128}$/.test(record.actor_id) ||
+    typeof record.decided_at !== 'string' ||
+    !Number.isFinite(Date.parse(record.decided_at)) ||
+    typeof record.expires_at !== 'string' ||
+    !Number.isFinite(Date.parse(record.expires_at))
+  )
+    throw new ValidationError(['approval decision is invalid'])
+  return {
+    decision: record.decision,
+    actorId: record.actor_id,
+    decidedAt: new Date(record.decided_at).toISOString(),
+    expiresAt: new Date(record.expires_at).toISOString(),
+  }
+}
+
+function publicFailure(error: unknown): {
+  status: 400 | 401 | 403 | 409 | 500 | 503
+  error: string
+  issues?: string[]
+} {
+  if (error instanceof ValidationError)
+    return { status: 400, error: 'invalid_request', issues: error.issues }
+  if (error instanceof AuthenticationError) {
+    if (error.code === 'UNAUTHORIZED')
+      return { status: 401, error: 'unauthorized' }
+    const allowed = new Set([
+      'INVALID_AUTHORITY',
+      'INVALID_PROJECT',
+      'AUTHORITY_NOT_YET_VALID',
+      'EXPIRED_AUTHORITY',
+      'INVALID_SIGNATURE',
+      'FORBIDDEN',
+    ])
+    return {
+      status: 403,
+      error: allowed.has(error.code) ? error.code : 'forbidden',
+    }
+  }
+  if (error instanceof ApprovalError) {
+    if (error.code === 'INVALID_ACTION' || error.code === 'INVALID_TTL')
+      return { status: 400, error: error.code }
+    if (error.code === 'NOT_PENDING' || error.code === 'REPLAYED')
+      return { status: 409, error: error.code }
+    const allowed = new Set([
+      'TOKEN_REQUIRED',
+      'INVALID_SIGNATURE',
+      'CONTENT_MISMATCH',
+      'EXPIRED',
+      'KILL_SWITCH_ACTIVE',
+      'MALFORMED_TOKEN',
+    ])
+    return {
+      status: 403,
+      error: allowed.has(error.code) ? error.code : 'forbidden',
+    }
+  }
+  if (error instanceof MailPolicyError)
+    return { status: 403, error: error.code }
+  if (error instanceof WebhookError) {
+    if (['PAYLOAD_TOO_LARGE', 'INVALID_JSON', 'INVALID_PAYLOAD'].includes(error.code))
+      return { status: 400, error: error.code }
+    return { status: 403, error: 'forbidden' }
+  }
+  if (
+    error instanceof Error &&
+    ['IDEMPOTENCY_CONFLICT', 'EXECUTION_IN_PROGRESS', 'APPROVAL_GRANT_CONFLICT'].includes(
+      error.message,
+    )
+  )
+    return { status: 409, error: error.message }
+  return { status: 500, error: 'internal_error' }
 }

@@ -2,6 +2,11 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { BrokerApplication } from '../src/application.js'
 import { ApprovalBroker, type ApprovalAction, type TelegramTransport } from '../src/approvals.js'
+import {
+  ApprovalModeCoordinator,
+  type ApprovalChannelEvidence,
+  type ApprovalMode,
+} from '../src/approval-mode.js'
 import { MailService, type MailTransport } from '../src/mail.js'
 import { InMemoryAuditSink } from '../src/observability.js'
 import { InMemoryRuntimeRepository } from '../src/repository.js'
@@ -25,7 +30,7 @@ class FakeMail implements MailTransport {
   }
 }
 
-function setup() {
+function setup(mode: ApprovalMode = 'either') {
   const repository = new InMemoryRuntimeRepository()
   const telegram = new FakeTelegram()
   const approvals = new ApprovalBroker({
@@ -37,6 +42,30 @@ function setup() {
     id: () => '323e4567-e89b-42d3-a456-426614174000',
   })
   const audit = new InMemoryAuditSink()
+  const evidence: ApprovalChannelEvidence[] = []
+  const approvalCoordinator = new ApprovalModeCoordinator({
+    mode,
+    store: {
+      record: async (item) => {
+        const existing = evidence.find(
+          (candidate) =>
+            candidate.approvalId === item.approvalId &&
+            candidate.channel === item.channel,
+        )
+        if (existing) {
+          if (JSON.stringify(existing) !== JSON.stringify(item))
+            throw new Error('APPROVAL_EVIDENCE_CONFLICT')
+          return
+        }
+        evidence.push(structuredClone(item))
+      },
+      list: async (approvalId) =>
+        evidence
+          .filter((item) => item.approvalId === approvalId)
+          .map((item) => structuredClone(item)),
+    },
+    grants: approvals,
+  })
   return {
     repository,
     telegram,
@@ -44,6 +73,7 @@ function setup() {
     app: new BrokerApplication({
       repository,
       approvals,
+      approvalCoordinator,
       mail: new MailService({ repository, approvals, transport: new FakeMail(), now: () => NOW }),
       webhook: new WebhookService({
         repository,
@@ -56,7 +86,11 @@ function setup() {
       deployedVersion: 'runtime-test-v1',
       authentication: {
         workOrders: { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' } },
-        controlPlane: 'control-plane-token', approvalGateway: 'approval-gateway-token', connector: 'connector-token', internal: 'internal-token', approvers: ['human-director'],
+        controlPlane: 'control-plane-token', connector: 'connector-token', internal: 'internal-token',
+        approvalGateways: {
+          sales: { bearer: 'sales-approval-token', actors: ['sales-director'] },
+          telegram: { bearer: 'telegram-approval-token', actors: ['telegram-user-1'] },
+        },
       },
     }),
   }
@@ -98,7 +132,7 @@ describe('broker application routes', () => {
       path: '/v1/work-orders',
       body: validWorkOrder(),
     })
-    assert.equal(response.status, 403)
+    assert.equal(response.status, 401)
   })
 
   it('rejects a bad work-order signature after accepting the control-plane bearer', async () => {
@@ -115,7 +149,7 @@ describe('broker application routes', () => {
 
     assert.deepEqual(response, {
       status: 403,
-      body: { error: 'INVALID_SIGNATURE', issues: undefined },
+      body: { error: 'INVALID_SIGNATURE' },
     })
     assert.equal(await state.repository.getMission(order.mission_id), null)
   })
@@ -137,7 +171,7 @@ describe('broker application routes', () => {
 
     assert.deepEqual(response, {
       status: 403,
-      body: { error: 'AUTHORITY_NOT_YET_VALID', issues: undefined },
+      body: { error: 'AUTHORITY_NOT_YET_VALID' },
     })
     assert.equal(await state.repository.getMission(order.mission_id), null)
   })
@@ -162,9 +196,82 @@ describe('broker application routes', () => {
     await state.app.handle({ method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: signedWorkOrder() })
     const requested = await state.app.handle({ method: 'POST', path: '/v1/approvals/requests', headers: headers('control-plane-token'), body: mailAction() })
     const id = (requested.body as any).approval_id
-    const decision = { approved: true, approved_by: 'unapproved', expires_at: '2026-08-15T20:15:00.000Z' }
-    assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decision`, body: decision })).status, 403)
-    assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decision`, headers: headers('approval-gateway-token'), body: decision })).status, 403)
+    const decision = { decision: 'approved', actor_id: 'unapproved', decided_at: NOW.toISOString(), expires_at: '2026-08-15T20:15:00.000Z' }
+    assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decisions/sales`, body: decision })).status, 401)
+    assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decisions/sales`, headers: headers('sales-approval-token'), body: decision })).status, 403)
+  })
+
+  it('derives the evidence channel from separate authenticated routes and dual mode grants only after both', async () => {
+    const state = setup('dual_channel')
+    await state.app.handle({ method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: signedWorkOrder() })
+    const requested = await state.app.handle({ method: 'POST', path: '/v1/approvals/requests', headers: headers('control-plane-token'), body: mailAction() })
+    const id = (requested.body as { approval_id: string }).approval_id
+    const expiry = '2026-08-15T20:15:00.000Z'
+    const sales = await state.app.handle({
+      method: 'POST',
+      path: `/v1/approvals/${id}/decisions/sales`,
+      headers: headers('sales-approval-token'),
+      body: {
+        decision: 'approved',
+        actor_id: 'sales-director',
+        decided_at: NOW.toISOString(),
+        expires_at: expiry,
+      },
+    })
+    assert.deepEqual(sales, { status: 200, body: { status: 'pending' } })
+    const spoofed = await state.app.handle({
+      method: 'POST',
+      path: `/v1/approvals/${id}/decisions/telegram`,
+      headers: headers('sales-approval-token'),
+      body: {
+        decision: 'approved',
+        actor_id: 'sales-director',
+        channel: 'sales',
+        decided_at: NOW.toISOString(),
+        expires_at: expiry,
+      },
+    })
+    assert.equal(spoofed.status, 401)
+    const telegram = await state.app.handle({
+      method: 'POST',
+      path: `/v1/approvals/${id}/decisions/telegram`,
+      headers: headers('telegram-approval-token'),
+      body: {
+        decision: 'approved',
+        actor_id: 'telegram-user-1',
+        decided_at: NOW.toISOString(),
+        expires_at: expiry,
+      },
+    })
+    assert.equal(telegram.status, 200)
+    assert.equal((telegram.body as { status: string }).status, 'approved')
+    assert.match((telegram.body as { token: string }).token, /^APPROVAL::/)
+    assert.equal(
+      (await state.app.handle({
+        method: 'POST',
+        path: `/v1/approvals/${id}/decision`,
+        headers: headers('approval-gateway-token'),
+        body: { approved: true, approved_by: 'human-director', expires_at: expiry },
+      })).status,
+      404,
+    )
+  })
+
+  it('maps unknown failures to a closed response and sanitized audit code', async () => {
+    const state = setup()
+    const secret = 'postgresql://runtime:SECRET@db/internal schema control.approvals'
+    state.repository.createApprovalRequest = async () => {
+      throw new Error(secret)
+    }
+    const response = await state.app.handle({
+      method: 'POST',
+      path: '/v1/approvals/requests',
+      headers: headers('control-plane-token'),
+      body: mailAction(),
+    })
+    assert.deepEqual(response, { status: 500, body: { error: 'internal_error' } })
+    assert.equal(JSON.stringify(state.audit.events).includes(secret), false)
+    assert.equal(state.audit.events.at(-1)?.error, 'UNEXPECTED_ERROR')
   })
 
   it('serves the public application through the built-in Node HTTP server', async () => {
@@ -220,7 +327,7 @@ describe('broker application routes', () => {
     await state.app.handle({ method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: order })
 
     const path = `/v1/missions/${order.mission_id}`
-    assert.equal((await state.app.handle({ method: 'GET', path })).status, 403)
+    assert.equal((await state.app.handle({ method: 'GET', path })).status, 401)
     const authenticated = await state.app.handle({ method: 'GET', path, headers: headers('internal-token') })
     assert.equal(authenticated.status, 200)
     const mission = authenticated.body as Record<string, unknown>
@@ -239,9 +346,9 @@ describe('broker application routes', () => {
     const approvalId = (requested.body as any).approval_id
     const decided = await state.app.handle({
       method: 'POST',
-      path: `/v1/approvals/${approvalId}/decision`,
-      headers: headers('approval-gateway-token'),
-      body: { approved: true, approved_by: 'human-director', expires_at: '2026-08-15T20:15:00.000Z' },
+      path: `/v1/approvals/${approvalId}/decisions/sales`,
+      headers: headers('sales-approval-token'),
+      body: { decision: 'approved', actor_id: 'sales-director', decided_at: NOW.toISOString(), expires_at: '2026-08-15T20:15:00.000Z' },
     })
     const sent = await state.app.handle({
       method: 'POST',
@@ -263,9 +370,9 @@ describe('broker application routes', () => {
     const approvalId = (requested.body as { approval_id: string }).approval_id
     const decided = await state.app.handle({
       method: 'POST',
-      path: `/v1/approvals/${approvalId}/decision`,
-      headers: headers('approval-gateway-token'),
-      body: { approved: true, approved_by: 'human-director', expires_at: '2026-08-15T20:15:00.000Z' },
+      path: `/v1/approvals/${approvalId}/decisions/sales`,
+      headers: headers('sales-approval-token'),
+      body: { decision: 'approved', actor_id: 'sales-director', decided_at: NOW.toISOString(), expires_at: '2026-08-15T20:15:00.000Z' },
     })
     const approvalToken = (decided.body as { token: string }).token
     await state.app.handle({
@@ -281,7 +388,7 @@ describe('broker application routes', () => {
       'SENSITIVE-MESSAGE-CONTENT-2846',
       approvalToken,
       'control-plane-token',
-      'approval-gateway-token',
+      'sales-approval-token',
       'connector-token',
     ]) {
       assert.equal(serialized.includes(prohibited), false, `audit leaked ${prohibited}`)

@@ -20,16 +20,19 @@ const environment = {
   WORK_ORDER_DATABASE_URL_FILE: '/run/secrets/work-order-db-url',
   APPROVER_DATABASE_URL_FILE: '/run/secrets/approver-db-url',
   SAFETY_DATABASE_URL_FILE: '/run/secrets/safety-db-url',
+  APPROVAL_EVIDENCE_DATABASE_URL_FILE: '/run/secrets/approval-evidence-db-url',
   WORK_ORDER_HMAC_SECRET_FILE: '/run/secrets/work-order-hmac',
   CONTROL_PLANE_BEARER_FILE: '/run/secrets/control-plane-bearer',
-  APPROVAL_GATEWAY_BEARER_FILE: '/run/secrets/approval-gateway-bearer',
+  APPROVAL_SALES_GATEWAY_BEARER_FILE: '/run/secrets/approval-sales-gateway-bearer',
+  APPROVAL_TELEGRAM_GATEWAY_BEARER_FILE: '/run/secrets/approval-telegram-gateway-bearer',
   CONNECTOR_BEARER_FILE: '/run/secrets/connector-bearer',
   INTERNAL_BEARER_FILE: '/run/secrets/internal-bearer',
   APPROVAL_HMAC_SECRET_FILE: '/run/secrets/approval-hmac',
   WORK_ORDER_ISSUER: 'codex-auditor',
   WORK_ORDER_AUDIENCE: 'proptimiza-hermes',
   WORK_ORDER_KEY_ID: 'codex-v1',
-  APPROVER_IDS: 'alama',
+  SALES_APPROVER_IDS: 'sales-director',
+  TELEGRAM_APPROVER_IDS: 'telegram-user-1',
 }
 
 describe('Simulation broker entrypoint', () => {
@@ -37,8 +40,12 @@ describe('Simulation broker entrypoint', () => {
     const config = loadSimulationBrokerConfig(environment)
     assert.equal(config.mode, 'simulation')
     assert.equal(config.port, 8080)
-    assert.equal(config.databaseSecretFiles.length, 4)
-    assert.equal(config.approverIds[0], 'alama')
+    assert.equal(config.databaseSecretFiles.length, 5)
+    assert.equal(config.approvalMode, 'either')
+    assert.deepEqual(config.approvalActors, {
+      sales: ['sales-director'],
+      telegram: ['telegram-user-1'],
+    })
 
     for (const [name, value] of [
       ['COMMERCIAL_MODE', 'shadow'],
@@ -51,6 +58,10 @@ describe('Simulation broker entrypoint', () => {
         /SIMULATION_BOUNDARY_INVALID/,
       )
     }
+    assert.throws(
+      () => loadSimulationBrokerConfig({ ...environment, APPROVAL_MODE: 'all' }),
+      /INVALID_APPROVAL_MODE/,
+    )
   })
 
   it('rejects raw credentials and missing file-backed secrets', () => {
@@ -103,10 +114,11 @@ describe('Simulation broker entrypoint', () => {
       assertDistinctApplicationSecrets({
         workOrderHmac: 'a'.repeat(32),
         controlPlane: 'b'.repeat(32),
-        approvalGateway: 'c'.repeat(32),
-        connector: 'd'.repeat(32),
-        internal: 'e'.repeat(32),
-        approvalHmac: 'f'.repeat(32),
+        approvalSalesGateway: 'c'.repeat(32),
+        approvalTelegramGateway: 'd'.repeat(32),
+        connector: 'e'.repeat(32),
+        internal: 'f'.repeat(32),
+        approvalHmac: 'g'.repeat(32),
       }),
     )
     assert.throws(
@@ -114,9 +126,10 @@ describe('Simulation broker entrypoint', () => {
         assertDistinctApplicationSecrets({
           workOrderHmac: 'a'.repeat(32),
           controlPlane: 'b'.repeat(32),
-          approvalGateway: 'c'.repeat(32),
-          connector: 'd'.repeat(32),
-          internal: 'e'.repeat(32),
+          approvalSalesGateway: 'c'.repeat(32),
+          approvalTelegramGateway: 'd'.repeat(32),
+          connector: 'e'.repeat(32),
+          internal: 'f'.repeat(32),
           approvalHmac: 'a'.repeat(32),
         }),
       /APPLICATION_SECRETS_NOT_DISTINCT/,

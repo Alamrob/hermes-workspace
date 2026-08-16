@@ -1,6 +1,7 @@
 import { constants as fsConstants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
+import { parseApprovalMode, type ApprovalMode } from './approval-mode.js'
 
 type Environment = Record<string, string | undefined>
 
@@ -9,11 +10,13 @@ const DATABASE_FILES = [
   'WORK_ORDER_DATABASE_URL_FILE',
   'APPROVER_DATABASE_URL_FILE',
   'SAFETY_DATABASE_URL_FILE',
+  'APPROVAL_EVIDENCE_DATABASE_URL_FILE',
 ] as const
 const APPLICATION_FILES = [
   'WORK_ORDER_HMAC_SECRET_FILE',
   'CONTROL_PLANE_BEARER_FILE',
-  'APPROVAL_GATEWAY_BEARER_FILE',
+  'APPROVAL_SALES_GATEWAY_BEARER_FILE',
+  'APPROVAL_TELEGRAM_GATEWAY_BEARER_FILE',
   'CONNECTOR_BEARER_FILE',
   'INTERNAL_BEARER_FILE',
   'APPROVAL_HMAC_SECRET_FILE',
@@ -26,6 +29,8 @@ const RAW_SECRETS = [
   'WORK_ORDER_HMAC_SECRET',
   'CONTROL_PLANE_BEARER',
   'APPROVAL_GATEWAY_BEARER',
+  'APPROVAL_SALES_GATEWAY_BEARER',
+  'APPROVAL_TELEGRAM_GATEWAY_BEARER',
   'CONNECTOR_BEARER',
   'INTERNAL_BEARER',
   'APPROVAL_HMAC_SECRET',
@@ -42,13 +47,15 @@ export interface SimulationBrokerConfig {
   databaseSecretFiles: Array<{ name: string; path: string }>
   applicationSecretFiles: Record<(typeof APPLICATION_FILES)[number], string>
   workOrderAuthority: { issuer: string; audience: string; keyId: string }
-  approverIds: string[]
+  approvalMode: ApprovalMode
+  approvalActors: { sales: string[]; telegram: string[] }
 }
 
 export interface ApplicationSecrets {
   workOrderHmac: string
   controlPlane: string
-  approvalGateway: string
+  approvalSalesGateway: string
+  approvalTelegramGateway: string
   connector: string
   internal: string
   approvalHmac: string
@@ -85,16 +92,10 @@ export function loadSimulationBrokerConfig(
   const applicationSecretFiles = Object.fromEntries(
     APPLICATION_FILES.map((name) => [name, requiredSecretPath(environment, name)]),
   ) as SimulationBrokerConfig['applicationSecretFiles']
-  const approverIds = required(environment, 'APPROVER_IDS')
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean)
-  if (
-    approverIds.length === 0 ||
-    new Set(approverIds).size !== approverIds.length ||
-    approverIds.some((value) => !/^[A-Za-z0-9._:@-]{1,128}$/.test(value))
-  )
-    throw new Error('APPROVER_IDS_INVALID')
+  const approvalActors = {
+    sales: parseActors(environment, 'SALES_APPROVER_IDS'),
+    telegram: parseActors(environment, 'TELEGRAM_APPROVER_IDS'),
+  }
 
   return {
     mode: 'simulation',
@@ -108,7 +109,8 @@ export function loadSimulationBrokerConfig(
       audience: required(environment, 'WORK_ORDER_AUDIENCE'),
       keyId: required(environment, 'WORK_ORDER_KEY_ID'),
     },
-    approverIds,
+    approvalMode: parseApprovalMode(environment.APPROVAL_MODE),
+    approvalActors,
   }
 }
 
@@ -182,8 +184,11 @@ export async function readApplicationSecrets(
   const secrets = {
     workOrderHmac: await readOwnerSecretFile(files.WORK_ORDER_HMAC_SECRET_FILE),
     controlPlane: await readOwnerSecretFile(files.CONTROL_PLANE_BEARER_FILE),
-    approvalGateway: await readOwnerSecretFile(
-      files.APPROVAL_GATEWAY_BEARER_FILE,
+    approvalSalesGateway: await readOwnerSecretFile(
+      files.APPROVAL_SALES_GATEWAY_BEARER_FILE,
+    ),
+    approvalTelegramGateway: await readOwnerSecretFile(
+      files.APPROVAL_TELEGRAM_GATEWAY_BEARER_FILE,
     ),
     connector: await readOwnerSecretFile(files.CONNECTOR_BEARER_FILE),
     internal: await readOwnerSecretFile(files.INTERNAL_BEARER_FILE),
@@ -215,4 +220,18 @@ function requiredSecretPath(environment: Environment, name: string): string {
   if (!isAbsolute(path) || !path.startsWith('/run/secrets/'))
     throw new Error(`${name}_INVALID`)
   return path
+}
+
+function parseActors(environment: Environment, name: string): string[] {
+  const actors = required(environment, name)
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+  if (
+    actors.length === 0 ||
+    new Set(actors).size !== actors.length ||
+    actors.some((value) => !/^[A-Za-z0-9._:@-]{1,128}$/.test(value))
+  )
+    throw new Error(`${name}_INVALID`)
+  return actors
 }

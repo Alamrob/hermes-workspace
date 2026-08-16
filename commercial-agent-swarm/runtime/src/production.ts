@@ -5,6 +5,9 @@ import {
   PostgresRuntimeRepository,
 } from './postgres-repository.js'
 import { InMemoryRuntimeRepository } from './repository.js'
+import { InMemoryApprovalEvidenceStore } from './approval-mode.js'
+import { PostgresApprovalEvidenceStore } from './postgres-approval-evidence-store.js'
+import type { ApprovalEvidenceStorePort } from './approval-mode.js'
 import type { AuditSink } from './observability.js'
 import type { RuntimeRepository } from './repository.js'
 
@@ -13,6 +16,7 @@ type RuntimeEnvironment = Record<string, string | undefined>
 export interface RuntimePersistence {
   repository: RuntimeRepository
   audit: AuditSink
+  approvalEvidenceStore: ApprovalEvidenceStorePort
   close: () => Promise<void>
   ready: () => Promise<void>
 }
@@ -25,6 +29,8 @@ export async function createRuntimePersistence(
     const approverUrl = environment.APPROVER_DATABASE_URL?.trim()
     const safetyUrl = environment.SAFETY_DATABASE_URL?.trim()
     const workOrderUrl = environment.WORK_ORDER_DATABASE_URL?.trim()
+    const approvalEvidenceUrl =
+      environment.APPROVAL_EVIDENCE_DATABASE_URL?.trim()
     if (environment.NODE_ENV === 'production' && !approverUrl) {
       throw new Error('APPROVER_DATABASE_URL is required in production')
     }
@@ -34,13 +40,22 @@ export async function createRuntimePersistence(
     if (environment.NODE_ENV === 'production' && !workOrderUrl) {
       throw new Error('WORK_ORDER_DATABASE_URL is required in production')
     }
+    if (environment.NODE_ENV === 'production' && !approvalEvidenceUrl) {
+      throw new Error(
+        'APPROVAL_EVIDENCE_DATABASE_URL is required in production',
+      )
+    }
     const principals = [
       principal(databaseUrl, 'DATABASE_URL'),
       principal(workOrderUrl ?? databaseUrl, 'WORK_ORDER_DATABASE_URL'),
       principal(approverUrl ?? databaseUrl, 'APPROVER_DATABASE_URL'),
       principal(safetyUrl ?? databaseUrl, 'SAFETY_DATABASE_URL'),
+      principal(
+        approvalEvidenceUrl ?? databaseUrl,
+        'APPROVAL_EVIDENCE_DATABASE_URL',
+      ),
     ]
-    if (environment.NODE_ENV === 'production' && new Set(principals).size !== 4)
+    if (environment.NODE_ENV === 'production' && new Set(principals).size !== 5)
       throw new Error('PRODUCTION_DATABASE_PRINCIPALS_MUST_BE_DISTINCT')
     const pool = new Pool({
       connectionString: databaseUrl,
@@ -58,6 +73,10 @@ export async function createRuntimePersistence(
       connectionString: safetyUrl ?? databaseUrl,
       application_name: 'proptimiza-commercial-safety',
     })
+    const approvalEvidencePool = new Pool({
+      connectionString: approvalEvidenceUrl ?? databaseUrl,
+      application_name: 'proptimiza-commercial-approval-evidence',
+    })
     const persistence: RuntimePersistence = {
       repository: new PostgresRuntimeRepository(pool, {
         ingestorPool,
@@ -65,6 +84,9 @@ export async function createRuntimePersistence(
         safetyPool,
       }),
       audit: new PostgresAuditSink(pool),
+      approvalEvidenceStore: new PostgresApprovalEvidenceStore(
+        approvalEvidencePool,
+      ),
       ready: async () =>
         verifyProductionDatabasePrincipals([
           { pool, expected: principals[0], capability: 'commercial_runtime' },
@@ -83,6 +105,11 @@ export async function createRuntimePersistence(
             expected: principals[3],
             capability: 'commercial_safety_operator',
           },
+          {
+            pool: approvalEvidencePool,
+            expected: principals[4],
+            capability: 'commercial_approval_evidence',
+          },
         ]),
       close: async () => {
         await Promise.all([
@@ -90,6 +117,7 @@ export async function createRuntimePersistence(
           ingestorPool.end(),
           approverPool.end(),
           safetyPool.end(),
+          approvalEvidencePool.end(),
         ])
       },
     }
@@ -108,6 +136,7 @@ export async function createRuntimePersistence(
     return {
       repository: new InMemoryRuntimeRepository(),
       audit: new InMemoryAuditSink(),
+      approvalEvidenceStore: new InMemoryApprovalEvidenceStore(),
       ready: async () => undefined,
       close: async () => undefined,
     }
@@ -121,6 +150,7 @@ const CAPABILITIES = [
   'commercial_approver',
   'commercial_safety_operator',
   'commercial_observer',
+  'commercial_approval_evidence',
 ] as const
 const EXPECTED_FUNCTIONS: Record<
   (typeof CAPABILITIES)[number],
@@ -152,6 +182,10 @@ const EXPECTED_FUNCTIONS: Record<
   ],
   commercial_safety_operator: ['control.set_kill_switch(text,text,boolean)'],
   commercial_observer: [],
+  commercial_approval_evidence: [
+    'control.record_approval_channel_evidence(uuid,text,text,text,text,timestamp with time zone)',
+    'control.list_approval_channel_evidence(uuid)',
+  ],
 }
 export async function verifyProductionDatabasePrincipals(
   entries: Array<{
