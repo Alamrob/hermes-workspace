@@ -605,6 +605,10 @@ integration('commercial catalog/control/mail data model', () => {
       await verify()
       for (const [grant, revoke] of [
         [
+          `GRANT SELECT(status) ON control.approvals TO ${login}`,
+          `REVOKE SELECT(status) ON control.approvals FROM ${login}`,
+        ],
+        [
           `GRANT TRUNCATE ON control.approvals TO ${login}`,
           `REVOKE TRUNCATE ON control.approvals FROM ${login}`,
         ],
@@ -631,6 +635,10 @@ integration('commercial catalog/control/mail data model', () => {
       await pool.query(
         `REVOKE ADMIN OPTION FOR commercial_runtime FROM ${login}`,
       )
+      await verify()
+      await pool.query(`GRANT ${bridge} TO ${login} WITH INHERIT FALSE`)
+      await assert.rejects(verify(), /DATABASE_PRINCIPAL_CAPABILITY_MISMATCH/)
+      await pool.query(`REVOKE ${bridge} FROM ${login}`)
       await verify()
       await pool.query(
         `GRANT commercial_runtime TO ${bridge}; REVOKE commercial_runtime FROM ${login}; GRANT ${bridge} TO ${login}`,

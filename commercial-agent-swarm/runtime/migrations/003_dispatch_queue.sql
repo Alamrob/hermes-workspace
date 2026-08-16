@@ -89,7 +89,7 @@ DECLARE target text;now_at timestamptz:=clock_timestamp();job control.dispatch_j
  SELECT*INTO job FROM control.dispatch_jobs WHERE job_id=$1 AND status='leased'AND lease_owner=$2 AND lease_until>now_at FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION'DISPATCH_LEASE_CONFLICT';END IF;
  target:=CASE WHEN $5>job.usage_value_reservation_usd OR $6>job.maximum_tokens OR $7>job.maximum_api_calls THEN'budget_exceeded'WHEN $3->'agent_result'->>'status'='failed'THEN'failed'ELSE'succeeded'END;
- UPDATE control.dispatch_jobs SET status=target,lease_owner=NULL,lease_until=NULL,child_timeout_seconds=NULL,result_envelope=$3,artifact_sha256=$4,usage_value_actual_usd=$5,usage_value_consumed_usd=greatest(usage_value_consumed_usd,$5),cash_cost_actual_usd=0,pricing_snapshot_id=$3->'usage'->'cost'->>'pricing_snapshot_id',tokens_used=$6,api_calls_used=$7,updated_at=now_at WHERE job_id=$1;
+ UPDATE control.dispatch_jobs SET status=target,lease_owner=NULL,lease_until=NULL,child_timeout_seconds=NULL,result_envelope=$3,artifact_sha256=$4,usage_value_actual_usd=$5,usage_value_consumed_usd=$5,cash_cost_actual_usd=0,pricing_snapshot_id=$3->'usage'->'cost'->>'pricing_snapshot_id',tokens_used=$6,api_calls_used=$7,updated_at=now_at WHERE job_id=$1;
  INSERT INTO control.dispatch_events(job_id,from_status,to_status,reason,occurred_at)VALUES($1,'leased',target,CASE WHEN target='budget_exceeded'THEN'USAGE_RESERVATION_EXCEEDED'ELSE'completed'END,now_at);
  RETURN target;
 END$$;

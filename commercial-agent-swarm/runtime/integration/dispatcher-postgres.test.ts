@@ -237,7 +237,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
     assert.deepEqual(done.rows[0], {
       status: 'succeeded',
       usage_value_actual_usd: '0.004000',
-      usage_value_consumed_usd: '0.020000',
+      usage_value_consumed_usd: '0.004000',
       cash_cost_actual_usd: '0.000000',
       pricing_snapshot_id: 'opencode-go-2026-08-16-v1',
       tokens_used: '15',

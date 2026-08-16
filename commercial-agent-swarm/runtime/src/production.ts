@@ -167,7 +167,7 @@ export async function verifyProductionDatabasePrincipals(
       rolcanlogin: boolean
       unsafe: boolean
     }>(
-      `SELECT current_user,r.rolcanlogin,(r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)AS unsafe,ARRAY(SELECT parent.rolname::text FROM pg_roles parent WHERE parent.oid<>r.oid AND pg_has_role(r.oid,parent.oid,'USAGE') ORDER BY parent.rolname)::text[] AS memberships FROM pg_roles r WHERE r.rolname=current_user`,
+      `SELECT current_user,r.rolcanlogin,(r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)AS unsafe,ARRAY(SELECT parent.rolname::text FROM pg_roles parent WHERE parent.oid<>r.oid AND pg_has_role(r.oid,parent.oid,'MEMBER') ORDER BY parent.rolname)::text[] AS memberships FROM pg_roles r WHERE r.rolname=current_user`,
     )
     const identity = identityResult.rows.at(0)
     if (
@@ -193,16 +193,17 @@ export async function verifyProductionDatabasePrincipals(
       `
       SELECT current_user,r.rolcanlogin,
         (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls) AS unsafe,
-        ARRAY(SELECT parent.rolname::text FROM pg_roles parent WHERE parent.oid<>r.oid AND pg_has_role(r.oid,parent.oid,'USAGE') ORDER BY parent.rolname)::text[] AS memberships,
+        ARRAY(SELECT parent.rolname::text FROM pg_roles parent WHERE parent.oid<>r.oid AND pg_has_role(r.oid,parent.oid,'MEMBER') ORDER BY parent.rolname)::text[] AS memberships,
         ARRAY(SELECT p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND has_function_privilege(current_user,p.oid,'EXECUTE') AND p.oid<>ALL(ARRAY(SELECT to_regprocedure(expected.name)::oid FROM unnest($1::text[]) AS expected(name))) ORDER BY p.oid::regprocedure::text) AS unexpected_functions,
         ARRAY(SELECT expected.name FROM unnest($1::text[]) AS expected(name) WHERE to_regprocedure(expected.name) IS NULL OR NOT coalesce(has_function_privilege(current_user,to_regprocedure(expected.name),'EXECUTE'),false) ORDER BY expected.name) AS missing_functions,
         (
           EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND c.relkind IN('r','p','v','m','f') AND (has_table_privilege(current_user,c.oid,'SELECT') OR has_table_privilege(current_user,c.oid,'INSERT') OR has_table_privilege(current_user,c.oid,'UPDATE') OR has_table_privilege(current_user,c.oid,'DELETE') OR has_table_privilege(current_user,c.oid,'TRUNCATE') OR has_table_privilege(current_user,c.oid,'REFERENCES') OR has_table_privilege(current_user,c.oid,'TRIGGER')))
+          OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND c.relkind IN('r','p','v','m','f') AND (has_any_column_privilege(current_user,c.oid,'SELECT') OR has_any_column_privilege(current_user,c.oid,'INSERT') OR has_any_column_privilege(current_user,c.oid,'UPDATE') OR has_any_column_privilege(current_user,c.oid,'REFERENCES')))
           OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND c.relkind='S' AND (has_sequence_privilege(current_user,c.oid,'SELECT') OR has_sequence_privilege(current_user,c.oid,'USAGE') OR has_sequence_privilege(current_user,c.oid,'UPDATE')))
           OR EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND has_schema_privilege(current_user,n.oid,'CREATE'))
           OR has_database_privilege(current_user,current_database(),'CREATE') OR has_database_privilege(current_user,current_database(),'TEMP')
           OR EXISTS(SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid AND m.admin_option)
-          OR EXISTS(SELECT 1 FROM pg_roles parent WHERE parent.oid<>r.oid AND pg_has_role(r.oid,parent.oid,'USAGE') AND (parent.rolsuper OR parent.rolcreatedb OR parent.rolcreaterole OR parent.rolreplication OR parent.rolbypassrls))
+          OR EXISTS(SELECT 1 FROM pg_roles parent WHERE parent.oid<>r.oid AND pg_has_role(r.oid,parent.oid,'MEMBER') AND (parent.rolsuper OR parent.rolcreatedb OR parent.rolcreaterole OR parent.rolreplication OR parent.rolbypassrls))
           OR EXISTS(SELECT 1 FROM pg_database d WHERE d.datname=current_database() AND d.datdba=r.oid)
           OR EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND n.nspowner=r.oid)
           OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND c.relowner=r.oid)
