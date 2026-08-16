@@ -26,9 +26,9 @@ The client request timeout must be greater than the Hermes child timeout by a va
 
 Dispatch SQL accepts no client timestamps. Enqueue, claim, recovery, failure and completion use `clock_timestamp()` inside their short transaction. A claim is a single server-side lock/CAS operation and requires `Hermes timeout < IPC timeout < lease`; completion requires the same worker and a lease still live at server time.
 
-Every job reserves bounded `maximum_cost`, bounded `maximum_tokens` and the fixed accounting currency before execution. Zero reservations are not executable. Under the mission row lock, claim compares the signed mission budget with completed use plus all live reservations and refuses work when the remaining budget cannot cover the job. Lease recovery releases the reservation. Completion converts the reservation to actual trusted use or a blocked `usage_unknown` outcome; it never trusts token or cost values emitted in the model JSON envelope.
+Every job reserves bounded `maximum_tokens`, bounded `maximum_api_calls`, a fixed accounting currency and either an approved fixed execution charge or an explicit monetary block before execution. Zero token/API reservations are not executable, and unknown monetary cost is never treated as zero. Under the mission row lock, claim compares the signed mission budget with completed use plus all live reservations and refuses work when the remaining budget cannot cover the job. Lease recovery releases the reservation. Completion converts the reservation to actual trusted use or a blocked `usage_unknown` outcome; it never trusts token or cost values emitted in the model JSON envelope.
 
-The implementation first checks the locally installed Hermes CLI/source for a supported machine-generated usage file. If a pinned, runtime-owned telemetry source can be verified, the executor reads that file outside the model response and validates it. Otherwise the result records usage as unknown and production composition fails closed before accepting dispatch work. The model's `token_cost` field is removed from the accounting contract.
+Hermes 0.20.1 is invoked with its supported `-z --usage-file <executor-controlled-path>` telemetry output. The executor validates the closed usage JSON: non-negative input/output/cache/reasoning/total tokens, bounded API calls, completed/failed, expected model/provider and the `estimated_cost_usd`/`cost_status`/`cost_source` relationship. For OpenCode Go the billing route may be `unknown`; `estimated_cost_usd=null` or `cost_status=unknown` is never coerced to zero. Production monetary dispatch therefore requires a configured approved fixed charge unless trusted pricing makes cost known. The model's own envelope contains no authoritative accounting field.
 
 ## Child process and filesystem containment
 
@@ -36,7 +36,7 @@ The executor accepts only UID/GID `10000`, the fixed image path `/opt/hermes/.ve
 
 `NodeProcessRunner` enforces separate stdout and stderr byte caps. Crossing either cap kills the whole process group and reports a bounded overflow error without retaining further output. On POSIX it spawns the child as a detached process-group leader and signals the negative PGID on timeout or overflow, covering descendants. It resolves or rejects only after the child `close` event so the direct child is reaped and no zombie remains. Spawn errors, timeout and overflow clear timers and listeners safely.
 
-The exact invocation remains `hermes -p <closed-profile> --cli chat -q <prompt>` with `shell: false`. No `--oneshot`, `--yolo`, `--accept-hooks`, delegation or runtime overrides are introduced. The temporary home is removed in every outcome.
+The invocation remains the supported `hermes -p <closed-profile> --cli chat -q <prompt>` path with `-z --usage-file <executor-controlled-path>` and `shell: false`. The approved seed manifest fixes OpenCode Go to base URL `https://opencode.ai/zen/go/v1` and model `deepseek-v4-flash`; the runtime accepts no provider or model override. No `--oneshot`, `--yolo`, `--accept-hooks`, delegation or other runtime overrides are introduced. The temporary home and usage file are removed in every outcome.
 
 ## Database rollback
 
@@ -58,7 +58,7 @@ Final gates are runtime unit tests, runtime typecheck, PostgreSQL 17 integration
 
 ## Task 4 hardening included in the reopening
 
-Production database composition parses the PostgreSQL username from direct URLs or root-only `*_DATABASE_URL_FILE` values. Runtime, approver and safety usernames must be present and pairwise distinct; sharing host and database remains valid. Secret validation uses closed environment-name and prefix denylists.
+Production database composition parses the PostgreSQL login-principal username from direct URLs or root-only `*_DATABASE_URL_FILE` values. Runtime, approver and safety usernames must be present and pairwise distinct; sharing host and database remains valid. Before readiness, each pool queries `current_user` and role membership: the authenticated login must equal its configured username, inherit exactly its one expected NOLOGIN capability and inherit neither of the other commercial capabilities. A URL naming principal A that authenticates as principal B fails startup. Secret validation uses closed environment-name and prefix denylists.
 
 Capability roles remain `NOLOGIN` and may not inherit another role. Migration fails closed on every outbound membership and on inbound membership that is not a clean, non-privileged `LOGIN` principal belonging to exactly one commercial capability and no other role. This permits idempotent reruns after an operator explicitly grants one capability to a dedicated login principal while rejecting privilege inherited through group or elevated roles. Those explicit login grants are deployment state and must be documented and rechecked by preflight. Default privileges explicitly revoke public function execution in `catalog`, `control` and `mail`.
 
