@@ -1,8 +1,23 @@
 import { isAbsolute } from 'node:path'
 
-export type CrmOperation = 'upsert_account' | 'upsert_contact' | 'append_note'
-export type CrmStream = 'accounts' | 'contacts' | 'notes'
-export type CrmRecordType = 'account' | 'contact' | 'note'
+export type CrmSyncMode = 'simulation' | 'shadow' | 'active'
+export type CrmOperation =
+  | 'mirror_pilot_target'
+  | 'upsert_account'
+  | 'upsert_contact'
+  | 'append_note'
+export type CrmStream =
+  | 'pilot_targets'
+  | 'accounts'
+  | 'contacts'
+  | 'opportunities'
+  | 'notes'
+export type CrmRecordType =
+  | 'pilot_target'
+  | 'account'
+  | 'contact'
+  | 'opportunity'
+  | 'note'
 
 export interface CrmOutboxItem {
   outboxId: string
@@ -63,6 +78,7 @@ export interface TwentyClientPort {
 export interface TwentyClientConfig {
   apiBaseUrl: string
   tokenFile: string
+  mode: CrmSyncMode
 }
 
 export class TwentyOutcomeUnknownError extends Error {
@@ -83,9 +99,10 @@ export function loadTwentyClientConfig(
         /^(?:OPENAI|ANTHROPIC|HERMES|LLM)_/i.test(name)),
   )
   if (forbidden) throw new Error('CRM_SYNC_CREDENTIAL_BOUNDARY_INVALID')
+  const mode = environment.CRM_SYNC_MODE
   if (
     environment.NODE_ENV !== 'production' ||
-    environment.CRM_SYNC_MODE !== 'simulation'
+    !['simulation', 'shadow', 'active'].includes(mode ?? '')
   )
     throw new Error('CRM_SYNC_MODE_INVALID')
   const base = environment.TWENTY_API_BASE_URL?.trim()
@@ -111,18 +128,21 @@ export function loadTwentyClientConfig(
     !tokenFile.startsWith('/run/secrets/')
   )
     throw new Error('TWENTY_API_TOKEN_FILE_INVALID')
-  return { apiBaseUrl: parsed.origin, tokenFile }
+  return { apiBaseUrl: parsed.origin, tokenFile, mode: mode as CrmSyncMode }
 }
 
 export async function runCrmSyncOnce(options: {
+  mode: CrmSyncMode
   workerId: string
   leaseSeconds: number
   store: CrmSyncStorePort
   client: TwentyClientPort
 }): Promise<
   | { status: 'idle' }
+  | { status: 'disabled' }
   | { status: 'confirmed'; outboxId: string }
 > {
+  if (options.mode !== 'active') return { status: 'disabled' }
   if (
     !/^[A-Za-z0-9._:-]{1,128}$/.test(options.workerId) ||
     !Number.isSafeInteger(options.leaseSeconds) ||
@@ -162,11 +182,14 @@ export async function runCrmSyncOnce(options: {
 }
 
 export async function syncTwentyInboundOnce(options: {
+  mode: CrmSyncMode
   stream: CrmStream
   cursor: { value: string | null; version: number }
   store: CrmSyncStorePort
   client: TwentyClientPort
 }): Promise<{ stored: number; cursorVersion: number }> {
+  if (options.mode === 'simulation')
+    return { stored: 0, cursorVersion: options.cursor.version }
   if (
     !['accounts', 'contacts', 'notes'].includes(options.stream) ||
     !Number.isSafeInteger(options.cursor.version) ||
@@ -198,7 +221,12 @@ function validateOutboxItem(item: CrmOutboxItem): void {
       item.outboxId,
     ) ||
     item.connectorId !== 'twenty' ||
-    !['upsert_account', 'upsert_contact', 'append_note'].includes(item.operation) ||
+    ![
+      'mirror_pilot_target',
+      'upsert_account',
+      'upsert_contact',
+      'append_note',
+    ].includes(item.operation) ||
     !isRecord(item.payload) ||
     !Number.isSafeInteger(item.sourceVersion) ||
     item.sourceVersion < 1
@@ -211,8 +239,10 @@ function validateChangePage(
   page: { events: CrmInboxEvent[]; nextCursor: string },
 ): void {
   const expectedType: Record<CrmStream, CrmRecordType> = {
+    pilot_targets: 'pilot_target',
     accounts: 'account',
     contacts: 'contact',
+    opportunities: 'opportunity',
     notes: 'note',
   }
   if (

@@ -41,6 +41,7 @@ describe('deterministic Twenty CRM sync', () => {
       {
         apiBaseUrl: 'https://crm.invalid',
         tokenFile: '/run/secrets/twenty-api-token',
+        mode: 'simulation',
       },
     )
     for (const name of [
@@ -73,6 +74,7 @@ describe('deterministic Twenty CRM sync', () => {
       readChanges: async () => ({ events: [], nextCursor: 'cursor-1' }),
     }
     const result = await runCrmSyncOnce({
+      mode: 'active',
       workerId: 'worker-1',
       leaseSeconds: 60,
       store: store({ complete: async (...args) => void completed.push(args) }),
@@ -93,6 +95,7 @@ describe('deterministic Twenty CRM sync', () => {
   it('does not touch Twenty when the durable queue is empty', async () => {
     let calls = 0
     const result = await runCrmSyncOnce({
+      mode: 'active',
       workerId: 'worker-1',
       leaseSeconds: 60,
       store: store({ claim: async () => null }),
@@ -112,6 +115,7 @@ describe('deterministic Twenty CRM sync', () => {
     const uncertain: unknown[] = []
     await assert.rejects(
       runCrmSyncOnce({
+        mode: 'active',
         workerId: 'worker-1',
         leaseSeconds: 60,
         store: store({
@@ -135,6 +139,7 @@ describe('deterministic Twenty CRM sync', () => {
     const events: unknown[] = []
     const cursors: unknown[] = []
     const result = await syncTwentyInboundOnce({
+      mode: 'shadow',
       stream: 'accounts',
       cursor: { value: 'cursor-0', version: 3 },
       store: store({
@@ -185,6 +190,7 @@ describe('deterministic Twenty CRM sync', () => {
     }))
     await assert.rejects(
       syncTwentyInboundOnce({
+        mode: 'shadow',
         stream: 'accounts',
         cursor: { value: null, version: 0 },
         store: store(),
@@ -195,5 +201,31 @@ describe('deterministic Twenty CRM sync', () => {
       }),
       /INVALID_TWENTY_CHANGE_PAGE/,
     )
+  })
+
+  it('performs no queue or client call in simulation mode', async () => {
+    let calls = 0
+    assert.deepEqual(
+      await runCrmSyncOnce({
+        mode: 'simulation',
+        workerId: 'worker-1',
+        leaseSeconds: 60,
+        store: store({
+          claim: async () => {
+            calls += 1
+            return item
+          },
+        }),
+        client: {
+          apply: async () => {
+            calls += 1
+            throw new Error('unexpected')
+          },
+          readChanges: async () => ({ events: [], nextCursor: 'cursor-1' }),
+        },
+      }),
+      { status: 'disabled' },
+    )
+    assert.equal(calls, 0)
   })
 })
