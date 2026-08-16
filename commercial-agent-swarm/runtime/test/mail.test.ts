@@ -36,15 +36,19 @@ function action(overrides: Partial<ApprovalAction> = {}): ApprovalAction {
   }
 }
 
-async function setup(a3Enabled: boolean) {
+async function setup(
+  a3Enabled: boolean,
+  approvalIds = ['323e4567-e89b-42d3-a456-426614174000'],
+) {
   const repository = new InMemoryRuntimeRepository()
+  let approvalIdIndex = 0
   await repository.saveMission({ mission_id: MISSION_ID, autonomy_level: 'A3', a3_enabled: a3Enabled, expires_at: '2026-08-15T21:00:00.000Z', allowed_actions: ['mail.send'], prohibited_actions: [], approved_channels: ['email'], approved_tools: ['broker.mail'], dry_run: false, project_id: 'proptimiza', project_version: 'v1', offer_version: 'offer-v1', policy_version: 'policy-v1' })
   const approvals = new ApprovalBroker({
     repository,
     hmacSecret: 'test-secret-with-at-least-32-bytes',
     now: () => NOW,
     nonce: () => '00112233445566778899aabbccddeeff',
-    id: () => '323e4567-e89b-42d3-a456-426614174000',
+    id: () => approvalIds[approvalIdIndex++]!,
   })
   const transport = new ControlledMailTransport()
   const mail = new MailService({ repository, approvals, transport, now: () => NOW })
@@ -90,6 +94,22 @@ describe('internal mail policy', () => {
     const result = await state.mail.send({ action: approvedAction, approval_token: approvalToken })
 
     assert.deepEqual(result, { receipt_id: 'receipt-1', approval_reference: '323e4567-e89b-42d3-a456-426614174000' })
+    assert.deepEqual(state.transport.sent, [approvedAction])
+  })
+
+  it('returns the original receipt and approval for multiple grants with one idempotency key', async () => {
+    const firstApprovalId = '323e4567-e89b-42d3-a456-426614174000'
+    const secondApprovalId = '423e4567-e89b-42d3-a456-426614174000'
+    const state = await setup(true, [firstApprovalId, secondApprovalId])
+    const approvedAction = action()
+    const firstToken = await tokenFor(state.approvals, approvedAction)
+    const secondToken = await tokenFor(state.approvals, approvedAction)
+
+    const first = await state.mail.send({ action: approvedAction, approval_token: firstToken })
+    const repeated = await state.mail.send({ action: approvedAction, approval_token: secondToken })
+
+    assert.deepEqual(first, { receipt_id: 'receipt-1', approval_reference: firstApprovalId })
+    assert.deepEqual(repeated, first)
     assert.deepEqual(state.transport.sent, [approvedAction])
   })
 

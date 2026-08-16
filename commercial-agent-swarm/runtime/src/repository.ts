@@ -36,7 +36,7 @@ export interface RuntimeRepository {
     now: string
   }): Promise<ApprovalGrantRecord | null>
   isKillSwitchActive(input: { missionId: string; channel: string }): Promise<boolean>
-  claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string }>
+  claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string; approval_id: string }>
   completeExternalAction(input: { missionId: string; idempotencyKey: string; receipt_id: string; approval_id: string }): Promise<void>
 }
 
@@ -146,11 +146,17 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
     )
   }
 
-  async claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string }> {
+  async claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string; approval_id: string }> {
     if (await this.isKillSwitchActive(input)) throw new Error('KILL_SWITCH_ACTIVE')
     const key = `${input.missionId}:${input.idempotencyKey}`
     const current = this.externalActions.get(key)
-    if (current?.receipt_id) return { status: 'completed', receipt_id: current.receipt_id }
+    if (current?.receipt_id && current.approval_id) {
+      return {
+        status: 'completed',
+        receipt_id: current.receipt_id,
+        approval_id: current.approval_id,
+      }
+    }
     if (current) throw new Error('EXECUTION_IN_PROGRESS')
     this.externalActions.set(key, {})
     return { status: 'acquired' }

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { ApprovalBroker, ApprovalError, type ApprovalAction } from '../src/approvals.js'
+import { hashAction } from '../src/canonical.js'
 import { InMemoryRuntimeRepository } from '../src/repository.js'
 
 const NOW = new Date('2026-08-15T20:00:00.000Z')
@@ -44,6 +45,29 @@ function broker(repository = new InMemoryRuntimeRepository()) {
 }
 
 describe('approval broker', () => {
+  it('issues the exact six-segment signed approval token', async () => {
+    const setup = broker()
+    const approvedAction = action()
+    const request = await setup.broker.request(approvedAction)
+
+    const decision = await setup.broker.decide(request.approval_id, {
+      approved: true,
+      approved_by: 'human-director',
+      expires_at: '2026-08-15T20:15:00.000Z',
+    })
+
+    const segments = decision.token?.split('::') ?? []
+    assert.equal(segments.length, 6)
+    assert.deepEqual(segments.slice(0, 5), [
+      'APPROVAL',
+      MISSION_ID,
+      hashAction(approvedAction),
+      '2026-08-15T20:15:00.000Z',
+      '00112233445566778899aabbccddeeff',
+    ])
+    assert.match(segments[5] ?? '', /^[0-9a-f]{64}$/)
+  })
+
   it('rejects an approval decision whose TTL exceeds thirty minutes', async () => {
     const setup = broker()
     const request = await setup.broker.request(action())

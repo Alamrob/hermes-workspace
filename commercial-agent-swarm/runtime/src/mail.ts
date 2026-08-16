@@ -38,7 +38,9 @@ export class MailService {
     if (!mission || !isLiveMailMission(mission, action, (this.options.now ?? (() => new Date()))())) throw new MailPolicyError('MISSION_POLICY_DENIED')
     const grant = await this.options.approvals.authorize(command.approval_token, action)
     const claim = await this.options.repository.claimExternalAction({ missionId: action.mission_id, channel: action.channel, idempotencyKey: action.idempotency_key })
-    if (claim.status === 'completed') return { receipt_id: claim.receipt_id, approval_reference: grant.approval_id }
+    if (claim.status === 'completed') {
+      return { receipt_id: claim.receipt_id, approval_reference: claim.approval_id }
+    }
     const receipt = await this.options.transport.send(action)
     await this.options.repository.completeExternalAction({ missionId: action.mission_id, idempotencyKey: action.idempotency_key, receipt_id: receipt.receipt_id, approval_id: grant.approval_id })
     return { ...receipt, approval_reference: grant.approval_id }
