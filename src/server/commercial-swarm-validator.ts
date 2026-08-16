@@ -82,6 +82,10 @@ export const HERMES_TOOLSET_KEYS = [
   'yuanbao',
 ] as const
 
+export const HERMES_OBSERVABLE_TOOLSET_KEYS = HERMES_TOOLSET_KEYS.filter(
+  (toolset) => toolset !== 'messaging',
+)
+
 const NATIVE_CONFIG_FIELDS = [
   'custom_providers',
   'model',
@@ -280,7 +284,7 @@ export function validateHermesEffectiveToolSummary(
     return errors
   }
 
-  const knownBuiltIns = new Set<string>(HERMES_TOOLSET_KEYS)
+  const knownBuiltIns = new Set<string>(HERMES_OBSERVABLE_TOOLSET_KEYS)
   const unknownBuiltIns = [...builtIns.keys()].filter(
     (toolset) => !knownBuiltIns.has(toolset),
   )
@@ -289,7 +293,7 @@ export function validateHermesEffectiveToolSummary(
       `${profileId}: Hermes tool summary has unknown built-ins: ${unknownBuiltIns.join(',')}`,
     )
   }
-  const missingBuiltIns = HERMES_TOOLSET_KEYS.filter(
+  const missingBuiltIns = HERMES_OBSERVABLE_TOOLSET_KEYS.filter(
     (toolset) => !builtIns.has(toolset),
   )
   if (missingBuiltIns.length > 0) {

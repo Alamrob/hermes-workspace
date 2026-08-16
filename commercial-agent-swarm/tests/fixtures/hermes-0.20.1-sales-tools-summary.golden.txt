@@ -14,7 +14,6 @@ Built-in toolsets (cli):
   ✗ disabled  delegation  👥 Delegation
   ✗ disabled  cronjob  ⏰ Cronjob
   ✗ disabled  computer_use  🖱️ Computer Use
-  ✗ disabled  messaging  💬 Messaging
   ✗ disabled  video  🎬 Video Analysis
   ✗ disabled  video_gen  🎬 Video Generation
   ✗ disabled  bfl  🎬 BFL FLUX 3 Video

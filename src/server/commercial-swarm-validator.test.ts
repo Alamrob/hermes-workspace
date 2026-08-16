@@ -185,6 +185,32 @@ describe('commercial swarm package validator', () => {
     ])
   })
 
+  it('denies messaging in config without requiring an unobservable summary row', () => {
+    for (const profileId of activeProfileIds) {
+      const config = readProfileConfig(profileId)
+      const agent = config.agent as Record<string, unknown>
+      expect(agent.disabled_toolsets, profileId).toContain('messaging')
+    }
+
+    const golden = readFileSync(
+      join(
+        packageRoot,
+        'tests',
+        'fixtures',
+        'hermes-0.20.1-sales-tools-summary.golden.txt',
+      ),
+      'utf8',
+    )
+    expect(golden).not.toContain('messaging')
+    expect(
+      validateHermesEffectiveToolSummary(
+        golden,
+        expectedProfileToolsets['sales-orchestrator'],
+        'sales-orchestrator',
+      ),
+    ).toEqual([])
+  })
+
   it('routes separate profiles through the broker without native delegation', () => {
     const soul = readFileSync(
       join(packageRoot, 'profiles', 'sales-orchestrator', 'SOUL.md'),
