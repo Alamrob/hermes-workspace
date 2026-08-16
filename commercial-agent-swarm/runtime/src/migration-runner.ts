@@ -9,6 +9,7 @@ const EXPECTED_MIGRATIONS = [
   '005_portfolio_read_models',
   '006_sales_read_models',
   '007_usage_budget_ledger',
+  '008_simulation_safety_seed',
 ] as const
 
 export interface MigrationSource {

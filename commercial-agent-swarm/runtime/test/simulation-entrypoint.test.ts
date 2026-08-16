@@ -9,6 +9,7 @@ import {
 } from '../src/simulation-entrypoint.js'
 import { validateGroupSecretFileMetadata } from '../src/secret-file.js'
 import { DisabledExternalMailTransport } from '../src/disabled-transports.js'
+import { assertSimulationKillSwitchActive } from '../src/broker-main.js'
 
 const environment = {
   NODE_ENV: 'production',
@@ -113,6 +114,15 @@ describe('Simulation broker entrypoint', () => {
     await assert.rejects(
       new DisabledExternalMailTransport().send({} as never),
       /EXTERNAL_ACTIONS_DISABLED/,
+    )
+  })
+
+  it('refuses to start simulation when the authoritative global switch is false', async () => {
+    await assert.rejects(
+      assertSimulationKillSwitchActive({
+        isKillSwitchActive: async () => false,
+      }),
+      /SIMULATION_KILL_SWITCH_NOT_ACTIVE/,
     )
   })
 

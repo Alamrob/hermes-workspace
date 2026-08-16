@@ -30,11 +30,16 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       '001_runtime', '002_commercial_control_plane', '003_dispatch_queue',
       '004_crm_integration', '005_portfolio_read_models', '006_sales_read_models',
       '007_usage_budget_ledger',
+      '008_simulation_safety_seed',
     ]
     await runVersionedMigrations(leftPool, await Promise.all(versions.map(async (version) => ({
       version,
       sql: await readFile(new URL(`../migrations/${version}.sql`, import.meta.url), 'utf8'),
     }))))
+    await leftPool.query(
+      `UPDATE control.kill_switches SET active=false
+        WHERE scope='global' AND scope_id='*'`,
+    )
     left = new PostgresDispatchQueue(leftPool)
     right = new PostgresDispatchQueue(rightPool)
   })

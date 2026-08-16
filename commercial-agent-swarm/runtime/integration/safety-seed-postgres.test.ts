@@ -1,0 +1,110 @@
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { after, before, describe, it } from 'node:test'
+import { Pool } from 'pg'
+import { assertSimulationKillSwitchActive } from '../src/broker-main.js'
+import { runVersionedMigrations } from '../src/migration-runner.js'
+import { PostgresRuntimeRepository } from '../src/postgres-repository.js'
+
+const ADMIN = process.env.TEST_DATABASE_URL
+const integration = ADMIN ? describe : describe.skip
+
+integration('PostgreSQL simulation safety seed', { concurrency: 1 }, () => {
+  const database = `safety_seed_${randomUUID().replaceAll('-', '')}`
+  let admin: Pool
+  let pool: Pool
+  let sources: Array<{ version: string; sql: string }>
+
+  before(async () => {
+    admin = new Pool({ connectionString: ADMIN })
+    await admin.query(`CREATE DATABASE "${database}"`)
+    const url = new URL(ADMIN!)
+    url.pathname = `/${database}`
+    pool = new Pool({ connectionString: url.toString() })
+    sources = await Promise.all(
+      [
+        '001_runtime',
+        '002_commercial_control_plane',
+        '003_dispatch_queue',
+        '004_crm_integration',
+        '005_portfolio_read_models',
+        '006_sales_read_models',
+        '007_usage_budget_ledger',
+        '008_simulation_safety_seed',
+      ].map(async (version) => ({
+        version,
+        sql: await readFile(
+          new URL(`../migrations/${version}.sql`, import.meta.url),
+          'utf8',
+        ),
+      })),
+    )
+  })
+
+  after(async () => {
+    await pool.end()
+    await admin.query(
+      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1',
+      [database],
+    )
+    await admin.query(`DROP DATABASE IF EXISTS "${database}"`)
+    await admin.end()
+  })
+
+  it('starts fresh simulation safe, preserves safety on rollback, and never overwrites an existing false', async () => {
+    await runVersionedMigrations(pool, sources)
+    assert.deepEqual(await globalSwitch(pool), {
+      active: true,
+      count: 1,
+    })
+    await assertSimulationKillSwitchActive(new PostgresRuntimeRepository(pool))
+    assert.equal(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count FROM control.schema_migrations`,
+        )
+      ).rows[0].count,
+      8,
+    )
+
+    const rollback = await readFile(
+      new URL('../migrations/008_simulation_safety_seed.rollback.sql', import.meta.url),
+      'utf8',
+    )
+    await pool.query(rollback)
+    assert.deepEqual(await globalSwitch(pool), { active: true, count: 1 })
+    assert.equal(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count FROM control.schema_migrations
+            WHERE version='008_simulation_safety_seed'`,
+        )
+      ).rows[0].count,
+      0,
+    )
+    await runVersionedMigrations(pool, sources)
+    assert.deepEqual(await globalSwitch(pool), { active: true, count: 1 })
+
+    await pool.query(rollback)
+    await pool.query(
+      `UPDATE control.kill_switches SET active=false
+        WHERE scope='global' AND scope_id='*'`,
+    )
+    await runVersionedMigrations(pool, sources)
+    assert.deepEqual(await globalSwitch(pool), { active: false, count: 1 })
+    await assert.rejects(
+      assertSimulationKillSwitchActive(new PostgresRuntimeRepository(pool)),
+      /SIMULATION_KILL_SWITCH_NOT_ACTIVE/,
+    )
+  })
+})
+
+async function globalSwitch(pool: Pool) {
+  const result = await pool.query<{ active: boolean; count: number }>(
+    `SELECT bool_and(active) AS active,count(*)::int AS count
+       FROM control.kill_switches
+      WHERE scope='global' AND scope_id='*'`,
+  )
+  return result.rows[0]
+}

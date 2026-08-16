@@ -15,6 +15,7 @@ import {
 } from './simulation-entrypoint.js'
 import { WebhookService } from './webhook.js'
 import type { DeterministicDispatcher } from './dispatch-queue.js'
+import type { RuntimeRepository } from './repository.js'
 
 const DISPATCH_POLL_INTERVAL_MS = 1_000
 
@@ -29,13 +30,7 @@ export async function startSimulationBroker(
   ])
   const persistence = await createRuntimePersistence(databaseEnvironment)
   try {
-    if (
-      !(await persistence.repository.isKillSwitchActive({
-        missionId: '*',
-        channel: '*',
-      }))
-    )
-      throw new Error('SIMULATION_KILL_SWITCH_NOT_ACTIVE')
+    await assertSimulationKillSwitchActive(persistence.repository)
 
     const externalTransports = createBrokerExternalTransports(environment)
     const approvals = new ApprovalBroker({
@@ -126,6 +121,18 @@ export async function startSimulationBroker(
     await persistence.close()
     throw error
   }
+}
+
+export async function assertSimulationKillSwitchActive(
+  repository: Pick<RuntimeRepository, 'isKillSwitchActive'>,
+): Promise<void> {
+  if (
+    !(await repository.isKillSwitchActive({
+      missionId: '*',
+      channel: '*',
+    }))
+  )
+    throw new Error('SIMULATION_KILL_SWITCH_NOT_ACTIVE')
 }
 
 export async function configureDispatcherBeforeListen<T>(

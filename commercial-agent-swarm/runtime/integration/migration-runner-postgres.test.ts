@@ -26,6 +26,7 @@ integration('PostgreSQL 17 versioned migration runner', () => {
           '005_portfolio_read_models',
           '006_sales_read_models',
           '007_usage_budget_ledger',
+          '008_simulation_safety_seed',
         ].map(async (version) => ({
           version,
           sql: await readFile(
@@ -42,7 +43,7 @@ integration('PostgreSQL 17 versioned migration runner', () => {
             `SELECT count(*)::int AS count FROM control.schema_migrations`,
           )
         ).rows[0].count,
-        7,
+        8,
       )
       const rollback006 = await readFile(
         new URL('../migrations/006_sales_read_models.rollback.sql', import.meta.url),
