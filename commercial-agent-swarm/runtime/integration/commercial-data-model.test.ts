@@ -3,11 +3,13 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { after, before, describe, it } from 'node:test'
 import { Pool } from 'pg'
+import { verifyProductionDatabasePrincipals } from '../src/production.js'
 
 const ADMIN_URL = process.env.TEST_DATABASE_URL
 const RUNTIME_MIGRATION = new URL('../migrations/001_runtime.sql', import.meta.url)
 const COMMERCIAL_MIGRATION = new URL('../migrations/002_commercial_control_plane.sql', import.meta.url)
 const COMMERCIAL_ROLLBACK = new URL('../migrations/002_commercial_control_plane.rollback.sql', import.meta.url)
+const DISPATCH_MIGRATION = new URL('../migrations/003_dispatch_queue.sql', import.meta.url)
 const integration = ADMIN_URL ? describe : describe.skip
 
 integration('commercial catalog/control/mail data model', () => {
@@ -84,7 +86,7 @@ integration('commercial catalog/control/mail data model', () => {
       (SELECT policy FROM catalog.policy_versions WHERE project_id='proptimiza' AND version='policy-v1') AS policy,
       (SELECT row_to_json(d) FROM (SELECT project_id,policy_version,sender,recipient,maximum_volume,active,valid_until FROM mail.delivery_policies WHERE project_id='proptimiza') d) AS delivery`)
     assert.deepEqual(frozen.rows[0].project, { project_id: 'proptimiza', display_name: 'Proptimiza' })
-    assert.equal(frozen.rows[0].project_version.status, 'active')
+    assert.equal(frozen.rows[0].project_version.status, 'published')
     assert.deepEqual(frozen.rows[0].policy, { external_contact: false, mail_sender: 'ventas@proptimiza.com', mail_recipient: 'contacto@proptimiza.com', maximum_volume: 1 })
     assert.equal(frozen.rows[0].delivery.policy_version, 'policy-v1')
   })
@@ -125,7 +127,10 @@ integration('commercial catalog/control/mail data model', () => {
         VALUES ('proptimiza', 'policy-v1', 'other@proptimiza.com', 'contacto@proptimiza.com', 1, true)`),
       /duplicate key value/,
     )
-    await assert.rejects(pool.query(`INSERT INTO catalog.project_versions(project_id,version,display_name,status) VALUES('proptimiza','v2','conflict','active')`), /project_versions_one_active_uq/)
+    await assert.rejects(
+      pool.query(`INSERT INTO catalog.project_versions(project_id,version,display_name,status) VALUES('proptimiza','v3','Legacy active state','active')`),
+      /project_versions_status_check/,
+    )
   })
 
   it('indexes every foreign-key column set in catalog, control, and mail', async () => {
@@ -142,6 +147,24 @@ integration('commercial catalog/control/mail data model', () => {
     `)
     assert.deepEqual(missing.rows, [])
   })
+
+  it('rotates and reactivates complete catalog and delivery tuples append-only',async()=>{await pool.query(`
+    INSERT INTO catalog.project_versions(project_id,version,display_name,status)VALUES('proptimiza','v2','Rotation','published');
+    INSERT INTO catalog.offer_versions(project_id,offer_id,version,project_version,name,currency,starting_price,description)VALUES('proptimiza','operacion-sin-planillas','offer-v2','v2','Operación Sin Planillas 2','CLP',1800000,'rotation');
+    INSERT INTO catalog.icp_versions(project_id,version,project_version,country_code,business_model,sector,employee_min,employee_max,operational_signals,description)VALUES('proptimiza','icp-v2','v2','CL','B2B','services',10,100,ARRAY['Excel'],'rotation');
+    INSERT INTO catalog.policy_versions(project_id,version,project_version,policy)VALUES('proptimiza','policy-v2','v2','{}');
+    INSERT INTO mail.delivery_policies(project_id,policy_version,sender,recipient,maximum_volume,active)VALUES('proptimiza','policy-v2','ventas@proptimiza.com','contacto@proptimiza.com',1,true)`);await assert.rejects(pool.query(`INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('mixed-v2-offer-v1','proptimiza','v2','operacion-sin-planillas','offer-v1','icp-v2','policy-v2')`),/foreign key/);await pool.query(`
+    INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('activate-catalog-v2','proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v2');
+    INSERT INTO mail.delivery_policy_activations(activation_key,project_id,policy_version)VALUES('activate-delivery-v2','proptimiza','policy-v2')`);assert.equal((await pool.query(`SELECT catalog.mission_versions_exist('proptimiza','v1','operacion-sin-planillas','offer-v1','icp-v1','policy-v1') old,catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v2') current`)).rows[0].old,false);assert.equal((await pool.query(`SELECT catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v2') current`)).rows[0].current,true);await pool.query(`
+    INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('reactivate-catalog-v1','proptimiza','v1','operacion-sin-planillas','offer-v1','icp-v1','policy-v1');
+    INSERT INTO mail.delivery_policy_activations(activation_key,project_id,policy_version)VALUES('reactivate-delivery-v1','proptimiza','policy-v1')`);assert.equal((await pool.query(`SELECT catalog.mission_versions_exist('proptimiza','v1','operacion-sin-planillas','offer-v1','icp-v1','policy-v1') current,catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v2') old`)).rows[0].current,true);assert.equal((await pool.query(`SELECT catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v2') old`)).rows[0].old,false);assert.equal((await pool.query(`SELECT mail.delivery_policy_allows('proptimiza','policy-v1','ventas@proptimiza.com','contacto@proptimiza.com',1) current`)).rows[0].current,true)})
+
+  it('never activates a retired project version',async()=>{await pool.query(`
+    INSERT INTO catalog.project_versions(project_id,version,display_name,status)VALUES('proptimiza','v3','Retired','retired');
+    INSERT INTO catalog.offer_versions(project_id,offer_id,version,project_version,name,currency,starting_price,description)VALUES('proptimiza','operacion-sin-planillas','offer-v3','v3','Retired offer','CLP',1800000,'retired');
+    INSERT INTO catalog.icp_versions(project_id,version,project_version,country_code,business_model,sector,employee_min,employee_max,operational_signals,description)VALUES('proptimiza','icp-v3','v3','CL','B2B','services',10,100,ARRAY['Excel'],'retired');
+    INSERT INTO catalog.policy_versions(project_id,version,project_version,policy)VALUES('proptimiza','policy-v3','v3','{}');
+    INSERT INTO mail.delivery_policies(project_id,policy_version,sender,recipient,maximum_volume,active)VALUES('proptimiza','policy-v3','ventas@proptimiza.com','contacto@proptimiza.com',1,true)`);await assert.rejects(pool.query(`INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('activate-retired-v3','proptimiza','v3','operacion-sin-planillas','offer-v3','icp-v3','policy-v3')`),/VERSION_NOT_PUBLISHED/);await assert.rejects(pool.query(`INSERT INTO mail.delivery_policy_activations(activation_key,project_id,policy_version)VALUES('activate-retired-mail-v3','proptimiza','policy-v3')`),/VERSION_NOT_PUBLISHED/)})
 
   it('creates four non-login capability roles and removes direct sensitive-table privileges', async () => {
     const roles = await pool.query(`
@@ -201,7 +224,13 @@ integration('commercial catalog/control/mail data model', () => {
     } finally {
       await pool.query('ALTER ROLE commercial_observer NOLOGIN')
     }
+    const suffix=randomUUID().replaceAll('-','')
+    const login=`runtime_login_${suffix}`,rogue=`rogue_${suffix}`
+    await pool.query(`CREATE ROLE ${login} LOGIN;GRANT commercial_runtime TO ${login};CREATE ROLE ${rogue} NOLOGIN`)
+    try{await pool.query(await readFile(COMMERCIAL_MIGRATION,'utf8'));await pool.query(`GRANT ${rogue} TO commercial_runtime`);await assert.rejects(pool.query(await readFile(COMMERCIAL_MIGRATION,'utf8')),/UNSAFE_CAPABILITY_OUTBOUND_MEMBERSHIP/);await pool.query(`REVOKE ${rogue} FROM commercial_runtime;GRANT commercial_runtime TO ${rogue}`);await assert.rejects(pool.query(await readFile(COMMERCIAL_MIGRATION,'utf8')),/UNSAFE_CAPABILITY_INBOUND_MEMBERSHIP/)}finally{await pool.query(`REVOKE commercial_runtime FROM ${login},${rogue};REVOKE ${rogue} FROM commercial_runtime;DROP ROLE IF EXISTS ${login},${rogue}`)}
   })
+
+  it('verifies distinct live login principals and rejects inherited or direct cross-capabilities',async()=>{await pool.query(await readFile(DISPATCH_MIGRATION,'utf8'));const suffix=randomUUID().replaceAll('-',''),password=`test_${suffix}`,names={runtime:`runtime_live_${suffix}`,approver:`approver_live_${suffix}`,safety:`safety_live_${suffix}`};await pool.query(`CREATE ROLE ${names.runtime} LOGIN PASSWORD '${password}';CREATE ROLE ${names.approver} LOGIN PASSWORD '${password}';CREATE ROLE ${names.safety} LOGIN PASSWORD '${password}';GRANT commercial_runtime TO ${names.runtime};GRANT commercial_approver TO ${names.approver};GRANT commercial_safety_operator TO ${names.safety}`);const makePool=(username:string)=>{const url=new URL(ADMIN_URL!);url.pathname=`/${databaseName}`;url.username=username;url.password=password;return new Pool({connectionString:url.toString(),max:1})};const runtime=makePool(names.runtime),approver=makePool(names.approver),safety=makePool(names.safety);try{await verifyProductionDatabasePrincipals([{pool:runtime,expected:names.runtime,capability:'commercial_runtime'},{pool:approver,expected:names.approver,capability:'commercial_approver'},{pool:safety,expected:names.safety,capability:'commercial_safety_operator'}]);await assert.rejects(verifyProductionDatabasePrincipals([{pool:safety,expected:names.runtime,capability:'commercial_runtime'}]),/DATABASE_PRINCIPAL_CAPABILITY_MISMATCH/);await pool.query(`GRANT UPDATE ON control.approvals TO ${names.runtime}`);await assert.rejects(verifyProductionDatabasePrincipals([{pool:runtime,expected:names.runtime,capability:'commercial_runtime'}]),/DATABASE_PRINCIPAL_CAPABILITY_MISMATCH/);await pool.query(`REVOKE UPDATE ON control.approvals FROM ${names.runtime}`)}finally{await Promise.all([runtime.end(),approver.end(),safety.end()]);await pool.query(`REVOKE commercial_runtime FROM ${names.runtime};REVOKE commercial_approver FROM ${names.approver};REVOKE commercial_safety_operator FROM ${names.safety};DROP ROLE IF EXISTS ${names.runtime},${names.approver},${names.safety}`)}})
 
   it('rolls back only migration 002 objects and preserves runtime plus legacy rows', async () => {
     const rollbackDatabase = `proptimiza_rollback_${randomUUID().replaceAll('-', '')}`
@@ -213,6 +242,10 @@ integration('commercial catalog/control/mail data model', () => {
       await rollbackPool.query(`CREATE TABLE public.approvals (id bigint PRIMARY KEY); INSERT INTO public.approvals VALUES (9)`)
       await rollbackPool.query(await readFile(RUNTIME_MIGRATION, 'utf8'))
       await rollbackPool.query(await readFile(COMMERCIAL_MIGRATION, 'utf8'))
+      await rollbackPool.query('CREATE TABLE catalog.keep_after_002(value text)')
+      await assert.rejects(rollbackPool.query(await readFile(COMMERCIAL_ROLLBACK, 'utf8')),/cannot drop schema catalog/)
+      assert.equal((await rollbackPool.query(`SELECT to_regclass('catalog.keep_after_002') IS NOT NULL AS kept,to_regclass('catalog.projects') IS NOT NULL AS migration_kept`)).rows[0].migration_kept,true)
+      await rollbackPool.query('DROP TABLE catalog.keep_after_002')
       await rollbackPool.query(await readFile(COMMERCIAL_ROLLBACK, 'utf8'))
       assert.equal((await rollbackPool.query(`SELECT to_regclass('control.missions') AS runtime, to_regclass('catalog.projects') AS catalog`)).rows[0].runtime, 'control.missions')
       assert.equal((await rollbackPool.query(`SELECT to_regclass('catalog.projects') AS catalog`)).rows[0].catalog, null)
