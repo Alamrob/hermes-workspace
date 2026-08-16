@@ -7,6 +7,9 @@
     "node": ">=22.0.0"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start:broker": "node dist/broker-main.js",
+    "migrate": "node dist/migrate-main.js",
     "test": "tsx --test test/**/*.test.ts",
     "test:unit": "tsx --test test/**/*.test.ts",
     "test:integration": "tsx --test --test-concurrency=1 integration/**/*.test.ts",
