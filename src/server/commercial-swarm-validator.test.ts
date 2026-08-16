@@ -8,13 +8,24 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import * as yaml from 'yaml'
 import {
   REQUIRED_PROMPT_SECTIONS,
   validateCommercialSwarm,
+  validateNativeProfileConfig,
   validateSystemPrompt,
 } from './commercial-swarm-validator'
 
 const packageRoot = join(process.cwd(), 'commercial-agent-swarm')
+
+const activeProfileIds = [
+  'sales-orchestrator',
+  'market-account-intelligence',
+  'contact-data-steward',
+  'qualification-prioritization',
+  'outreach-draft-manager',
+  'commercial-qa-compliance',
+]
 
 describe('commercial swarm package validator', () => {
   it('accepts the committed simulation-only package', () => {
@@ -22,9 +33,10 @@ describe('commercial swarm package validator', () => {
 
     expect(result.errors).toEqual([])
     expect(result.counts.agents).toBe(10)
-    expect(result.counts.prompts).toBe(11)
+    expect(result.counts.profiles).toBe(6)
+    expect(result.counts.prompts).toBe(17)
     expect(result.counts.testCases).toBe(16)
-    expect(result.counts.rosterWorkers).toBe(11)
+    expect(result.counts.rosterWorkers).toBe(6)
   })
 
   it('rejects an incomplete standalone system prompt', () => {
@@ -45,12 +57,39 @@ describe('commercial swarm package validator', () => {
     )
   })
 
-  it('validates the proposed roster through the workspace source-of-truth schema', () => {
+  it('exposes only the six native Hermes profiles in the active roster', () => {
     const result = validateCommercialSwarm(packageRoot)
 
-    expect(result.rosterWorkerIds).toContain('commercial-orchestrator')
-    expect(new Set(result.rosterWorkerIds).size).toBe(
-      result.rosterWorkerIds.length,
+    expect(result.rosterWorkerIds).toEqual(activeProfileIds)
+  })
+
+  it('rejects toolset escalation and inline credentials in a native profile config', () => {
+    const config = yaml.parse(
+      readFileSync(
+        join(
+          packageRoot,
+          'profiles',
+          'market-account-intelligence',
+          'config.yaml',
+        ),
+        'utf8',
+      ),
+    ) as Record<string, unknown>
+    const toolsets = config.toolsets as Array<string>
+    const providers = config.custom_providers as Array<Record<string, unknown>>
+    toolsets.push('terminal')
+    providers[0].api_key = 'inline-placeholder-is-still-forbidden'
+
+    const errors = validateNativeProfileConfig(
+      config,
+      'market-account-intelligence',
+    )
+
+    expect(errors).toContain(
+      'market-account-intelligence: CLI toolsets must equal web,file',
+    )
+    expect(errors).toContain(
+      'market-account-intelligence: custom provider must not contain api_key',
     )
   })
 
@@ -96,7 +135,12 @@ describe('commercial swarm package validator', () => {
 
   it('excludes nested node_modules from the commercial package audit', () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'commercial-swarm-dependency-'))
-    const dependencyRoot = join(tempRoot, 'nested', 'node_modules', 'dependency')
+    const dependencyRoot = join(
+      tempRoot,
+      'nested',
+      'node_modules',
+      'dependency',
+    )
     mkdirSync(dependencyRoot, { recursive: true })
     writeFileSync(join(tempRoot, 'README.md'), 'Simulation')
     writeFileSync(

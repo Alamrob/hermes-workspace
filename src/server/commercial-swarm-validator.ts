@@ -33,6 +33,63 @@ export const REQUIRED_PROMPT_SECTIONS = [
   'Ejemplos',
 ] as const
 
+export const ACTIVE_PROFILE_IDS = [
+  'sales-orchestrator',
+  'market-account-intelligence',
+  'contact-data-steward',
+  'qualification-prioritization',
+  'outreach-draft-manager',
+  'commercial-qa-compliance',
+] as const
+
+type ActiveProfileId = (typeof ACTIVE_PROFILE_IDS)[number]
+
+export const PROFILE_TOOLSETS: Record<ActiveProfileId, Array<string>> = {
+  'sales-orchestrator': ['file', 'todo', 'delegation', 'session_search'],
+  'market-account-intelligence': ['web', 'file'],
+  'contact-data-steward': ['web', 'file'],
+  'qualification-prioritization': ['file'],
+  'outreach-draft-manager': ['file'],
+  'commercial-qa-compliance': ['file'],
+}
+
+const HERMES_TOOLSET_KEYS = [
+  'web',
+  'browser',
+  'terminal',
+  'file',
+  'code_execution',
+  'vision',
+  'image_gen',
+  'skills',
+  'todo',
+  'memory',
+  'session_search',
+  'clarify',
+  'delegation',
+  'cronjob',
+  'computer_use',
+  'messaging',
+] as const
+
+const REQUIRED_NATIVE_PROFILE_FILES = [
+  'distribution.yaml',
+  'SOUL.md',
+  'config.yaml',
+  'mcp.json',
+] as const
+
+const DISTRIBUTION_FIELDS = [
+  'name',
+  'version',
+  'description',
+  'hermes_requires',
+  'author',
+  'license',
+  'env_requires',
+  'distribution_owned',
+] as const
+
 const REQUIRED_AGENT_FILES = [
   'SYSTEM_PROMPT.md',
   'MANIFEST.proposed.yaml',
@@ -66,6 +123,7 @@ export interface CommercialSwarmValidationResult {
   counts: {
     files: number
     agents: number
+    profiles: number
     prompts: number
     jsonSchemas: number
     yamlDocuments: number
@@ -78,12 +136,298 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function stringArray(value: unknown): Array<string> {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? value
+    : []
+}
+
+function sameStrings(
+  actual: unknown,
+  expected: ReadonlyArray<string>,
+): boolean {
+  return JSON.stringify(stringArray(actual)) === JSON.stringify(expected)
+}
+
+function sortedKeys(value: JsonRecord): Array<string> {
+  return Object.keys(value).sort()
+}
+
+function profileToolsets(profileId: string): Array<string> {
+  return Object.hasOwn(PROFILE_TOOLSETS, profileId)
+    ? PROFILE_TOOLSETS[profileId as ActiveProfileId]
+    : []
+}
+
+export function validateNativeProfileConfig(
+  value: unknown,
+  profileId: string,
+): Array<string> {
+  const errors: Array<string> = []
+  if (!isRecord(value)) return [`${profileId}: config.yaml must be a mapping`]
+
+  const expectedToolsets = profileToolsets(profileId)
+  const expectedLabel = expectedToolsets.join(',')
+  if (!sameStrings(value.toolsets, expectedToolsets)) {
+    errors.push(`${profileId}: CLI toolsets must equal ${expectedLabel}`)
+  }
+
+  const platformToolsets = isRecord(value.platform_toolsets)
+    ? value.platform_toolsets
+    : null
+  if (
+    !platformToolsets ||
+    JSON.stringify(sortedKeys(platformToolsets)) !== JSON.stringify(['cli']) ||
+    !sameStrings(platformToolsets.cli, expectedToolsets)
+  ) {
+    errors.push(
+      `${profileId}: platform_toolsets must contain only the exact CLI toolsets`,
+    )
+  }
+
+  const customProviders = Array.isArray(value.custom_providers)
+    ? value.custom_providers
+    : []
+  const provider = customProviders.length === 1 ? customProviders[0] : null
+  if (
+    !isRecord(provider) ||
+    provider.name !== 'deepseek-v4-flash' ||
+    provider.base_url !== 'https://opencode.ai' ||
+    provider.key_env !== 'CUSTOM_API_KEY' ||
+    provider.api_mode !== 'chat_completions'
+  ) {
+    errors.push(
+      `${profileId}: custom provider must pin deepseek-v4-flash at https://opencode.ai via CUSTOM_API_KEY`,
+    )
+  }
+  if (isRecord(provider) && Object.hasOwn(provider, 'api_key')) {
+    errors.push(`${profileId}: custom provider must not contain api_key`)
+  }
+
+  const model = isRecord(value.model) ? value.model : null
+  if (
+    !model ||
+    model.default !== 'deepseek-v4-flash' ||
+    model.provider !== 'custom:deepseek-v4-flash'
+  ) {
+    errors.push(`${profileId}: model must use custom:deepseek-v4-flash`)
+  }
+
+  const memory = isRecord(value.memory) ? value.memory : null
+  if (
+    !memory ||
+    memory.memory_enabled !== false ||
+    memory.user_profile_enabled !== false
+  ) {
+    errors.push(`${profileId}: durable model memory must be disabled`)
+  }
+  if (value.max_concurrent_sessions !== 1) {
+    errors.push(`${profileId}: max_concurrent_sessions must be 1`)
+  }
+
+  const agent = isRecord(value.agent) ? value.agent : null
+  const maxTurns = agent?.max_turns
+  if (
+    typeof maxTurns !== 'number' ||
+    !Number.isInteger(maxTurns) ||
+    maxTurns < 1 ||
+    maxTurns > 40
+  ) {
+    errors.push(`${profileId}: agent.max_turns must be an integer from 1 to 40`)
+  }
+  const disabledToolsets = new Set(stringArray(agent?.disabled_toolsets))
+  const missingDisabledToolsets = HERMES_TOOLSET_KEYS.filter(
+    (toolset) =>
+      !expectedToolsets.includes(toolset) && !disabledToolsets.has(toolset),
+  )
+  if (missingDisabledToolsets.length > 0) {
+    errors.push(
+      `${profileId}: agent.disabled_toolsets is missing ${missingDisabledToolsets.join(',')}`,
+    )
+  }
+
+  if (
+    !isRecord(value.mcp_servers) ||
+    sortedKeys(value.mcp_servers).length > 0
+  ) {
+    errors.push(`${profileId}: mcp_servers must be an empty mapping`)
+  }
+
+  return errors
+}
+
+function validateDistributionManifest(
+  value: unknown,
+  profileId: ActiveProfileId,
+): Array<string> {
+  const label = `profiles/${profileId}/distribution.yaml`
+  if (!isRecord(value)) return [`${label}: manifest must be a mapping`]
+  const errors: Array<string> = []
+
+  if (
+    JSON.stringify(sortedKeys(value)) !==
+    JSON.stringify([...DISTRIBUTION_FIELDS].sort())
+  ) {
+    errors.push(`${label}: manifest fields do not match the Hermes contract`)
+  }
+  if (value.name !== profileId)
+    errors.push(`${label}: name must match profile id`)
+  if (value.version !== '0.1.0') errors.push(`${label}: version must be 0.1.0`)
+  if (value.hermes_requires !== '>=0.20.1') {
+    errors.push(`${label}: hermes_requires must be >=0.20.1`)
+  }
+  if (
+    typeof value.description !== 'string' ||
+    value.description.trim().length === 0 ||
+    typeof value.author !== 'string' ||
+    value.author.trim().length === 0 ||
+    typeof value.license !== 'string' ||
+    value.license.trim().length === 0
+  ) {
+    errors.push(`${label}: description, author and license are required`)
+  }
+
+  const envRequires = Array.isArray(value.env_requires)
+    ? value.env_requires
+    : []
+  const customKey = envRequires.length === 1 ? envRequires[0] : null
+  if (
+    !isRecord(customKey) ||
+    customKey.name !== 'CUSTOM_API_KEY' ||
+    customKey.required !== true ||
+    typeof customKey.description !== 'string' ||
+    customKey.description.trim().length === 0 ||
+    Object.hasOwn(customKey, 'value') ||
+    Object.hasOwn(customKey, 'default')
+  ) {
+    errors.push(
+      `${label}: env_requires must declare only required CUSTOM_API_KEY without a value`,
+    )
+  }
+
+  if (!sameStrings(value.distribution_owned, REQUIRED_NATIVE_PROFILE_FILES)) {
+    errors.push(
+      `${label}: distribution_owned must list only native distribution files`,
+    )
+  }
+
+  return errors
+}
+
+function validateNativeProfiles(
+  root: string,
+  errors: Array<string>,
+): Array<string> {
+  const profilesRoot = join(root, 'profiles')
+  if (!existsSync(profilesRoot)) {
+    errors.push('profiles: native profile directory missing')
+    for (const profileId of ACTIVE_PROFILE_IDS) {
+      errors.push(`profiles/${profileId}: native profile missing`)
+    }
+    return []
+  }
+
+  const profileIds = readdirSync(profilesRoot)
+    .filter((name) => statSync(join(profilesRoot, name)).isDirectory())
+    .sort()
+  const expectedProfileIds = [...ACTIVE_PROFILE_IDS].sort()
+  if (JSON.stringify(profileIds) !== JSON.stringify(expectedProfileIds)) {
+    errors.push('profiles: directories must equal the six active profile ids')
+  }
+
+  for (const profileId of ACTIVE_PROFILE_IDS) {
+    const profileRoot = join(profilesRoot, profileId)
+    if (!existsSync(profileRoot)) {
+      errors.push(`profiles/${profileId}: native profile missing`)
+      continue
+    }
+    for (const requiredFile of REQUIRED_NATIVE_PROFILE_FILES) {
+      const path = join(profileRoot, requiredFile)
+      if (!existsSync(path)) {
+        errors.push(`${displayPath(root, path)}: required profile file missing`)
+      }
+    }
+
+    const distributionPath = join(profileRoot, 'distribution.yaml')
+    if (existsSync(distributionPath)) {
+      try {
+        errors.push(
+          ...validateDistributionManifest(
+            yaml.parse(readFileSync(distributionPath, 'utf8')),
+            profileId,
+          ),
+        )
+      } catch (error) {
+        errors.push(
+          `${displayPath(root, distributionPath)}: invalid distribution manifest (${error instanceof Error ? error.message : String(error)})`,
+        )
+      }
+    }
+
+    const configPath = join(profileRoot, 'config.yaml')
+    if (existsSync(configPath)) {
+      try {
+        errors.push(
+          ...validateNativeProfileConfig(
+            yaml.parse(readFileSync(configPath, 'utf8')),
+            profileId,
+          ).map((error) => `profiles/${error}`),
+        )
+      } catch (error) {
+        errors.push(
+          `${displayPath(root, configPath)}: invalid profile config (${error instanceof Error ? error.message : String(error)})`,
+        )
+      }
+    }
+
+    const soulPath = join(profileRoot, 'SOUL.md')
+    if (existsSync(soulPath)) {
+      const soul = readFileSync(soulPath, 'utf8')
+      errors.push(...validateSystemPrompt(soul, displayPath(root, soulPath)))
+      const normalizedSoul = soul.toLocaleLowerCase('es')
+      if (!normalizedSoul.includes('a3 no está disponible')) {
+        errors.push(`${displayPath(root, soulPath)}: A3 must be unavailable`)
+      }
+      if (!normalizedSoul.includes('a4 es humano')) {
+        errors.push(`${displayPath(root, soulPath)}: A4 must be human-only`)
+      }
+    }
+
+    const mcpPath = join(profileRoot, 'mcp.json')
+    if (existsSync(mcpPath)) {
+      try {
+        const mcp = JSON.parse(readFileSync(mcpPath, 'utf8')) as unknown
+        if (
+          !isRecord(mcp) ||
+          !isRecord(mcp.mcpServers) ||
+          sortedKeys(mcp).length !== 1 ||
+          sortedKeys(mcp.mcpServers).length !== 0
+        ) {
+          errors.push(
+            `${displayPath(root, mcpPath)}: mcpServers must be an empty mapping`,
+          )
+        }
+      } catch (error) {
+        errors.push(
+          `${displayPath(root, mcpPath)}: invalid MCP JSON (${error instanceof Error ? error.message : String(error)})`,
+        )
+      }
+    }
+  }
+
+  return profileIds
+}
+
 function listFiles(root: string): Array<string> {
   if (!existsSync(root)) return []
   const files: Array<string> = []
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     const path = join(root, entry.name)
-    if (entry.isDirectory() && !['node_modules', 'dist', 'build', '.git'].includes(entry.name)) files.push(...listFiles(path))
+    if (
+      entry.isDirectory() &&
+      !['node_modules', 'dist', 'build', '.git'].includes(entry.name)
+    )
+      files.push(...listFiles(path))
     else if (entry.isFile()) files.push(path)
   }
   return files
@@ -236,6 +580,7 @@ export function validateCommercialSwarm(
   validateSecretPatterns(root, files, errors)
 
   const agentIds = validateAgentArtifacts(root, join(root, 'agents'), errors)
+  const profileIds = validateNativeProfiles(root, errors)
   const orchestratorRoot = join(root, 'orchestrator')
   for (const requiredFile of REQUIRED_AGENT_FILES) {
     const path = join(orchestratorRoot, requiredFile)
@@ -245,8 +590,11 @@ export function validateCommercialSwarm(
       )
   }
 
-  const promptPaths = files.filter((file) => file.endsWith('SYSTEM_PROMPT.md'))
+  const promptPaths = files.filter(
+    (file) => file.endsWith('SYSTEM_PROMPT.md') || file.endsWith('SOUL.md'),
+  )
   for (const path of promptPaths) {
+    if (path.endsWith('SOUL.md')) continue
     errors.push(
       ...validateSystemPrompt(
         readFileSync(path, 'utf8'),
@@ -265,12 +613,45 @@ export function validateCommercialSwarm(
     if (new Set(rosterWorkerIds).size !== rosterWorkerIds.length) {
       errors.push('deployment/swarm.proposed.yaml: worker ids must be unique')
     }
-    const expectedWorkerIds = ['commercial-orchestrator', ...agentIds].sort()
-    const actualWorkerIds = [...rosterWorkerIds].sort()
-    if (JSON.stringify(actualWorkerIds) !== JSON.stringify(expectedWorkerIds)) {
+    if (
+      JSON.stringify(rosterWorkerIds) !== JSON.stringify(ACTIVE_PROFILE_IDS)
+    ) {
       errors.push(
-        'deployment/swarm.proposed.yaml: roster does not match orchestrator and agent directories',
+        'deployment/swarm.proposed.yaml: active roster must equal the six native profiles in order',
       )
+    }
+    for (const worker of roster.workers) {
+      const expectedTools = profileToolsets(worker.id)
+      if (worker.profile !== worker.id) {
+        errors.push(
+          `deployment/swarm.proposed.yaml: ${worker.id} profile must match worker id`,
+        )
+      }
+      if (worker.model !== 'deepseek-v4-flash') {
+        errors.push(
+          `deployment/swarm.proposed.yaml: ${worker.id} must pin deepseek-v4-flash`,
+        )
+      }
+      if (!sameStrings(worker.tools, expectedTools)) {
+        errors.push(
+          `deployment/swarm.proposed.yaml: ${worker.id} tools exceed its native profile`,
+        )
+      }
+      if (
+        worker.skills.length > 0 ||
+        worker.plugins.length > 0 ||
+        worker.pluginToolsets.length > 0 ||
+        worker.mcpServers.length > 0
+      ) {
+        errors.push(
+          `deployment/swarm.proposed.yaml: ${worker.id} cannot enable skills, plugins or MCP servers`,
+        )
+      }
+      if (worker.maxConcurrentTasks !== 1) {
+        errors.push(
+          `deployment/swarm.proposed.yaml: ${worker.id} maxConcurrentTasks must be 1`,
+        )
+      }
     }
   } catch (error) {
     errors.push(
@@ -296,6 +677,27 @@ export function validateCommercialSwarm(
         'tests/agent-test-matrix.yaml: universalCases must contain T01 through T16 in order',
       )
     }
+    const matrixAgents =
+      isRecord(matrix) && isRecord(matrix.agents) ? matrix.agents : {}
+    if (
+      JSON.stringify(Object.keys(matrixAgents)) !==
+      JSON.stringify(ACTIVE_PROFILE_IDS)
+    ) {
+      errors.push(
+        'tests/agent-test-matrix.yaml: agents must equal the six active profiles in order',
+      )
+    }
+    for (const profileId of ACTIVE_PROFILE_IDS) {
+      const matrixAgent = matrixAgents[profileId]
+      if (
+        !isRecord(matrixAgent) ||
+        !sameStrings(matrixAgent.requiredCases, expectedCases)
+      ) {
+        errors.push(
+          `tests/agent-test-matrix.yaml: ${profileId} must require T01 through T16`,
+        )
+      }
+    }
   } catch (error) {
     errors.push(
       `tests/agent-test-matrix.yaml: invalid test matrix (${error instanceof Error ? error.message : String(error)})`,
@@ -319,6 +721,7 @@ export function validateCommercialSwarm(
     counts: {
       files: files.length,
       agents: agentIds.length,
+      profiles: profileIds.length,
       prompts: promptPaths.length,
       jsonSchemas: files.filter((file) => file.endsWith('.json')).length,
       yamlDocuments: files.filter((file) => /\.ya?ml$/i.test(file)).length,

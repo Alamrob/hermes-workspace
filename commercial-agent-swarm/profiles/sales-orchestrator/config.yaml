@@ -1,0 +1,44 @@
+custom_providers:
+  - name: deepseek-v4-flash
+    base_url: https://opencode.ai
+    key_env: CUSTOM_API_KEY
+    api_mode: chat_completions
+model:
+  default: deepseek-v4-flash
+  provider: custom:deepseek-v4-flash
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+  write_approval: true
+max_concurrent_sessions: 1
+agent:
+  max_turns: 24
+  disabled_toolsets:
+    - web
+    - browser
+    - terminal
+    - code_execution
+    - vision
+    - image_gen
+    - skills
+    - memory
+    - clarify
+    - cronjob
+    - computer_use
+    - messaging
+toolsets:
+  - file
+  - todo
+  - delegation
+  - session_search
+platform_toolsets:
+  cli:
+    - file
+    - todo
+    - delegation
+    - session_search
+delegation:
+  max_concurrent_children: 1
+  max_spawn_depth: 1
+  orchestrator_enabled: false
+mcp_servers: {}

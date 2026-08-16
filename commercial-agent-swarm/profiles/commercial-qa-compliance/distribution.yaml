@@ -1,0 +1,15 @@
+name: commercial-qa-compliance
+version: '0.1.0'
+description: 'Barrera independiente de QA, privacidad y cumplimiento comercial.'
+hermes_requires: '>=0.20.1'
+author: 'Proptimiza'
+license: 'Proprietary'
+env_requires:
+  - name: CUSTOM_API_KEY
+    description: 'Credencial del proveedor OpenAI-compatible inyectada fuera de la distribución.'
+    required: true
+distribution_owned:
+  - distribution.yaml
+  - SOUL.md
+  - config.yaml
+  - mcp.json
