@@ -1,171 +1,322 @@
 import type { TrustedUsage } from './executor-contract.js'
 
-export const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1'
+export const OPENCODE_USAGE_EXPORT_URL =
+  'https://console.opencode.ai/api/v1/usage/export'
 export const OPENCODE_GO_MODEL = 'deepseek-v4-flash'
 export const OPENCODE_MAX_OUTPUT_TOKENS_PER_CALL = 4_096
 export const OPENCODE_MAX_API_CALLS_PER_RUN = 6
-export const MAX_RUN_COST_MICRO_CENTS = 10_000_000
-export const MAX_MISSION_COST_MICRO_CENTS = 50_000_000
-export const MAX_TOTAL_COST_MICRO_CENTS = 1_000_000_000
+export const MAX_RUN_USAGE_VALUE_MICRO_CENTS = 10_000_000
+export const MAX_MISSION_USAGE_VALUE_MICRO_CENTS = 50_000_000
+export const MAX_TOTAL_USAGE_VALUE_MICRO_CENTS = 1_000_000_000
+const MAX_CSV_BYTES = 1_048_576
+const MAX_CSV_ROWS = 10_000
 
-export interface OpenCodeRunUsage {
-  run_id: string
-  model: 'deepseek-v4-flash'
-  base_url: 'https://opencode.ai/zen/go/v1'
-  input_tokens: number
-  output_tokens: number
-  cache_read_tokens: number
-  cache_write_tokens: number
-  api_calls: number
-  cost_micro_cents: number
+const CSV_COLUMNS = [
+  'id',
+  'user_email',
+  'service_account_name',
+  'app',
+  'provider',
+  'model',
+  'input_tokens',
+  'output_tokens',
+  'reasoning_tokens',
+  'cache_read_tokens',
+  'cache_write_5m_tokens',
+  'cache_write_1h_tokens',
+  'reasoning_effort',
+  'billing_source',
+  'cost_micro_cents',
+  'created_at',
+] as const
+
+export interface OpenCodeUsageRow {
+  id: string
+  userEmail: string
+  serviceAccountName: string
+  app: string
+  provider: string
+  model: string
+  inputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  cacheReadTokens: number
+  cacheWrite5mTokens: number
+  cacheWrite1hTokens: number
+  reasoningEffort: string
+  billingSource: string
+  usageValueMicroCents: number
+  createdAt: string
 }
 
-export interface OpenCodeUsageReadPort {
-  getRunUsage(request: {
-    baseUrl: typeof OPENCODE_GO_BASE_URL
-    runId: string
+export interface OpenCodeUsageExportReadPort {
+  getCsvExport(request: {
+    url: typeof OPENCODE_USAGE_EXPORT_URL
     bearerToken: string
-  }): Promise<unknown>
+    scope: 'service_account'
+    scopeId: string
+    from: string
+    to: string
+  }): Promise<string>
 }
 
-export class OpenCodeUsageClient {
+interface ExportQuery {
+  scope: 'service_account'
+  scopeId: string
+  from: string
+  to: string
+}
+
+export class OpenCodeUsageExportClient {
   constructor(
     private readonly options: {
-      reader: OpenCodeUsageReadPort
+      reader: OpenCodeUsageExportReadPort
       readToken: () => Promise<string>
     },
   ) {}
 
-  async getRunUsage(runId: string): Promise<OpenCodeRunUsage> {
-    if (!validRunId(runId)) throw new Error('OPENCODE_USAGE_RUN_ID_INVALID')
+  async export(query: ExportQuery): Promise<OpenCodeUsageRow[]> {
+    validateQuery(query)
     const bearerToken = (await this.options.readToken()).trim()
     if (!bearerToken || Buffer.byteLength(bearerToken) > 8_192)
       throw new Error('OPENCODE_USAGE_READ_TOKEN_INVALID')
-    const response = await this.options.reader.getRunUsage({
-      baseUrl: OPENCODE_GO_BASE_URL,
-      runId,
+    const csv = await this.options.reader.getCsvExport({
+      url: OPENCODE_USAGE_EXPORT_URL,
       bearerToken,
+      ...query,
     })
-    return parseRunUsage(response, runId)
+    return parseOpenCodeUsageCsv(csv)
   }
 }
 
-export function assertOpenCodeBudgetAvailable(input: {
-  missionCommittedMicroCents: number
-  totalCommittedMicroCents: number
-}): void {
-  validateCommitted(input.missionCommittedMicroCents)
-  validateCommitted(input.totalCommittedMicroCents)
-  if (
-    input.missionCommittedMicroCents + MAX_RUN_COST_MICRO_CENTS >
-      MAX_MISSION_COST_MICRO_CENTS ||
-    input.totalCommittedMicroCents + MAX_RUN_COST_MICRO_CENTS >
-      MAX_TOTAL_COST_MICRO_CENTS
-  )
-    throw new Error('OPENCODE_BUDGET_EXCEEDED')
-}
+export class OpenCodeUsageProbe {
+  private busy = false
 
-export function reconcileOpenCodeRunUsage(input: {
-  runId: string
-  localUsage: TrustedUsage
-  remoteUsage: unknown
-  missionCommittedMicroCents: number
-  totalCommittedMicroCents: number
-}): {
-  runCostMicroCents: number
-  missionCostMicroCents: number
-  totalCostMicroCents: number
-} {
-  validateCommitted(input.missionCommittedMicroCents)
-  validateCommitted(input.totalCommittedMicroCents)
-  let remote: OpenCodeRunUsage
-  try {
-    remote = parseRunUsage(input.remoteUsage, input.runId)
-    if (
-      input.localUsage.model !== OPENCODE_GO_MODEL ||
-      input.localUsage.provider !== 'custom:deepseek-v4-flash' ||
-      input.localUsage.completed !== true ||
-      input.localUsage.failed !== false ||
-      remote.input_tokens !== input.localUsage.tokens.input ||
-      remote.output_tokens !== input.localUsage.tokens.output ||
-      remote.cache_read_tokens !== input.localUsage.tokens.cache_read ||
-      remote.cache_write_tokens !== input.localUsage.tokens.cache_write ||
-      remote.api_calls !== input.localUsage.api_calls
+  constructor(private readonly options: { client: OpenCodeUsageExportClient }) {}
+
+  async measure(input: {
+    scopeId: string
+    from: string
+    to: string
+    missionCommittedUsageValueMicroCents: number
+    totalCommittedUsageValueMicroCents: number
+    probe: () => Promise<TrustedUsage>
+  }): Promise<{
+    usage: TrustedUsage
+    usageRecordId: string
+    runUsageValueMicroCents: number
+    missionUsageValueMicroCents: number
+    totalUsageValueMicroCents: number
+    incrementalCashCostMicroCents: 0
+  }> {
+    if (this.busy) throw new Error('OPENCODE_USAGE_PROBE_BUSY')
+    assertBudgetAvailable(
+      input.missionCommittedUsageValueMicroCents,
+      input.totalCommittedUsageValueMicroCents,
     )
-      throw new Error('telemetry mismatch')
-  } catch (error) {
-    throw new Error('OPENCODE_USAGE_RECONCILIATION_FAILED', { cause: error })
+    this.busy = true
+    try {
+      const query: ExportQuery = {
+        scope: 'service_account',
+        scopeId: input.scopeId,
+        from: input.from,
+        to: input.to,
+      }
+      const before = await this.options.client.export(query)
+      const usage = await input.probe()
+      const after = await this.options.client.export(query)
+      const beforeIds = new Set(before.map((row) => row.id))
+      if (
+        beforeIds.size !== before.length ||
+        before.some((row) => !after.some((candidate) => candidate.id === row.id))
+      )
+        throw new Error('OPENCODE_USAGE_DIFF_AMBIGUOUS')
+      const added = after.filter((row) => !beforeIds.has(row.id))
+      if (added.length !== 1) throw new Error('OPENCODE_USAGE_DIFF_AMBIGUOUS')
+      const row = added[0]
+      reconcileTelemetry(usage, row)
+      const run = row.usageValueMicroCents
+      if (
+        run > MAX_RUN_USAGE_VALUE_MICRO_CENTS ||
+        input.missionCommittedUsageValueMicroCents + run >
+          MAX_MISSION_USAGE_VALUE_MICRO_CENTS ||
+        input.totalCommittedUsageValueMicroCents + run >
+          MAX_TOTAL_USAGE_VALUE_MICRO_CENTS
+      )
+        throw new Error('OPENCODE_USAGE_VALUE_BUDGET_EXCEEDED')
+      return {
+        usage,
+        usageRecordId: row.id,
+        runUsageValueMicroCents: run,
+        missionUsageValueMicroCents:
+          input.missionCommittedUsageValueMicroCents + run,
+        totalUsageValueMicroCents:
+          input.totalCommittedUsageValueMicroCents + run,
+        incrementalCashCostMicroCents: 0,
+      }
+    } finally {
+      this.busy = false
+    }
   }
+}
+
+export function parseOpenCodeUsageCsv(csv: string): OpenCodeUsageRow[] {
+  if (Buffer.byteLength(csv) > MAX_CSV_BYTES)
+    throw new Error('OPENCODE_USAGE_CSV_TOO_LARGE')
+  if (csv.includes('\u0000')) throw new Error('OPENCODE_USAGE_CSV_INVALID')
+  const matrix = parseCsvMatrix(csv)
+  const header = matrix.shift()
+  if (!header || header.length !== CSV_COLUMNS.length)
+    throw new Error('OPENCODE_USAGE_CSV_INVALID')
+  if (header.some((value, index) => value !== CSV_COLUMNS[index]))
+    throw new Error('OPENCODE_USAGE_CSV_INVALID')
+  if (matrix.length > MAX_CSV_ROWS)
+    throw new Error('OPENCODE_USAGE_CSV_TOO_LARGE')
+  const rows = matrix.map(parseRow)
+  if (new Set(rows.map((row) => row.id)).size !== rows.length)
+    throw new Error('OPENCODE_USAGE_CSV_INVALID')
+  return rows
+}
+
+function parseRow(cells: string[]): OpenCodeUsageRow {
+  if (cells.length !== CSV_COLUMNS.length || cells.some((cell) => cell.length > 4_096))
+    throw new Error('OPENCODE_USAGE_CSV_INVALID')
+  for (const index of [0, 1, 2, 3, 4, 5, 12, 13, 15])
+    if (/^[\t ]*[=+\-@]/.test(cells[index]))
+      throw new Error('OPENCODE_USAGE_CSV_UNSAFE_CELL')
+  const numbers = [6, 7, 8, 9, 10, 11, 14].map((index) => {
+    if (!/^[0-9]+$/.test(cells[index]))
+      throw new Error('OPENCODE_USAGE_CSV_INVALID')
+    const value = Number(cells[index])
+    if (!Number.isSafeInteger(value)) throw new Error('OPENCODE_USAGE_CSV_INVALID')
+    return value
+  })
   if (
-    remote.cost_micro_cents > MAX_RUN_COST_MICRO_CENTS ||
-    input.missionCommittedMicroCents + remote.cost_micro_cents >
-      MAX_MISSION_COST_MICRO_CENTS ||
-    input.totalCommittedMicroCents + remote.cost_micro_cents >
-      MAX_TOTAL_COST_MICRO_CENTS
+    !bounded(cells[0], 256) ||
+    (!cells[1] && !cells[2]) ||
+    !bounded(cells[3], 256) ||
+    !bounded(cells[4], 128) ||
+    !bounded(cells[5], 256) ||
+    !bounded(cells[13], 128) ||
+    !Number.isFinite(Date.parse(cells[15]))
   )
-    throw new Error('OPENCODE_BUDGET_EXCEEDED')
+    throw new Error('OPENCODE_USAGE_CSV_INVALID')
   return {
-    runCostMicroCents: remote.cost_micro_cents,
-    missionCostMicroCents:
-      input.missionCommittedMicroCents + remote.cost_micro_cents,
-    totalCostMicroCents:
-      input.totalCommittedMicroCents + remote.cost_micro_cents,
+    id: cells[0],
+    userEmail: cells[1],
+    serviceAccountName: cells[2],
+    app: cells[3],
+    provider: cells[4],
+    model: cells[5],
+    inputTokens: numbers[0],
+    outputTokens: numbers[1],
+    reasoningTokens: numbers[2],
+    cacheReadTokens: numbers[3],
+    cacheWrite5mTokens: numbers[4],
+    cacheWrite1hTokens: numbers[5],
+    reasoningEffort: cells[12],
+    billingSource: cells[13],
+    usageValueMicroCents: numbers[6],
+    createdAt: new Date(cells[15]).toISOString(),
   }
 }
 
-function parseRunUsage(value: unknown, expectedRunId: string): OpenCodeRunUsage {
+function parseCsvMatrix(csv: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let field = ''
+  let quoted = false
+  let closedQuote = false
+  const pushField = () => {
+    row.push(field)
+    field = ''
+    closedQuote = false
+  }
+  const pushRow = () => {
+    pushField()
+    rows.push(row)
+    row = []
+  }
+  for (let index = 0; index < csv.length; index += 1) {
+    const char = csv[index]
+    if (quoted) {
+      if (char === '"') {
+        if (csv[index + 1] === '"') {
+          field += '"'
+          index += 1
+        } else {
+          quoted = false
+          closedQuote = true
+        }
+      } else field += char
+      continue
+    }
+    if (closedQuote && char !== ',' && char !== '\r' && char !== '\n')
+      throw new Error('OPENCODE_USAGE_CSV_INVALID')
+    if (char === '"') {
+      if (field) throw new Error('OPENCODE_USAGE_CSV_INVALID')
+      quoted = true
+    } else if (char === ',') pushField()
+    else if (char === '\n') pushRow()
+    else if (char !== '\r') field += char
+  }
+  if (quoted) throw new Error('OPENCODE_USAGE_CSV_INVALID')
+  if (field || row.length) pushRow()
+  return rows
+}
+
+function reconcileTelemetry(usage: TrustedUsage, row: OpenCodeUsageRow): void {
   if (
-    !isRecord(value) ||
-    !onlyKeys(value, [
-      'run_id',
-      'model',
-      'base_url',
-      'input_tokens',
-      'output_tokens',
-      'cache_read_tokens',
-      'cache_write_tokens',
-      'api_calls',
-      'cost_micro_cents',
-    ]) ||
-    value.run_id !== expectedRunId ||
-    value.model !== OPENCODE_GO_MODEL ||
-    value.base_url !== OPENCODE_GO_BASE_URL ||
-    !validCount(value.input_tokens) ||
-    !validCount(value.output_tokens) ||
-    Number(value.output_tokens) >
+    usage.model !== OPENCODE_GO_MODEL ||
+    usage.provider !== 'custom:deepseek-v4-flash' ||
+    usage.completed !== true ||
+    usage.failed !== false ||
+    usage.api_calls < 1 ||
+    usage.api_calls > OPENCODE_MAX_API_CALLS_PER_RUN ||
+    usage.tokens.output >
       OPENCODE_MAX_OUTPUT_TOKENS_PER_CALL * OPENCODE_MAX_API_CALLS_PER_RUN ||
-    !validCount(value.cache_read_tokens) ||
-    !validCount(value.cache_write_tokens) ||
-    !Number.isSafeInteger(value.api_calls) ||
-    Number(value.api_calls) < 1 ||
-    Number(value.api_calls) > OPENCODE_MAX_API_CALLS_PER_RUN ||
-    !Number.isSafeInteger(value.cost_micro_cents) ||
-    Number(value.cost_micro_cents) < 0
+    row.provider !== 'opencode' ||
+    row.model !== OPENCODE_GO_MODEL ||
+    row.inputTokens !== usage.tokens.input ||
+    row.outputTokens !== usage.tokens.output ||
+    row.reasoningTokens !== usage.tokens.reasoning ||
+    row.cacheReadTokens !== usage.tokens.cache_read ||
+    row.cacheWrite5mTokens + row.cacheWrite1hTokens !== usage.tokens.cache_write
   )
-    throw new Error('OPENCODE_USAGE_RESPONSE_INVALID')
-  return value as unknown as OpenCodeRunUsage
+    throw new Error('OPENCODE_USAGE_RECONCILIATION_FAILED')
 }
 
-function validCount(value: unknown): boolean {
-  return Number.isSafeInteger(value) && Number(value) >= 0
-}
-
-function validRunId(value: string): boolean {
-  return /^[A-Za-z0-9._:-]{8,128}$/.test(value)
-}
-
-function validateCommitted(value: number): void {
-  if (!Number.isSafeInteger(value) || value < 0)
-    throw new Error('OPENCODE_BUDGET_STATE_INVALID')
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function onlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
-  return (
-    Object.keys(value).length === keys.length &&
-    keys.every((key) => Object.hasOwn(value, key))
+function assertBudgetAvailable(mission: number, total: number): void {
+  if (
+    !Number.isSafeInteger(mission) ||
+    mission < 0 ||
+    !Number.isSafeInteger(total) ||
+    total < 0
   )
+    throw new Error('OPENCODE_USAGE_VALUE_BUDGET_STATE_INVALID')
+  if (
+    mission + MAX_RUN_USAGE_VALUE_MICRO_CENTS >
+      MAX_MISSION_USAGE_VALUE_MICRO_CENTS ||
+    total + MAX_RUN_USAGE_VALUE_MICRO_CENTS >
+      MAX_TOTAL_USAGE_VALUE_MICRO_CENTS
+  )
+    throw new Error('OPENCODE_USAGE_VALUE_BUDGET_EXCEEDED')
+}
+
+function validateQuery(query: ExportQuery): void {
+  const from = Date.parse(query.from)
+  const to = Date.parse(query.to)
+  if (
+    query.scope !== 'service_account' ||
+    !/^[A-Za-z0-9._:-]{8,256}$/.test(query.scopeId) ||
+    !Number.isFinite(from) ||
+    !Number.isFinite(to) ||
+    from >= to ||
+    to - from > 60 * 60_000
+  )
+    throw new Error('OPENCODE_USAGE_EXPORT_QUERY_INVALID')
+}
+
+function bounded(value: string, maximum: number): boolean {
+  return value.trim().length > 0 && Buffer.byteLength(value) <= maximum
 }
