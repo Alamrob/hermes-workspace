@@ -177,6 +177,40 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
       )
       await pool.query(`RESET ROLE`)
 
+      await pool.query(`SET ROLE commercial_runtime`)
+      await pool.query(
+        `SELECT mail.store_webhook_event('contacto',$1,clock_timestamp(),'untrusted_external',false,$2)`,
+        [
+          'c'.repeat(64),
+          {
+            payload_sha256: 'c'.repeat(64),
+            byte_length: 1024,
+            preview: 'bounded evidence',
+          },
+        ],
+      )
+      await pool.query(`RESET ROLE`)
+      await pool.query(
+        `UPDATE mail.webhook_events SET preview_expires_at=clock_timestamp()-interval '1 second' WHERE provider_event_id=$1`,
+        ['c'.repeat(64)],
+      )
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT mail.purge_expired_webhook_previews(10) AS purged`,
+          )
+        ).rows[0].purged,
+        1,
+      )
+      const retainedWebhook = (
+        await pool.query(
+          `SELECT untrusted_payload FROM mail.webhook_events WHERE provider_event_id=$1`,
+          ['c'.repeat(64)],
+        )
+      ).rows[0].untrusted_payload
+      assert.equal('preview' in retainedWebhook, false)
+      assert.equal(retainedWebhook.payload_sha256, 'c'.repeat(64))
+
       const rollback = await readFile(
         new URL('../migrations/004_crm_integration.rollback.sql', import.meta.url),
         'utf8',

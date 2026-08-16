@@ -3,6 +3,10 @@ BEGIN;
 CREATE SCHEMA IF NOT EXISTS integration;
 REVOKE ALL ON SCHEMA integration FROM PUBLIC;
 
+ALTER TABLE mail.webhook_events
+  ADD COLUMN IF NOT EXISTS preview_expires_at timestamptz
+  DEFAULT (clock_timestamp() + interval '30 days');
+
 CREATE TABLE IF NOT EXISTS integration.sync_control (
   control_id smallint PRIMARY KEY CHECK (control_id = 1),
   enabled boolean NOT NULL DEFAULT false,
@@ -136,6 +140,35 @@ BEGIN
  SELECT * INTO existing FROM control.pilot_cohorts WHERE cohort_id=$1 OR(project_id=$2 AND cohort_name=$3);
  IF existing.cohort_id=$1 AND existing.project_id=$2 AND existing.cohort_name=$3 THEN RETURN existing.cohort_id; END IF;
  RAISE EXCEPTION 'PILOT_COHORT_IDEMPOTENCY_CONFLICT';
+END $$;
+
+CREATE OR REPLACE FUNCTION mail.store_webhook_event(text,text,timestamptz,text,boolean,jsonb) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+BEGIN
+ INSERT INTO mail.webhook_events(
+  mailbox_key,provider_event_id,received_at,trust_classification,
+  instruction_eligible,untrusted_payload,preview_expires_at
+ ) VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+interval '30 days')
+ ON CONFLICT DO NOTHING;
+ RETURN FOUND;
+END $$;
+
+CREATE OR REPLACE FUNCTION mail.purge_expired_webhook_previews(integer) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE purged integer;
+BEGIN
+ IF $1 NOT BETWEEN 1 AND 1000 THEN RAISE EXCEPTION 'INVALID_WEBHOOK_PURGE_LIMIT';END IF;
+ WITH expired AS(
+  SELECT ctid FROM mail.webhook_events
+  WHERE preview_expires_at<=clock_timestamp() AND untrusted_payload?'preview'
+  ORDER BY preview_expires_at,mailbox_key,provider_event_id
+  FOR UPDATE SKIP LOCKED LIMIT $1
+ )
+ UPDATE mail.webhook_events event
+ SET untrusted_payload=event.untrusted_payload-'preview',preview_expires_at=NULL
+ FROM expired WHERE event.ctid=expired.ctid;
+ GET DIAGNOSTICS purged=ROW_COUNT;
+ RETURN purged;
 END $$;
 
 CREATE OR REPLACE FUNCTION control.record_approval_channel_evidence(uuid,text,text,text,text,timestamptz) RETURNS boolean
@@ -277,7 +310,7 @@ END $$;
 
 REVOKE ALL ON control.approval_channel_evidence,control.pilot_cohorts,control.pilot_targets,control.pilot_suppressions,integration.sync_control,integration.crm_entity_links,integration.crm_outbox,integration.crm_inbox,integration.crm_sync_cursors FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator,commercial_approval_evidence;
 REVOKE ALL ON SEQUENCE integration.crm_inbox_inbox_id_seq FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator;
-REVOKE ALL ON FUNCTION control.record_approval_channel_evidence(uuid,text,text,text,text,timestamptz),control.list_approval_channel_evidence(uuid),control.create_pilot_cohort(uuid,text,text),control.add_pilot_suppression(text,text,text),control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamptz,text),integration.enqueue_crm_change(uuid,uuid,uuid,text,jsonb,bigint),integration.set_crm_sync_enabled(boolean),integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text) FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator,commercial_approval_evidence;
+REVOKE ALL ON FUNCTION mail.purge_expired_webhook_previews(integer),control.record_approval_channel_evidence(uuid,text,text,text,text,timestamptz),control.list_approval_channel_evidence(uuid),control.create_pilot_cohort(uuid,text,text),control.add_pilot_suppression(text,text,text),control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamptz,text),integration.enqueue_crm_change(uuid,uuid,uuid,text,jsonb,bigint),integration.set_crm_sync_enabled(boolean),integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text) FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator,commercial_approval_evidence;
 ALTER DEFAULT PRIVILEGES IN SCHEMA integration REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA integration REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 

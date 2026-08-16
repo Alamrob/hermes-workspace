@@ -40,22 +40,25 @@ export class WebhookService {
     if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
       throw new WebhookError('INVALID_PAYLOAD')
     }
-    const event = payload as Record<string, unknown>
-    if (
-      typeof event.provider_event_id !== 'string' ||
-      event.provider_event_id.length < 1 ||
-      event.provider_event_id.length > 256
-    ) {
-      throw new WebhookError('INVALID_EVENT_ID')
-    }
+    const providerEventId = createHash('sha256')
+      .update(input.mailboxKey)
+      .update(Buffer.from([0]))
+      .update(rawBody)
+      .digest('hex')
+    const preview = rawBody.subarray(0, 256).toString('utf8')
     const inserted = await this.options.repository.storeWebhookEvent({
       mailbox_key: input.mailboxKey,
-      provider_event_id: event.provider_event_id,
+      provider_event_id: providerEventId,
       received_at: (this.options.now ?? (() => new Date()))().toISOString(),
       trust_classification: 'untrusted_external',
       instruction_eligible: false,
-      untrusted_payload: structuredClone(event),
+      untrusted_payload: {
+        payload_sha256: providerEventId,
+        byte_length: rawBody.byteLength,
+        preview,
+      },
     })
     return { accepted: true, duplicate: !inserted }
   }
 }
+import { createHash } from 'node:crypto'

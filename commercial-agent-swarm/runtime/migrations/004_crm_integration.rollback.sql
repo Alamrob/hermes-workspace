@@ -12,7 +12,8 @@ REVOKE ALL ON FUNCTION control.create_pilot_cohort(uuid,text,text),control.add_p
 REVOKE ALL ON FUNCTION control.add_pilot_suppression(text,text,text),integration.set_crm_sync_enabled(boolean) FROM commercial_safety_operator;
 REVOKE ALL ON FUNCTION integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text) FROM commercial_crm_sync;
 
--- Preserve approval evidence, control pilots, suppressions, entity links, outbox/inbox history,
+-- Preserve minimized webhook evidence/retention metadata, approval evidence,
+-- control pilots, suppressions, entity links, outbox/inbox history,
 -- cursors, functions, roles, and receipts for audit and deterministic recovery.
 
 COMMIT;
