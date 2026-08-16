@@ -38,6 +38,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
       for (const relation of [
         'control.pilot_cohorts',
         'control.pilot_targets',
+        'control.approval_channel_evidence',
         'integration.crm_entity_links',
         'integration.crm_outbox',
         'integration.crm_inbox',
@@ -140,6 +141,42 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         targetIds[0],
       )
 
+      const approvalId = randomUUID()
+      const actionHash = 'b'.repeat(64)
+      await pool.query(`SET ROLE commercial_runtime`)
+      await pool.query(
+        `SELECT control.request_approval($1,$2,$3,clock_timestamp())`,
+        [approvalId, { mission_id: randomUUID() }, actionHash],
+      )
+      await pool.query(`RESET ROLE`)
+      await pool.query(`SET ROLE commercial_approval_evidence`)
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT control.record_approval_channel_evidence($1,$2,'sales','approved','sales-director','2026-08-16T12:00:00Z') AS recorded`,
+            [approvalId, actionHash],
+          )
+        ).rows[0].recorded,
+        true,
+      )
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT count(*)::int AS count FROM control.list_approval_channel_evidence($1)`,
+            [approvalId],
+          )
+        ).rows[0].count,
+        1,
+      )
+      await assert.rejects(
+        pool.query(
+          `SELECT control.record_approval_channel_evidence($1,$2,'sales','denied','sales-director','2026-08-16T12:00:00Z')`,
+          [approvalId, actionHash],
+        ),
+        /APPROVAL_EVIDENCE_CONFLICT/,
+      )
+      await pool.query(`RESET ROLE`)
+
       const rollback = await readFile(
         new URL('../migrations/004_crm_integration.rollback.sql', import.meta.url),
         'utf8',
@@ -154,6 +191,14 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         (await pool.query(`SELECT enabled FROM integration.sync_control WHERE control_id=1`))
           .rows[0].enabled,
         false,
+      )
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT count(*)::int AS count FROM control.approval_channel_evidence`,
+          )
+        ).rows[0].count,
+        1,
       )
     } finally {
       await pool.end()

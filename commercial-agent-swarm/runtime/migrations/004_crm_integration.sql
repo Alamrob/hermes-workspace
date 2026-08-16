@@ -11,6 +11,17 @@ CREATE TABLE IF NOT EXISTS integration.sync_control (
 INSERT INTO integration.sync_control(control_id, enabled)
 VALUES (1, false) ON CONFLICT (control_id) DO NOTHING;
 
+CREATE TABLE IF NOT EXISTS control.approval_channel_evidence (
+  approval_id uuid NOT NULL REFERENCES control.approvals(approval_id) ON DELETE RESTRICT,
+  action_hash text NOT NULL CHECK (action_hash ~ '^[0-9a-f]{64}$'),
+  channel text NOT NULL CHECK (channel IN ('sales', 'telegram')),
+  decision text NOT NULL CHECK (decision IN ('approved', 'denied')),
+  actor_id text NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128 AND actor_id ~ '^[A-Za-z0-9._:@-]+$'),
+  decided_at timestamptz NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY(approval_id, channel)
+);
+
 CREATE TABLE IF NOT EXISTS control.pilot_cohorts (
   cohort_id uuid PRIMARY KEY,
   project_id text NOT NULL REFERENCES catalog.projects(project_id) ON DELETE RESTRICT,
@@ -127,6 +138,26 @@ BEGIN
  RAISE EXCEPTION 'PILOT_COHORT_IDEMPOTENCY_CONFLICT';
 END $$;
 
+CREATE OR REPLACE FUNCTION control.record_approval_channel_evidence(uuid,text,text,text,text,timestamptz) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE expected_hash text;DECLARE existing control.approval_channel_evidence%ROWTYPE;
+BEGIN
+ SELECT action_hash INTO expected_hash FROM control.approvals WHERE approval_id=$1 AND status='pending' FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'APPROVAL_NOT_PENDING';END IF;
+ IF expected_hash<>$2 THEN RAISE EXCEPTION 'APPROVAL_EVIDENCE_HASH_MISMATCH';END IF;
+ INSERT INTO control.approval_channel_evidence(approval_id,action_hash,channel,decision,actor_id,decided_at)
+ VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING;
+ IF FOUND THEN RETURN true;END IF;
+ SELECT * INTO existing FROM control.approval_channel_evidence WHERE approval_id=$1 AND channel=$3;
+ IF existing.action_hash=$2 AND existing.decision=$4 AND existing.actor_id=$5 AND existing.decided_at=$6 THEN RETURN true;END IF;
+ RAISE EXCEPTION 'APPROVAL_EVIDENCE_CONFLICT';
+END $$;
+
+CREATE OR REPLACE FUNCTION control.list_approval_channel_evidence(uuid) RETURNS SETOF control.approval_channel_evidence
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
+ SELECT * FROM control.approval_channel_evidence WHERE approval_id=$1 ORDER BY channel
+$$;
+
 CREATE OR REPLACE FUNCTION control.add_pilot_suppression(text,text,text) RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE existing control.pilot_suppressions%ROWTYPE;
@@ -238,15 +269,15 @@ SELECT outbox_id,cohort_id,target_id,connector_id,operation,source_version,statu
 
 DO $$DECLARE role_name text;DECLARE unsafe boolean;BEGIN
  PERFORM pg_advisory_xact_lock(hashtext('proptimiza-crm-capability-roles'));
- FOREACH role_name IN ARRAY ARRAY['commercial_crm_sync','commercial_crm_observer']LOOP
+ FOREACH role_name IN ARRAY ARRAY['commercial_crm_sync','commercial_crm_observer','commercial_approval_evidence']LOOP
   SELECT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls INTO unsafe FROM pg_roles WHERE rolname=role_name;
   IF NOT FOUND THEN EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS',role_name);ELSIF unsafe THEN RAISE EXCEPTION'UNSAFE_PREEXISTING_ROLE: %',role_name;END IF;
  END LOOP;
 END $$;
 
-REVOKE ALL ON control.pilot_cohorts,control.pilot_targets,control.pilot_suppressions,integration.sync_control,integration.crm_entity_links,integration.crm_outbox,integration.crm_inbox,integration.crm_sync_cursors FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator;
+REVOKE ALL ON control.approval_channel_evidence,control.pilot_cohorts,control.pilot_targets,control.pilot_suppressions,integration.sync_control,integration.crm_entity_links,integration.crm_outbox,integration.crm_inbox,integration.crm_sync_cursors FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator,commercial_approval_evidence;
 REVOKE ALL ON SEQUENCE integration.crm_inbox_inbox_id_seq FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator;
-REVOKE ALL ON FUNCTION control.create_pilot_cohort(uuid,text,text),control.add_pilot_suppression(text,text,text),control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamptz,text),integration.enqueue_crm_change(uuid,uuid,uuid,text,jsonb,bigint),integration.set_crm_sync_enabled(boolean),integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text) FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator;
+REVOKE ALL ON FUNCTION control.record_approval_channel_evidence(uuid,text,text,text,text,timestamptz),control.list_approval_channel_evidence(uuid),control.create_pilot_cohort(uuid,text,text),control.add_pilot_suppression(text,text,text),control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamptz,text),integration.enqueue_crm_change(uuid,uuid,uuid,text,jsonb,bigint),integration.set_crm_sync_enabled(boolean),integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text) FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator,commercial_approval_evidence;
 ALTER DEFAULT PRIVILEGES IN SCHEMA integration REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA integration REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 
@@ -254,6 +285,8 @@ GRANT USAGE ON SCHEMA control,integration TO commercial_runtime;
 GRANT EXECUTE ON FUNCTION control.create_pilot_cohort(uuid,text,text),control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamptz,text),integration.enqueue_crm_change(uuid,uuid,uuid,text,jsonb,bigint) TO commercial_runtime;
 GRANT USAGE ON SCHEMA integration TO commercial_crm_sync,commercial_crm_observer,commercial_safety_operator;
 GRANT USAGE ON SCHEMA control TO commercial_crm_observer;
+GRANT USAGE ON SCHEMA control TO commercial_approval_evidence;
+GRANT EXECUTE ON FUNCTION control.record_approval_channel_evidence(uuid,text,text,text,text,timestamptz),control.list_approval_channel_evidence(uuid) TO commercial_approval_evidence;
 GRANT EXECUTE ON FUNCTION integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text) TO commercial_crm_sync;
 GRANT EXECUTE ON FUNCTION control.add_pilot_suppression(text,text,text),integration.set_crm_sync_enabled(boolean) TO commercial_safety_operator;
 GRANT SELECT ON control.pilot_cohort_summaries TO commercial_crm_observer;

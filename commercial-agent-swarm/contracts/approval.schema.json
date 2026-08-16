@@ -24,6 +24,29 @@
     "signature"
   ],
   "properties": {
+    "approval_mode": {
+      "type": "string",
+      "enum": ["sales_only", "telegram_only", "either", "dual_channel"],
+      "default": "either"
+    },
+    "approval_evidence": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["channel", "decision", "actor_id", "decided_at"],
+        "properties": {
+          "channel": { "enum": ["sales", "telegram"] },
+          "decision": { "enum": ["approved", "denied"] },
+          "actor_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:@-]{1,128}$"
+          },
+          "decided_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
     "approval_id": { "type": "string", "format": "uuid" },
     "mission_id": { "type": "string", "format": "uuid" },
     "trace_id": { "type": "string", "format": "uuid" },
