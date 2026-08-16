@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DeterministicDispatcher, type ClaimedJob } from '../src/dispatch-queue.js'
 import type { ExecutorEnvelope } from '../src/hermes-executor.js'
+import { ExecutorTransportError } from '../src/unix-executor-client.js'
 
 const claimed: ClaimedJob = {
-  job_id: 'job-1', mission_id: 'mission-1', profile_id: 'market-account-intelligence',
-  prompt: 'external text', attempts: 1, max_attempts: 3
+  job_id: '323e4567-e89b-42d3-a456-426614174000', mission_id: '123e4567-e89b-42d3-a456-426614174000', trace_id: '223e4567-e89b-42d3-a456-426614174000', profile_id: 'market-account-intelligence',
+  instruction: 'Analyze evidence.', evidence: {trust:'untrusted_data',content:'external text'}, reservation:{maximum_tokens:100,maximum_api_calls:2,budget_reservation:{currency:'USD',amount:0.02}}, attempts: 1, max_attempts: 3
 }
 
 class FakeQueue {
@@ -18,11 +19,7 @@ class FakeQueue {
 }
 
 function envelope(status: 'completed'|'failed'): ExecutorEnvelope {
-  return { schema_version: '1.0', mission_id: claimed.mission_id, assignment_id: claimed.job_id,
-    profile_id: claimed.profile_id, status,
-    result: status === 'completed' ? { artifact_id: 'artifact-1', content: 'safe' } : null,
-    evidence: [], token_cost: { input_tokens: 1, output_tokens: 2, currency: 'USD', amount: 0.01 },
-    error: status === 'failed' ? 'MODEL_REFUSAL' : null }
+  return { schema_version: '1.0', agent_result:{mission_id:claimed.mission_id,trace_id:claimed.trace_id,assignment_id:claimed.job_id,agent_id:claimed.profile_id,status,summary:'safe',facts:[],inferences:[],actions_taken:[],external_changes:[],evidence:[],artifacts:[],metrics:{},cost:{currency:'USD',llm:0.02,tools:0,total:0.02,input_tokens:1,output_tokens:2},errors:status==='failed'?[{code:'MODEL_REFUSAL',message:'refused',recoverable:false,attempts:1}]:[],risks:[],pending_approvals:[],recommended_next_actions:[],started_at:'2026-08-16T08:00:00Z',finished_at:'2026-08-16T08:00:01Z'}, usage: { tokens: { input: 1, output: 2, cache_read: 0, cache_write: 0, reasoning: 0, total: 3 }, api_calls: 1, model: 'deepseek-v4-flash', provider: 'custom:deepseek-v4-flash', completed: true, failed: false, cost: { status: 'known', amount_usd: 0.01, source: 'custom_contract' } } }
 }
 
 describe('deterministic dispatcher', () => {
@@ -33,7 +30,7 @@ describe('deterministic dispatcher', () => {
     const gate = new Promise<void>(resolve => { release = resolve })
     const executor = { execute: async () => { if (++calls === 1) await gate;return envelope('completed') } }
     const dispatcher = new DeterministicDispatcher({ queue: queue as never, executor: executor as never,
-      workerId: 'worker-1', now: () => new Date('2026-08-16T08:00:00Z'), leaseSeconds: 60 })
+      workerId: 'worker-1', leaseSeconds: 60, childTimeoutSeconds: 30 })
     const first = dispatcher.runOnce()
     await new Promise(resolve => setImmediate(resolve))
     assert.equal(await dispatcher.runOnce(), false)
@@ -46,7 +43,7 @@ describe('deterministic dispatcher', () => {
     const queue = new FakeQueue()
     const executor = { execute: async () => envelope('completed') }
     const dispatcher = new DeterministicDispatcher({ queue: queue as never, executor: executor as never,
-      workerId: 'worker-1', now: () => new Date('2026-08-16T08:00:00Z'), leaseSeconds: 60 })
+      workerId: 'worker-1', leaseSeconds: 60, childTimeoutSeconds: 30 })
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(queue.failed.length, 0)
     assert.equal(queue.completed.length, 1)
@@ -57,11 +54,11 @@ describe('deterministic dispatcher', () => {
     const queue = new FakeQueue()
     const executor = { execute: async () => envelope('failed') }
     const dispatcher = new DeterministicDispatcher({ queue: queue as never, executor: executor as never,
-      workerId: 'worker-1', now: () => new Date('2026-08-16T08:00:00Z'), leaseSeconds: 60 })
+      workerId: 'worker-1', leaseSeconds: 60, childTimeoutSeconds: 30 })
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(queue.completed.length, 0)
     assert.equal(queue.failed.length, 1)
-    assert.equal(queue.failed[0]![2], 'MODEL_REFUSAL')
+    assert.equal(queue.failed[0]![2], 'AGENT_RESULT_FAILED')
     assert.equal(queue.failed[0]![3], false)
   })
 
@@ -69,9 +66,18 @@ describe('deterministic dispatcher', () => {
     const queue = new FakeQueue()
     const executor = { execute: async () => { throw new Error('HERMES_TIMEOUT') } }
     const dispatcher = new DeterministicDispatcher({ queue: queue as never, executor: executor as never,
-      workerId: 'worker-1', now: () => new Date('2026-08-16T08:00:00Z'), leaseSeconds: 60 })
+      workerId: 'worker-1', leaseSeconds: 60, childTimeoutSeconds: 30 })
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(queue.completed.length, 0)
     assert.equal(queue.failed[0]![3], true)
+  })
+
+  it('leaves the lease untouched when IPC outcome is uncertain', async () => {
+    const queue = new FakeQueue()
+    const executor = { execute: async () => { throw new ExecutorTransportError('EXECUTOR_IPC_TIMEOUT', true, 'unknown') } }
+    const dispatcher = new DeterministicDispatcher({ queue: queue as never, executor: executor as never, workerId: 'worker-1', leaseSeconds: 60, childTimeoutSeconds: 30 })
+    assert.equal(await dispatcher.runOnce(), true)
+    assert.equal(queue.completed.length, 0)
+    assert.equal(queue.failed.length, 0)
   })
 })
