@@ -191,7 +191,7 @@ export async function syncTwentyInboundOnce(options: {
   if (options.mode === 'simulation')
     return { stored: 0, cursorVersion: options.cursor.version }
   if (
-    !['accounts', 'contacts', 'notes'].includes(options.stream) ||
+    !['pilot_targets', 'accounts', 'contacts', 'opportunities', 'notes'].includes(options.stream) ||
     !Number.isSafeInteger(options.cursor.version) ||
     options.cursor.version < 0 ||
     (options.cursor.value !== null && !bounded(options.cursor.value, 2048))

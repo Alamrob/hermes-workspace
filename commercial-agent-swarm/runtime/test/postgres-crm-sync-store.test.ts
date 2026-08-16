@@ -39,6 +39,9 @@ describe('PostgreSQL CRM sync capability adapter', () => {
         if (sql.includes('complete_crm_outbox')) return { rows: [{ completed: true }] }
         if (sql.includes('store_crm_inbox')) return { rows: [{ inserted: true }] }
         if (sql.includes('advance_crm_cursor')) return { rows: [{ version: '4' }] }
+        if (sql.includes('get_crm_cursor')) return { rows: [{ cursor_value: 'cursor-3', cursor_version: '3' }] }
+        if (sql.includes('crm_sync_ready')) return { rows: [{ ready: true }] }
+        if (sql.includes('list_crm_outcome_unknown')) return { rows: [{ outbox_id: 'outbox', error_code: 'TWENTY_OUTCOME_UNKNOWN' }] }
         return { rows: [{ recorded: true }] }
       },
     })
@@ -55,6 +58,22 @@ describe('PostgreSQL CRM sync capability adapter', () => {
       true,
     )
     assert.equal(await store.advanceCursor('twenty', 'accounts', 3, 'next'), 4)
-    assert.equal(queries.every((sql) => /SELECT integration\./.test(sql)), true)
+    assert.deepEqual(await store.getCursor('twenty', 'accounts'), {
+      value: 'cursor-3', version: 3,
+    })
+    assert.equal(await store.ready(), true)
+    assert.deepEqual(await store.listOutcomeUnknown(10), [
+      { outboxId: 'outbox', errorCode: 'TWENTY_OUTCOME_UNKNOWN' },
+    ])
+    assert.equal(
+      queries.every(
+        (sql) =>
+          sql.includes('integration.') &&
+          !/\bFROM integration\.(?:crm_outbox|crm_inbox|crm_sync_cursors)\b/.test(
+            sql,
+          ),
+      ),
+      true,
+    )
   })
 })

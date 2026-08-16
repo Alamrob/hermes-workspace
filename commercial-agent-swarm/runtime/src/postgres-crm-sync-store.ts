@@ -106,4 +106,58 @@ export class PostgresCrmSyncStore implements CrmSyncStorePort {
       throw new Error('CRM_CURSOR_RESULT_INVALID')
     return version
   }
+
+  async ready(): Promise<boolean> {
+    const result = await this.database.query(
+      `SELECT integration.crm_sync_ready() AS ready`,
+    )
+    return (
+      (result.rows.at(0) as { ready?: boolean } | undefined)?.ready === true
+    )
+  }
+
+  async getCursor(
+    connectorId: 'twenty',
+    stream: CrmStream,
+  ): Promise<{ value: string | null; version: number }> {
+    const result = await this.database.query(
+      `SELECT cursor_value,cursor_version
+       FROM integration.get_crm_cursor($1,$2)`,
+      [connectorId, stream],
+    )
+    const row = result.rows.at(0) as
+      | { cursor_value?: unknown; cursor_version?: unknown }
+      | undefined
+    if (!row) return { value: null, version: 0 }
+    const version = Number(row.cursor_version)
+    if (
+      typeof row.cursor_value !== 'string' ||
+      !Number.isSafeInteger(version) ||
+      version < 1
+    )
+      throw new Error('CRM_CURSOR_RESULT_INVALID')
+    return { value: row.cursor_value, version }
+  }
+
+  async listOutcomeUnknown(
+    limit: number,
+  ): Promise<Array<{
+    outboxId: string
+    errorCode: 'TWENTY_OUTCOME_UNKNOWN'
+  }>> {
+    const result = await this.database.query(
+      `SELECT outbox_id,error_code
+       FROM integration.list_crm_outcome_unknown($1)`,
+      [limit],
+    )
+    return result.rows.map((candidate) => {
+      const row = candidate as { outbox_id?: unknown; error_code?: unknown }
+      if (
+        typeof row.outbox_id !== 'string' ||
+        row.error_code !== 'TWENTY_OUTCOME_UNKNOWN'
+      )
+        throw new Error('CRM_RECONCILIATION_RESULT_INVALID')
+      return { outboxId: row.outbox_id, errorCode: row.error_code }
+    })
+  }
 }

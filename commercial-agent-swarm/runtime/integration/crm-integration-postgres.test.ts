@@ -114,6 +114,11 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         ),
         /CRM_IDEMPOTENCY_CONFLICT/,
       )
+      const uncertainOutboxId = randomUUID()
+      await pool.query(
+        `SELECT integration.enqueue_crm_change($1,$2,$3,'upsert_account',$4,2)`,
+        [uncertainOutboxId, cohortId, targetIds[0], { name: 'Company 0' }],
+      )
       await pool.query(`RESET ROLE`)
       await pool.query(`SET ROLE commercial_safety_operator`)
       await pool.query(`SELECT integration.set_crm_sync_enabled(true)`)
@@ -130,6 +135,47 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
       await pool.query(
         `SELECT integration.complete_crm_outbox($1,'worker-1','remote-1','v1')`,
         [outboxId],
+      )
+      assert.equal(
+        (await pool.query(`SELECT integration.crm_sync_ready() AS ready`)).rows[0]
+          .ready,
+        true,
+      )
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT integration.advance_crm_cursor('twenty','accounts',0,'2026-08-16T00:00:00.000Z') AS version`,
+          )
+        ).rows[0].version,
+        '1',
+      )
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT cursor_value FROM integration.get_crm_cursor('twenty','accounts')`,
+          )
+        ).rows[0].cursor_value,
+        '2026-08-16T00:00:00.000Z',
+      )
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT outbox_id FROM integration.claim_crm_outbox('worker-1',60)`,
+          )
+        ).rows[0].outbox_id,
+        uncertainOutboxId,
+      )
+      await pool.query(
+        `SELECT integration.mark_crm_outbox_outcome_unknown($1,'worker-1','TWENTY_OUTCOME_UNKNOWN')`,
+        [uncertainOutboxId],
+      )
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT outbox_id FROM integration.list_crm_outcome_unknown(10)`,
+          )
+        ).rows[0].outbox_id,
+        uncertainOutboxId,
       )
       await pool.query(`RESET ROLE`)
       assert.equal(

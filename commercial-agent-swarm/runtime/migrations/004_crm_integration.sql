@@ -294,6 +294,31 @@ BEGIN
  RETURN current_version+1;
 END $$;
 
+CREATE OR REPLACE FUNCTION integration.crm_sync_ready() RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
+ SELECT EXISTS(
+  SELECT 1 FROM integration.sync_control WHERE control_id=1 AND enabled
+ )
+$$;
+
+CREATE OR REPLACE FUNCTION integration.get_crm_cursor(text,text)
+RETURNS TABLE(cursor_value text,cursor_version bigint)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
+ SELECT cursor_value,cursor_version
+ FROM integration.crm_sync_cursors WHERE connector_id=$1 AND stream=$2
+$$;
+
+CREATE OR REPLACE FUNCTION integration.list_crm_outcome_unknown(integer)
+RETURNS TABLE(outbox_id uuid,error_code text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
+BEGIN
+ IF $1 NOT BETWEEN 1 AND 1000 THEN RAISE EXCEPTION 'INVALID_CRM_RECONCILE_LIMIT';END IF;
+ RETURN QUERY SELECT item.outbox_id,item.error_code
+ FROM integration.crm_outbox item
+ WHERE item.status='outcome_unknown' AND item.error_code='TWENTY_OUTCOME_UNKNOWN'
+ ORDER BY item.updated_at,item.outbox_id LIMIT $1;
+END $$;
+
 CREATE OR REPLACE VIEW control.pilot_cohort_summaries WITH(security_barrier=true)AS
 SELECT c.cohort_id,c.project_id,c.cohort_name,c.status,c.maximum_targets,count(t.target_id)::integer AS target_count,c.created_at
 FROM control.pilot_cohorts c LEFT JOIN control.pilot_targets t ON t.cohort_id=c.cohort_id GROUP BY c.cohort_id;
@@ -310,7 +335,7 @@ END $$;
 
 REVOKE ALL ON control.approval_channel_evidence,control.pilot_cohorts,control.pilot_targets,control.pilot_suppressions,integration.sync_control,integration.crm_entity_links,integration.crm_outbox,integration.crm_inbox,integration.crm_sync_cursors FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator,commercial_approval_evidence;
 REVOKE ALL ON SEQUENCE integration.crm_inbox_inbox_id_seq FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator;
-REVOKE ALL ON FUNCTION mail.purge_expired_webhook_previews(integer),control.record_approval_channel_evidence(uuid,text,text,text,text,timestamptz),control.list_approval_channel_evidence(uuid),control.create_pilot_cohort(uuid,text,text),control.add_pilot_suppression(text,text,text),control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamptz,text),integration.enqueue_crm_change(uuid,uuid,uuid,text,jsonb,bigint),integration.set_crm_sync_enabled(boolean),integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text) FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator,commercial_approval_evidence;
+REVOKE ALL ON FUNCTION mail.purge_expired_webhook_previews(integer),control.record_approval_channel_evidence(uuid,text,text,text,text,timestamptz),control.list_approval_channel_evidence(uuid),control.create_pilot_cohort(uuid,text,text),control.add_pilot_suppression(text,text,text),control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamptz,text),integration.enqueue_crm_change(uuid,uuid,uuid,text,jsonb,bigint),integration.set_crm_sync_enabled(boolean),integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text),integration.crm_sync_ready(),integration.get_crm_cursor(text,text),integration.list_crm_outcome_unknown(integer) FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator,commercial_approval_evidence;
 ALTER DEFAULT PRIVILEGES IN SCHEMA integration REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA integration REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 
@@ -320,7 +345,7 @@ GRANT USAGE ON SCHEMA integration TO commercial_crm_sync,commercial_crm_observer
 GRANT USAGE ON SCHEMA control TO commercial_crm_observer;
 GRANT USAGE ON SCHEMA control TO commercial_approval_evidence;
 GRANT EXECUTE ON FUNCTION control.record_approval_channel_evidence(uuid,text,text,text,text,timestamptz),control.list_approval_channel_evidence(uuid) TO commercial_approval_evidence;
-GRANT EXECUTE ON FUNCTION integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text) TO commercial_crm_sync;
+GRANT EXECUTE ON FUNCTION integration.claim_crm_outbox(text,integer),integration.complete_crm_outbox(uuid,text,text,text),integration.mark_crm_outbox_outcome_unknown(uuid,text,text),integration.store_crm_inbox(text,text,text,text,text,jsonb),integration.advance_crm_cursor(text,text,bigint,text),integration.crm_sync_ready(),integration.get_crm_cursor(text,text),integration.list_crm_outcome_unknown(integer) TO commercial_crm_sync;
 GRANT EXECUTE ON FUNCTION control.add_pilot_suppression(text,text,text),integration.set_crm_sync_enabled(boolean) TO commercial_safety_operator;
 GRANT SELECT ON control.pilot_cohort_summaries TO commercial_crm_observer;
 GRANT SELECT ON integration.crm_sync_summaries TO commercial_crm_observer;
