@@ -130,8 +130,8 @@ async function setup(options: { productionPricing?: boolean } = {}) {
     temporaryRoot: root,
     expectedTemporaryRoot: root,
     expectedUsageUid: process.getuid?.() ?? 10000,
-    childUid: 10000,
-    childGid: 10000,
+    childUid: 10002,
+    childGid: 10002,
     customApiKeyFile: keyFile,
     expectedSecretGid: 10000,
     readCustomApiKey: async (path) => (await readFile(path, 'utf8')).trim(),
@@ -168,8 +168,8 @@ describe('isolated Hermes executor', () => {
     assert.equal(invocation.args[2], '-z')
     assert.match(invocation.args[3], /^SYSTEM_BOUNDARY:/)
     assert.equal(invocation.args[4], '--usage-file')
-    assert.equal(invocation.uid, 10000)
-    assert.equal(invocation.gid, 10000)
+    assert.equal(invocation.uid, 10002)
+    assert.equal(invocation.gid, 10002)
     assert.equal(invocation.shell, false)
     assert.equal(invocation.detached, true)
     assert.equal(invocation.cwd.startsWith(state.root), true)

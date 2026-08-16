@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start:broker": "node dist/broker-main.js",
+    "start:executor": "node dist/executor-main.js",
     "start:crm-sync": "node dist/crm-sync-main.js",
     "reconcile:crm-sync": "node dist/crm-sync-main.js reconcile",
     "migrate": "node dist/migrate-main.js",

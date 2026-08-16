@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { chmod, chown, mkdir, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -115,29 +116,38 @@ describe('Node process runner containment', () => {
     },
   )
   it(
-    'drops to uid/gid 10000 and cannot read root key or traverse the IPC group directory',
+    'drops to child uid/gid 10002 with no capabilities and cannot read the supervisor secret, seed, or socket',
     { skip: !linux || process.getuid?.() !== 0 },
     async () => {
       const root = join(tmpdir(), `runner-identity-${crypto.randomUUID()}`),
         cwd = join(root, 'cwd'),
         key = join(root, 'key'),
-        ipc = join(root, 'ipc')
+        ipc = join(root, 'ipc'),
+        socket = join(ipc, 'executor.sock'),
+        seed = join(root, 'seed')
       await mkdir(cwd, { recursive: true })
       await mkdir(ipc)
       await writeFile(key, 'secret')
+      await writeFile(seed, 'immutable')
       await chmod(root, 0o755)
       await chmod(cwd, 0o755)
-      await chmod(key, 0o400)
-      await chown(key, 0, 0)
-      await chown(ipc, 0, 19000)
-      await chmod(ipc, 0o770)
-      const code = `const fs=require('fs');const denied=p=>{try{fs.openSync(p,'r');return false}catch(e){return e.code==='EACCES'}};process.stdout.write(JSON.stringify({uid:process.getuid(),gid:process.getgid(),keyDenied:denied(${JSON.stringify(key)}),ipcDenied:denied(${JSON.stringify(ipc)})}))`
+      await chmod(key, 0o440)
+      await chown(key, 0, 10000)
+      await chmod(seed, 0o444)
+      await chown(seed, 10000, 10000)
+      await chown(ipc, 10000, 11000)
+      await chmod(ipc, 0o2770)
+      const server = createServer()
+      await new Promise<void>((resolve, reject) => server.once('error', reject).listen(socket, resolve))
+      await chown(socket, 10000, 11000)
+      await chmod(socket, 0o660)
+      const code = `const fs=require('fs'),net=require('net');const denied=(fn)=>{try{fn();return false}catch(e){return e.code==='EACCES'||e.code==='EPERM'}};(async()=>{const connectDenied=await new Promise(r=>{const s=net.createConnection(${JSON.stringify(socket)});s.once('connect',()=>{s.destroy();r(false)});s.once('error',e=>r(e.code==='EACCES'||e.code==='EPERM'))});const status=fs.readFileSync('/proc/self/status','utf8');process.stdout.write(JSON.stringify({uid:process.getuid(),gid:process.getgid(),groups:process.getgroups(),keyDenied:denied(()=>fs.readFileSync(${JSON.stringify(key)})),seedWriteDenied:denied(()=>fs.writeFileSync(${JSON.stringify(seed)},'x')),connectDenied,unlinkDenied:denied(()=>fs.unlinkSync(${JSON.stringify(socket)})),capEff:/CapEff:\\s+0+\\n/.test(status),capBnd:/CapBnd:\\s+0+\\n/.test(status),noNewPrivs:/NoNewPrivs:\\s+1\\n/.test(status)}))})()`
       const call: ProcessInvocation = {
         command: process.execPath,
         args: ['-e', code],
         env: { PATH: process.env.PATH ?? '' },
-        uid: 10000,
-        gid: 10000,
+        uid: 10002,
+        gid: 10002,
         shell: false,
         detached: true,
         cwd,
@@ -149,12 +159,19 @@ describe('Node process runner containment', () => {
         const out = await new NodeProcessRunner().run(call)
         assert.equal(out.exitCode, 0)
         assert.deepEqual(JSON.parse(out.stdout), {
-          uid: 10000,
-          gid: 10000,
+          uid: 10002,
+          gid: 10002,
+          groups: [10002],
           keyDenied: true,
-          ipcDenied: true,
+          seedWriteDenied: true,
+          connectDenied: true,
+          unlinkDenied: true,
+          capEff: true,
+          capBnd: true,
+          noNewPrivs: true,
         })
       } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()))
         await rm(root, { recursive: true, force: true })
       }
     },

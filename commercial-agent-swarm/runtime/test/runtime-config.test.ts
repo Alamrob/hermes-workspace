@@ -43,7 +43,7 @@ describe('split runtime trust-zone configuration', () => {
     const good = {
       ...common,
       EXECUTOR_SOCKET_DIRECTORY: '/run/commercial-swarm',
-      EXECUTOR_IPC_GID: '19000',
+      EXECUTOR_IPC_GID: '11000',
       HERMES_PROFILE_SEED: '/opt/profiles',
       HERMES_PROFILE_SEED_SHA256: 'a'.repeat(64),
       HERMES_TEMPORARY_ROOT: '/run/commercial-swarm/hermes-executor',
@@ -59,6 +59,18 @@ describe('split runtime trust-zone configuration', () => {
         gid: loadExecutorRuntimeConfig(good).executorGid,
       },
       { uid: 10000, gid: 10000 },
+    )
+    assert.deepEqual(
+      {
+        uid: loadExecutorRuntimeConfig(good).childUid,
+        gid: loadExecutorRuntimeConfig(good).childGid,
+        ipcGid: loadExecutorRuntimeConfig(good).ipcGid,
+      },
+      { uid: 10002, gid: 10002, ipcGid: 11000 },
+    )
+    assert.throws(
+      () => loadExecutorRuntimeConfig({ ...good, EXECUTOR_IPC_GID: '19000' }),
+      /EXECUTOR_IPC_GID_INVALID/,
     )
     for (const name of [
       'DATABASE_URL',

@@ -14,6 +14,9 @@ export const EXECUTOR_SOCKET_PATH = `${EXECUTOR_SOCKET_DIRECTORY}/executor.sock`
 export const HERMES_TEMPORARY_ROOT = '/run/commercial-swarm/hermes-executor'
 export const EXECUTOR_UID = 10000
 export const EXECUTOR_GID = 10000
+export const EXECUTOR_CHILD_UID = 10002
+export const EXECUTOR_CHILD_GID = 10002
+export const EXECUTOR_IPC_GID = 11000
 
 export interface BrokerRuntimeConfig {
   socketPath: string
@@ -28,6 +31,8 @@ export interface ExecutorRuntimeConfig {
   ipcGid: number
   executorUid: 10000
   executorGid: 10000
+  childUid: 10002
+  childGid: 10002
   profileSeed: string
   seedSha256: string
   temporaryRoot: string
@@ -80,12 +85,17 @@ export function loadExecutorRuntimeConfig(
   const temporaryRoot = required(env, 'HERMES_TEMPORARY_ROOT')
   if (temporaryRoot !== HERMES_TEMPORARY_ROOT)
     throw new Error('UNSAFE_HERMES_TEMPORARY_ROOT')
+  const ipcGid = integer(env, 'EXECUTOR_IPC_GID', 1, 65535)
+  if (ipcGid !== EXECUTOR_IPC_GID)
+    throw new Error('EXECUTOR_IPC_GID_INVALID')
   return {
     socketPath,
     socketDirectory,
-    ipcGid: integer(env, 'EXECUTOR_IPC_GID', 1, 65535),
+    ipcGid,
     executorUid: EXECUTOR_UID,
     executorGid: EXECUTOR_GID,
+    childUid: EXECUTOR_CHILD_UID,
+    childGid: EXECUTOR_CHILD_GID,
     profileSeed: required(env, 'HERMES_PROFILE_SEED'),
     seedSha256: required(env, 'HERMES_PROFILE_SEED_SHA256'),
     temporaryRoot,

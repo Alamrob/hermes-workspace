@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  chmod,
+  chown,
   cp,
   lstat,
   mkdir,
@@ -12,7 +14,7 @@ import {
   rm,
 } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { readGroupSecretFile } from './secret-file.js'
 import {
@@ -45,6 +47,8 @@ export const HERMES_SAFE_PATH =
 export const HERMES_MODEL = 'deepseek-v4-flash'
 export const HERMES_PROVIDER = 'custom:deepseek-v4-flash'
 export const HERMES_BASE_URL = 'https://opencode.ai/zen/go/v1'
+export const SETPRIV_BINARY = '/usr/bin/setpriv'
+export const EXECUTOR_CHILD_SUPPLEMENTARY_GROUPS_CLEARED_V1 = true
 
 export interface ProcessInvocation {
   command: string
@@ -71,6 +75,7 @@ export interface ProcessRunner {
 }
 export interface HomeOwnershipPreparer {
   prepare: (home: string, uid: number, gid: number) => Promise<void>
+  reclaim?: (home: string, uid: number, gid: number) => Promise<void>
 }
 
 export interface ExecutorEnvelope {
@@ -87,6 +92,7 @@ export interface HermesExecutorOptions {
   temporaryRoot: string
   expectedTemporaryRoot: string
   expectedOwnerUid?: number
+  expectedOwnerGid?: number
   expectedUsageUid?: number
   childUid: number
   childGid: number
@@ -120,7 +126,7 @@ export class ExecutorExecutionError extends Error {
 
 export class HermesExecutor implements ExecutorPort {
   constructor(private readonly options: HermesExecutorOptions) {
-    if (options.childUid !== 10000 || options.childGid !== 10000)
+    if (options.childUid !== 10002 || options.childGid !== 10002)
       throw new Error('EXPECTED_CHILD_IDENTITY_REQUIRED')
     if (options.safePath !== HERMES_SAFE_PATH)
       throw new Error('UNSAFE_CHILD_PATH')
@@ -232,8 +238,8 @@ export class HermesExecutor implements ExecutorPort {
           LANG: 'C.UTF-8',
           PATH: HERMES_SAFE_PATH,
         },
-        uid: 10000,
-        gid: 10000,
+        uid: this.options.childUid,
+        gid: this.options.childGid,
         shell: false,
         detached: true,
         cwd,
@@ -249,7 +255,7 @@ export class HermesExecutor implements ExecutorPort {
         JSON.parse(
           await readSecureUsageFile(
             usageFile,
-            this.options.expectedUsageUid ?? 10000,
+            this.options.expectedUsageUid ?? this.options.childUid,
           ),
         ) as unknown,
         input.reservation,
@@ -271,6 +277,16 @@ export class HermesExecutor implements ExecutorPort {
       )
       return { schema_version: '1.0', agent_result: agentResult, usage }
     } finally {
+      await this.options.ownership.reclaim?.(
+        home,
+        ownerUid,
+        this.options.expectedOwnerGid ?? process.getgid?.() ?? ownerUid,
+      )
+      await this.options.ownership.reclaim?.(
+        cwd,
+        ownerUid,
+        this.options.expectedOwnerGid ?? process.getgid?.() ?? ownerUid,
+      )
       await rm(home, { recursive: true, force: true })
       await rm(cwd, { recursive: true, force: true })
     }
@@ -280,15 +296,37 @@ export class HermesExecutor implements ExecutorPort {
 export class NodeProcessRunner implements ProcessRunner {
   async run(invocation: ProcessInvocation): Promise<ProcessOutput> {
     return new Promise((resolvePromise, reject) => {
-      const child = spawn(invocation.command, invocation.args, {
+      const isolatedChild =
+        process.platform !== 'win32' &&
+        invocation.uid === 10002 &&
+        invocation.gid === 10002
+      const child = spawn(
+        isolatedChild ? SETPRIV_BINARY : invocation.command,
+        isolatedChild
+          ? [
+              '--clear-groups',
+              '--reuid=10002',
+              '--regid=10002',
+              '--inh-caps=-all',
+              '--ambient-caps=-all',
+              '--bounding-set=-all',
+              '--no-new-privs',
+              '--',
+              invocation.command,
+              ...invocation.args,
+            ]
+          : invocation.args,
+        {
         env: invocation.env,
-        uid: invocation.uid,
-        gid: invocation.gid,
+        ...(isolatedChild
+          ? {}
+          : { uid: invocation.uid, gid: invocation.gid }),
         shell: false,
         detached: true,
         cwd: invocation.cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
-      })
+        },
+      )
       const stdout: Array<Buffer> = []
       const stderr: Array<Buffer> = []
       let stdoutBytes = 0
@@ -368,25 +406,83 @@ async function waitForProcessGroupExit(pid: number | undefined): Promise<void> {
 }
 
 export class PosixHomeOwnershipPreparer implements HomeOwnershipPreparer {
+  constructor(
+    private readonly expectedRoot: string,
+    private readonly supervisorUid = 10000,
+    private readonly supervisorGid = 10000,
+  ) {}
+
   async prepare(home: string, uid: number, gid: number): Promise<void> {
+    await this.assertScopedHome(home)
+    if (uid !== 10002 || gid !== 10002)
+      throw new Error('EXPECTED_CHILD_IDENTITY_REQUIRED')
     await this.prepareEntry(home, uid, gid)
   }
+
+  async reclaim(home: string, uid: number, gid: number): Promise<void> {
+    await this.assertScopedHome(home)
+    if (uid !== this.supervisorUid || gid !== this.supervisorGid)
+      throw new Error('EXECUTOR_EFFECTIVE_IDENTITY_INVALID')
+    await this.reclaimDirectoryTree(home, uid, gid)
+  }
+
+  private async assertScopedHome(path: string): Promise<void> {
+    if (
+      !isAbsolute(path) ||
+      !isAbsolute(this.expectedRoot) ||
+      dirname(resolve(path)) !== resolve(this.expectedRoot) ||
+      !resolve(path).startsWith(`${resolve(this.expectedRoot)}${sep}`) ||
+      resolve(await realpath(this.expectedRoot)) !== resolve(this.expectedRoot)
+    )
+      throw new Error('UNSAFE_EPHEMERAL_HOME_PATH')
+    const root = await lstat(this.expectedRoot)
+    if (
+      root.isSymbolicLink() ||
+      !root.isDirectory() ||
+      (process.platform !== 'win32' &&
+        (root.uid !== this.supervisorUid ||
+          root.gid !== this.supervisorGid ||
+          (root.mode & 0o022) !== 0))
+    )
+      throw new Error('UNSAFE_EPHEMERAL_HOME_PATH')
+  }
+
   private async prepareEntry(
     path: string,
     uid: number,
     gid: number,
   ): Promise<void> {
     const metadata = await lstat(path)
-    if (metadata.isSymbolicLink())
+    if (
+      metadata.isSymbolicLink() ||
+      (!metadata.isDirectory() && !metadata.isFile()) ||
+      (!metadata.isDirectory() && metadata.nlink !== 1)
+    )
       throw new Error('UNSAFE_PROFILE_SEED_SYMLINK')
     if (metadata.isDirectory())
       for (const entry of await readdir(path))
         await this.prepareEntry(join(path, entry), uid, gid)
-    if (
-      process.platform !== 'win32' &&
-      (metadata.uid !== uid || metadata.gid !== gid || (metadata.mode & 0o022) !== 0)
-    )
-      throw new Error('UNSAFE_EPHEMERAL_HOME_OWNERSHIP')
+    if (process.platform !== 'win32') {
+      if (metadata.isDirectory()) {
+        await chmod(path, 0o710)
+        await chown(path, uid, this.supervisorGid)
+      } else await chown(path, uid, gid)
+    }
+  }
+
+  private async reclaimDirectoryTree(
+    path: string,
+    uid: number,
+    gid: number,
+  ): Promise<void> {
+    const metadata = await lstat(path)
+    if (!metadata.isDirectory()) return
+    if (process.platform !== 'win32') {
+      await chown(path, uid, gid)
+      await chmod(path, 0o700)
+    }
+    for (const entry of await readdir(path))
+      await this.reclaimDirectoryTree(join(path, entry), uid, gid)
   }
 }
 
