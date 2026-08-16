@@ -36,6 +36,8 @@ export interface RuntimeRepository {
     now: string
   }): Promise<ApprovalGrantRecord | null>
   isKillSwitchActive(input: { missionId: string; channel: string }): Promise<boolean>
+  claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string }>
+  completeExternalAction(input: { missionId: string; idempotencyKey: string; receipt_id: string; approval_id: string }): Promise<void>
 }
 
 export interface WebhookEventRecord {
@@ -59,6 +61,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly killSwitches = new Set<string>()
   private readonly missions = new Map<string, MissionRecord>()
   private readonly webhookEvents = new Map<string, WebhookEventRecord>()
+  private readonly externalActions = new Map<string, { receipt_id?: string; approval_id?: string }>()
 
   async ready(): Promise<boolean> {
     return true
@@ -141,5 +144,19 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
       this.killSwitches.has(`mission:${input.missionId}`) ||
       this.killSwitches.has(`channel:${input.channel}`)
     )
+  }
+
+  async claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string }> {
+    if (await this.isKillSwitchActive(input)) throw new Error('KILL_SWITCH_ACTIVE')
+    const key = `${input.missionId}:${input.idempotencyKey}`
+    const current = this.externalActions.get(key)
+    if (current?.receipt_id) return { status: 'completed', receipt_id: current.receipt_id }
+    if (current) throw new Error('EXECUTION_IN_PROGRESS')
+    this.externalActions.set(key, {})
+    return { status: 'acquired' }
+  }
+
+  async completeExternalAction(input: { missionId: string; idempotencyKey: string; receipt_id: string; approval_id: string }): Promise<void> {
+    this.externalActions.set(`${input.missionId}:${input.idempotencyKey}`, { receipt_id: input.receipt_id, approval_id: input.approval_id })
   }
 }

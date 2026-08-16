@@ -83,7 +83,7 @@ function listFiles(root: string): Array<string> {
   const files: Array<string> = []
   for (const entry of readdirSync(root, { withFileTypes: true })) {
     const path = join(root, entry.name)
-    if (entry.isDirectory()) files.push(...listFiles(path))
+    if (entry.isDirectory() && !['node_modules', 'dist', 'build', '.git'].includes(entry.name)) files.push(...listFiles(path))
     else if (entry.isFile()) files.push(path)
   }
   return files

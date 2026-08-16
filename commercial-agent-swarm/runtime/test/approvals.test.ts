@@ -9,6 +9,8 @@ const MISSION_ID = '123e4567-e89b-42d3-a456-426614174000'
 function action(overrides: Partial<ApprovalAction> = {}): ApprovalAction {
   return {
     mission_id: MISSION_ID,
+    project_id: 'proptimiza',
+    project_version: 'v1',
     action_type: 'mail.send',
     channel: 'email',
     sender: 'ventas@proptimiza.com',

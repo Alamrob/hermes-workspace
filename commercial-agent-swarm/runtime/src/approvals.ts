@@ -1,5 +1,7 @@
 export interface ApprovalAction {
   mission_id: string
+  project_id: string
+  project_version: string
   action_type: string
   channel: string
   sender: string

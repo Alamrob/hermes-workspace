@@ -4,6 +4,7 @@ import type { MailService } from './mail.js'
 import type { AuditSink } from './observability.js'
 import type { RuntimeRepository } from './repository.js'
 import type { WebhookService } from './webhook.js'
+import { AuthenticationError, requireBearer, type WorkOrderAuthConfig, verifyWorkOrder } from './security.js'
 import { ValidationError, validateWorkOrder } from './work-orders.js'
 
 export interface ApplicationRequest {
@@ -27,6 +28,14 @@ interface ApplicationOptions {
   audit: AuditSink
   now?: () => Date
   deployedVersion: string
+  authentication: {
+    workOrders: WorkOrderAuthConfig
+    controlPlane: string
+    approvalGateway: string
+    connector: string
+    internal: string
+    approvers: string[]
+  }
 }
 
 export class BrokerApplication {
@@ -66,26 +75,32 @@ export class BrokerApplication {
   ): Promise<ApplicationResponse> {
     if (route.action === 'createWorkOrder') {
       const workOrder = validateWorkOrder(request.body)
-      const metadata = workOrder.metadata as Record<string, unknown> | undefined
+      requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
+      verifyWorkOrder(workOrder, this.options.authentication.workOrders, this.now())
       await this.options.repository.saveMission({
         ...workOrder,
         mission_id: workOrder.mission_id,
         autonomy_level: workOrder.autonomy_level,
-        a3_enabled: workOrder.autonomy_level === 'A3' && metadata?.a3_enabled === true,
+        a3_enabled: workOrder.autonomy_level === 'A3',
       })
       return { status: 201, body: { mission_id: workOrder.mission_id, status: 'accepted' } }
     }
     if (route.action === 'getMission') {
+      requireBearer(request.headers?.authorization, this.options.authentication.internal)
       const mission = await this.options.repository.getMission(route.id!)
-      return mission ? { status: 200, body: mission } : { status: 404, body: { error: 'not_found' } }
+      return mission ? { status: 200, body: redactMission(mission) } : { status: 404, body: { error: 'not_found' } }
     }
     if (route.action === 'requestApproval') {
+      requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
       return { status: 201, body: await this.options.approvals.request(request.body) }
     }
     if (route.action === 'decideApproval') {
+      requireBearer(request.headers?.authorization, this.options.authentication.approvalGateway)
+      if (!this.options.authentication.approvers.includes(request.body?.approved_by)) throw new AuthenticationError('UNAUTHORIZED_APPROVER')
       return { status: 200, body: await this.options.approvals.decide(route.id!, request.body) }
     }
     if (route.action === 'sendMail') {
+      requireBearer(request.headers?.authorization, this.options.authentication.connector)
       return { status: 200, body: await this.options.mail.send(request.body) }
     }
     return {
@@ -116,11 +131,11 @@ export class BrokerApplication {
       duration_ms: Math.max(0, completed.getTime() - started.getTime()),
       token_cost: { input_tokens: 0, output_tokens: 0, currency: 'USD', amount: 0 },
       redacted_input: `sha256:${hashAction({ method: request.method, path: request.path })}`,
-      result: response ? `http_${response.status}` : null,
+      result: response ? JSON.stringify(response.body) : null,
       error,
       retries: 0,
       external_action: toolAction === 'mail.send',
-      approval_reference: request.body?.approval_id ?? null,
+      approval_reference: (response?.body as { approval_reference?: string } | undefined)?.approval_reference ?? request.body?.approval_id ?? null,
       evidence: [],
       state_changes: response ? [toolAction] : [],
       deployed_version: this.options.deployedVersion,
@@ -147,4 +162,9 @@ function matchRoute(method: string, path: string): Route | null {
 
 function missionIdFrom(request: ApplicationRequest): string | null {
   return request.body?.mission_id ?? request.body?.action?.mission_id ?? /^\/v1\/missions\/([^/]+)$/.exec(request.path)?.[1] ?? null
+}
+
+function redactMission(mission: Record<string, unknown>): Record<string, unknown> {
+  const { authority: _authority, approval_token: _approvalToken, business_context: _context, ...safe } = mission
+  return safe
 }
