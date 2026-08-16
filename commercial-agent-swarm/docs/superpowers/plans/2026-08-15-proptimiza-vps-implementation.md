@@ -41,6 +41,13 @@
 
 ### Task 3: Native Hermes 0.20.1 Profiles
 
+- Distribution location: `commercial-agent-swarm/profiles/<profile-id>/` with real `distribution.yaml`, `SOUL.md`, `config.yaml` and an optional profile-owned core skill; no pseudomanifest.
+- Every manifest uses `hermes_requires: ">=0.20.1"`, version `0.1.0`, records author/license, lists only distribution-owned paths and declares `CUSTOM_API_KEY` without a value.
+- Every config pins `deepseek-v4-flash` through the existing custom OpenAI-compatible provider, disables durable model memory, sets one concurrent session and bounded turns, uses explicit CLI toolsets, no MCP servers and no platform messaging toolsets.
+- Tool ceilings: orchestrator may coordinate files/todos/delegation only; market and contact profiles may use public web research plus files; qualification, outreach and QA are local file/analysis only. No profile receives terminal, mail, CRM, Telegram, WhatsApp, payment, contract or admin tools.
+- The active roster is exactly: `sales-orchestrator`, `market-account-intelligence`, `contact-data-steward`, `qualification-prioritization`, `outreach-draft-manager`, `commercial-qa-compliance`.
+- Existing deferred prompt packages may remain as source documentation but must not appear in the active deployment roster or be installed.
+
 - [ ] Retain exactly six active profiles: sales-orchestrator, market-account-intelligence, contact-data-steward, qualification-prioritization, outreach-draft-manager and commercial-qa-compliance.
 - [ ] Add native `distribution.yaml`, prompts, config and least-privilege tool policies for each.
 - [ ] Make A3 unavailable to all profiles and preserve A4 as human-only.
