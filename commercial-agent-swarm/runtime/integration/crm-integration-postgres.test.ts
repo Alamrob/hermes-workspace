@@ -52,6 +52,17 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
           relation,
         )
 
+      const crmRoles = (await pool.query(`
+        SELECT role.rolname,role.rolinherit,
+          EXISTS(SELECT 1 FROM pg_auth_members membership WHERE membership.member=role.oid) AS outbound_membership
+        FROM pg_roles role
+        WHERE role.rolname IN('commercial_crm_sync','commercial_crm_observer','commercial_approval_evidence')
+        ORDER BY role.rolname
+      `)).rows
+      assert.equal(crmRoles.length, 3)
+      assert.equal(crmRoles.every((role) => role.rolinherit === false), true)
+      assert.equal(crmRoles.every((role) => role.outbound_membership === false), true)
+
       assert.equal(
         (await pool.query(`SELECT count(*)::int AS count FROM catalog.project_inventory`)).rows[0].count,
         26,
@@ -161,11 +172,24 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         `SELECT integration.complete_crm_outbox($1,'worker-1','remote-1','v1')`,
         [outboxId],
       )
-      assert.equal(
-        (await pool.query(`SELECT integration.crm_sync_ready() AS ready`)).rows[0]
-          .ready,
-        true,
-      )
+      assert.equal((await pool.query(`SELECT integration.crm_sync_ready() AS ready`)).rows[0].ready, false)
+      await pool.query(`RESET ROLE`)
+      const crmLogin = `crm_sync_login_${randomUUID().replaceAll('-', '')}`
+      const unsafeParent = `crm_unsafe_parent_${randomUUID().replaceAll('-', '')}`
+      await pool.query(`CREATE ROLE "${crmLogin}" LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`)
+      await pool.query(`GRANT commercial_crm_sync TO "${crmLogin}"`)
+      await pool.query(`SET SESSION AUTHORIZATION "${crmLogin}"`)
+      assert.equal((await pool.query(`SELECT integration.crm_sync_ready() AS ready`)).rows[0].ready, true)
+      await pool.query(`RESET SESSION AUTHORIZATION`)
+      await pool.query(`CREATE ROLE "${unsafeParent}" NOLOGIN NOINHERIT`)
+      await pool.query(`GRANT "${unsafeParent}" TO commercial_crm_sync`)
+      await pool.query(`SET SESSION AUTHORIZATION "${crmLogin}"`)
+      assert.equal((await pool.query(`SELECT integration.crm_sync_ready() AS ready`)).rows[0].ready, false)
+      await pool.query(`RESET SESSION AUTHORIZATION`)
+      await pool.query(`REVOKE "${unsafeParent}" FROM commercial_crm_sync`)
+      await pool.query(`REVOKE commercial_crm_sync FROM "${crmLogin}"`)
+      await pool.query(`DROP ROLE "${unsafeParent}","${crmLogin}"`)
+      await pool.query(`SET ROLE commercial_crm_sync`)
       assert.equal(
         (
           await pool.query(

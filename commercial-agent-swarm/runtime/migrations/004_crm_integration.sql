@@ -299,6 +299,25 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
  SELECT EXISTS(
   SELECT 1 FROM integration.sync_control WHERE control_id=1 AND enabled
  )
+ AND EXISTS(
+  SELECT 1
+  FROM pg_roles principal
+  JOIN pg_auth_members membership ON membership.member=principal.oid
+  JOIN pg_roles capability ON capability.oid=membership.roleid
+  WHERE principal.rolname=session_user
+    AND principal.rolcanlogin AND principal.rolinherit
+    AND NOT(principal.rolsuper OR principal.rolcreatedb OR principal.rolcreaterole
+            OR principal.rolreplication OR principal.rolbypassrls)
+    AND capability.rolname='commercial_crm_sync'
+    AND NOT capability.rolcanlogin AND NOT capability.rolinherit
+    AND NOT(capability.rolsuper OR capability.rolcreatedb OR capability.rolcreaterole
+            OR capability.rolreplication OR capability.rolbypassrls)
+    AND NOT membership.admin_option
+    AND (SELECT count(*) FROM pg_auth_members own_membership
+         WHERE own_membership.member=principal.oid)=1
+    AND NOT EXISTS(SELECT 1 FROM pg_auth_members outbound
+                   WHERE outbound.member=capability.oid)
+ )
 $$;
 
 CREATE OR REPLACE FUNCTION integration.get_crm_cursor(text,text)
@@ -325,12 +344,31 @@ FROM control.pilot_cohorts c LEFT JOIN control.pilot_targets t ON t.cohort_id=c.
 CREATE OR REPLACE VIEW integration.crm_sync_summaries WITH(security_barrier=true)AS
 SELECT outbox_id,cohort_id,target_id,connector_id,operation,source_version,status,created_at,updated_at FROM integration.crm_outbox;
 
-DO $$DECLARE role_name text;DECLARE unsafe boolean;BEGIN
+DO $$DECLARE role_name text;DECLARE unsafe boolean;DECLARE inherits boolean;DECLARE bad boolean;BEGIN
  PERFORM pg_advisory_xact_lock(hashtext('proptimiza-crm-capability-roles'));
  FOREACH role_name IN ARRAY ARRAY['commercial_crm_sync','commercial_crm_observer','commercial_approval_evidence']LOOP
-  SELECT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls INTO unsafe FROM pg_roles WHERE rolname=role_name;
-  IF NOT FOUND THEN EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS',role_name);ELSIF unsafe THEN RAISE EXCEPTION'UNSAFE_PREEXISTING_ROLE: %',role_name;END IF;
+  SELECT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls,rolinherit
+    INTO unsafe,inherits FROM pg_roles WHERE rolname=role_name;
+  IF NOT FOUND THEN
+   EXECUTE format('CREATE ROLE %I NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS',role_name);
+  ELSIF unsafe THEN RAISE EXCEPTION'UNSAFE_PREEXISTING_ROLE: %',role_name;
+  ELSIF inherits THEN EXECUTE format('ALTER ROLE %I NOINHERIT',role_name);
+  END IF;
+  SELECT EXISTS(SELECT 1 FROM pg_auth_members membership
+                WHERE membership.member=(SELECT oid FROM pg_roles WHERE rolname=role_name)) INTO bad;
+  IF bad THEN RAISE EXCEPTION'UNSAFE_CAPABILITY_OUTBOUND_MEMBERSHIP: %',role_name;END IF;
  END LOOP;
+ SELECT EXISTS(
+  SELECT 1 FROM pg_auth_members membership
+  JOIN pg_roles member ON member.oid=membership.member
+  WHERE membership.roleid IN(
+   SELECT oid FROM pg_roles WHERE rolname IN('commercial_crm_sync','commercial_crm_observer','commercial_approval_evidence')
+  ) AND (membership.admin_option OR NOT member.rolcanlogin OR member.rolsuper OR member.rolcreatedb
+         OR member.rolcreaterole OR member.rolreplication OR member.rolbypassrls
+         OR NOT member.rolinherit
+         OR (SELECT count(*) FROM pg_auth_members own_membership WHERE own_membership.member=member.oid)<>1)
+ ) INTO bad;
+ IF bad THEN RAISE EXCEPTION'UNSAFE_CRM_CAPABILITY_INBOUND_MEMBERSHIP';END IF;
 END $$;
 
 REVOKE ALL ON control.approval_channel_evidence,control.pilot_cohorts,control.pilot_targets,control.pilot_suppressions,integration.sync_control,integration.crm_entity_links,integration.crm_outbox,integration.crm_inbox,integration.crm_sync_cursors FROM PUBLIC,commercial_runtime,commercial_crm_sync,commercial_crm_observer,commercial_safety_operator,commercial_approval_evidence;
