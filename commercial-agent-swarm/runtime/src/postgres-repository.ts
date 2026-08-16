@@ -1,6 +1,7 @@
+import { sanitizeAuditEvent } from './observability.js'
+import type { AuditSink, StructuredAuditEvent } from './observability.js'
 import type { Pool } from 'pg'
 import type { ApprovalAction } from './approvals.js'
-import { sanitizeAuditEvent, type AuditSink, type StructuredAuditEvent } from './observability.js'
 import type {
   ApprovalGrantRecord,
   ApprovalRequestRecord,
@@ -23,17 +24,28 @@ type ApprovalRow = {
 }
 
 export class PostgresRuntimeRepository implements RuntimeRepository {
+  private readonly ingestorPool: Pool
   private readonly approverPool: Pool
   private readonly safetyPool: Pool
 
-  constructor(private readonly pool: Pool, capabilities: { approverPool?: Pool; safetyPool?: Pool } = {}) {
+  constructor(
+    private readonly pool: Pool,
+    capabilities: {
+      ingestorPool?: Pool
+      approverPool?: Pool
+      safetyPool?: Pool
+    } = {},
+  ) {
+    this.ingestorPool = capabilities.ingestorPool ?? pool
     this.approverPool = capabilities.approverPool ?? pool
     this.safetyPool = capabilities.safetyPool ?? pool
   }
 
   async ready(): Promise<boolean> {
     try {
-      const result = await this.pool.query<{ ready: boolean }>('SELECT control.runtime_ready() AS ready')
+      const result = await this.pool.query<{ ready: boolean }>(
+        'SELECT control.runtime_ready() AS ready',
+      )
       return result.rows[0]?.ready === true
     } catch {
       return false
@@ -46,7 +58,7 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       throw new Error('MISSION_IDEMPOTENCY_KEY_REQUIRED')
     }
     const payload = JSON.stringify(record)
-    await this.pool.query(
+    await this.ingestorPool.query(
       'SELECT control.save_mission($1::uuid,$2,$3::jsonb)',
       [record.mission_id, idempotencyKey, payload],
     )
@@ -61,14 +73,23 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
   }
 
   async isMissionA3Enabled(id: string): Promise<boolean> {
-    const result = await this.pool.query<{ enabled: boolean }>('SELECT control.is_mission_a3($1::uuid) AS enabled',[id])
+    const result = await this.pool.query<{ enabled: boolean }>(
+      'SELECT control.is_mission_a3($1::uuid) AS enabled',
+      [id],
+    )
     return result.rows[0]?.enabled === true
   }
 
   async deliveryPolicyAllows(action: ApprovalAction): Promise<boolean> {
     const result = await this.pool.query<{ allowed: boolean }>(
       'SELECT mail.delivery_policy_allows($1,$2,$3,$4,$5) AS allowed',
-      [action.project_id,action.policy_version,action.sender,action.recipients[0] ?? '',action.volume],
+      [
+        action.project_id,
+        action.policy_version,
+        action.sender,
+        action.recipients[0] ?? '',
+        action.volume,
+      ],
     )
     return result.rows[0]?.allowed === true
   }
@@ -111,7 +132,9 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
   }
 
   async saveApprovalDecision(
-    record: ApprovalGrantRecord | (ApprovalRequestRecord & { status: 'denied' }),
+    record:
+      | ApprovalGrantRecord
+      | (ApprovalRequestRecord & { status: 'denied' }),
   ): Promise<boolean> {
     const approved = record.status === 'approved' ? record : null
     const result = await this.approverPool.query<{ decided: boolean }>(
@@ -144,12 +167,15 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     )
     if (result.rowCount === 0) return null
     if (result.rowCount !== 1) throw new Error('APPROVAL_CONSUMPTION_CONFLICT')
-    const row = result.rows[0]!
+    const row = result.rows[0]
     const record = approvalFromRow(row)
     return record.status === 'approved' ? record : null
   }
 
-  async isKillSwitchActive(input: { missionId: string; channel: string }): Promise<boolean> {
+  async isKillSwitchActive(input: {
+    missionId: string
+    channel: string
+  }): Promise<boolean> {
     const result = await this.pool.query<{ active: boolean }>(
       'SELECT control.is_kill_switch_active($1,$2) AS active',
       [input.missionId, input.channel],
@@ -161,7 +187,10 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     if (!['global', 'mission', 'channel'].includes(scope)) {
       throw new Error('INVALID_KILL_SWITCH_SCOPE')
     }
-    await this.safetyPool.query('SELECT control.set_kill_switch($1,$2,TRUE)',[scope,scopeId])
+    await this.safetyPool.query('SELECT control.set_kill_switch($1,$2,TRUE)', [
+      scope,
+      scopeId,
+    ])
   }
 
   async claimExternalAction(input: {
@@ -173,9 +202,24 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     | { status: 'acquired' }
     | { status: 'completed'; receipt_id: string; approval_id: string }
   > {
-    const result = await this.pool.query<{status:'acquired'|'completed';receipt_id:string|null;approval_id:string|null}>('SELECT * FROM mail.claim_external_action($1::uuid,$2,$3,$4)',[input.missionId,input.channel,input.idempotencyKey,input.actionHash])
-    const row=result.rows[0]!
-    return row.status==='completed'?{status:'completed',receipt_id:row.receipt_id!,approval_id:row.approval_id!}:{status:'acquired'}
+    const result = await this.pool.query<{
+      status: 'acquired' | 'completed'
+      receipt_id: string | null
+      approval_id: string | null
+    }>('SELECT * FROM mail.claim_external_action($1::uuid,$2,$3,$4)', [
+      input.missionId,
+      input.channel,
+      input.idempotencyKey,
+      input.actionHash,
+    ])
+    const row = result.rows[0]
+    return row.status === 'completed'
+      ? {
+          status: 'completed',
+          receipt_id: row.receipt_id!,
+          approval_id: row.approval_id!,
+        }
+      : { status: 'acquired' }
   }
 
   async completeExternalAction(input: {
@@ -185,11 +229,18 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     receipt_id: string
     approval_id: string
   }): Promise<void> {
-    const completed = await this.pool.query<{completed:boolean}>(
+    const completed = await this.pool.query<{ completed: boolean }>(
       'SELECT mail.complete_external_action($1::uuid,$2,$3,$4,$5::uuid) AS completed',
-      [input.missionId, input.idempotencyKey, input.actionHash, input.receipt_id, input.approval_id],
+      [
+        input.missionId,
+        input.idempotencyKey,
+        input.actionHash,
+        input.receipt_id,
+        input.approval_id,
+      ],
     )
-    if (completed.rows[0]?.completed !== true) throw new Error('EXTERNAL_ACTION_COMPLETION_CONFLICT')
+    if (completed.rows[0]?.completed !== true)
+      throw new Error('EXTERNAL_ACTION_COMPLETION_CONFLICT')
   }
 }
 
@@ -203,7 +254,9 @@ export class PostgresAuditSink implements AuditSink {
   }
 }
 
-function approvalFromRow(row: ApprovalRow): ApprovalRequestRecord | ApprovalGrantRecord {
+function approvalFromRow(
+  row: ApprovalRow,
+): ApprovalRequestRecord | ApprovalGrantRecord {
   const base = {
     approval_id: row.approval_id,
     action: row.action,
@@ -226,5 +279,7 @@ function approvalFromRow(row: ApprovalRow): ApprovalRequestRecord | ApprovalGran
 }
 
 function iso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString()
+  return value instanceof Date
+    ? value.toISOString()
+    : new Date(value).toISOString()
 }

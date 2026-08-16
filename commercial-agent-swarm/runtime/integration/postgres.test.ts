@@ -3,14 +3,17 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { after, before, describe, it } from 'node:test'
 import { Pool } from 'pg'
-import { ApprovalBroker, type ApprovalAction } from '../src/approvals.js'
+import { ApprovalBroker } from '../src/approvals.js'
 import { hashAction } from '../src/canonical.js'
-import { MailService, type MailTransport } from '../src/mail.js'
-import type { StructuredAuditEvent } from '../src/observability.js'
+import { MailService } from '../src/mail.js'
 import {
   PostgresAuditSink,
   PostgresRuntimeRepository,
 } from '../src/postgres-repository.js'
+import { validWorkOrder } from '../test/fixtures.js'
+import type { ApprovalAction } from '../src/approvals.js'
+import type { MailTransport } from '../src/mail.js'
+import type { StructuredAuditEvent } from '../src/observability.js'
 import type {
   ApprovalGrantRecord,
   ApprovalRequestRecord,
@@ -42,7 +45,9 @@ integration('PostgreSQL 17 runtime repository', () => {
     databaseUrl.pathname = `/${databaseName}`
     firstPool = new Pool({ connectionString: databaseUrl.toString(), max: 4 })
     secondPool = new Pool({ connectionString: databaseUrl.toString(), max: 4 })
-    const migrations = await Promise.all(MIGRATION_URLS.map((url) => readFile(url, 'utf8')))
+    const migrations = await Promise.all(
+      MIGRATION_URLS.map((url) => readFile(url, 'utf8')),
+    )
     for (const migration of migrations) await firstPool.query(migration)
     for (const migration of migrations) await firstPool.query(migration)
     first = new PostgresRuntimeRepository(firstPool)
@@ -50,19 +55,20 @@ integration('PostgreSQL 17 runtime repository', () => {
   })
 
   after(async () => {
-    await Promise.allSettled([firstPool?.end(), secondPool?.end()])
-    if (adminPool) {
-      await adminPool.query(
-        'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1',
-        [databaseName],
-      )
-      await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}"`)
-      await adminPool.end()
-    }
+    await Promise.allSettled([firstPool.end(), secondPool.end()])
+    await adminPool.query(
+      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1',
+      [databaseName],
+    )
+    await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}"`)
+    await adminPool.end()
   })
 
   it('persists missions across repository restarts and rejects payload collisions', async () => {
-    const mission = missionRecord('123e4567-e89b-42d3-a456-426614174101', 'mission-db-0001')
+    const mission = missionRecord(
+      '123e4567-e89b-42d3-a456-426614174101',
+      'mission-db-0001',
+    )
     await first.saveMission(mission)
 
     assert.deepEqual(await second.getMission(mission.mission_id), mission)
@@ -124,11 +130,20 @@ integration('PostgreSQL 17 runtime repository', () => {
 
   it('enforces one approved grant for an exact mission, action hash, and nonce', async () => {
     const missionId = '123e4567-e89b-42d3-a456-426614174111'
-    const firstRequest = approvalRequest('323e4567-e89b-42d3-a456-426614174111', missionId)
-    const duplicateRequest = approvalRequest('423e4567-e89b-42d3-a456-426614174111', missionId)
+    const firstRequest = approvalRequest(
+      '323e4567-e89b-42d3-a456-426614174111',
+      missionId,
+    )
+    const duplicateRequest = approvalRequest(
+      '423e4567-e89b-42d3-a456-426614174111',
+      missionId,
+    )
     await first.createApprovalRequest(firstRequest)
     await first.createApprovalRequest(duplicateRequest)
-    assert.equal(await first.saveApprovalDecision(approvalGrant(firstRequest)), true)
+    assert.equal(
+      await first.saveApprovalDecision(approvalGrant(firstRequest)),
+      true,
+    )
 
     await assert.rejects(
       second.saveApprovalDecision({
@@ -147,7 +162,10 @@ integration('PostgreSQL 17 runtime repository', () => {
   })
 
   it('permits exactly one concurrent action claim and returns its persisted receipt and approval', async () => {
-    const mission = missionRecord('123e4567-e89b-42d3-a456-426614174201', 'mission-db-0201')
+    const mission = missionRecord(
+      '123e4567-e89b-42d3-a456-426614174201',
+      'mission-db-0201',
+    )
     const request = approvalRequest(
       '323e4567-e89b-42d3-a456-426614174201',
       mission.mission_id,
@@ -155,7 +173,12 @@ integration('PostgreSQL 17 runtime repository', () => {
     await first.saveMission(mission)
     await first.createApprovalRequest(request)
     await first.saveApprovalDecision(approvalGrant(request))
-    await first.consumeApproval({ missionId: mission.mission_id, actionHash: request.action_hash, nonce: approvalGrant(request).nonce, now: NOW })
+    await first.consumeApproval({
+      missionId: mission.mission_id,
+      actionHash: request.action_hash,
+      nonce: approvalGrant(request).nonce,
+      now: NOW,
+    })
 
     const claim = {
       missionId: mission.mission_id,
@@ -169,7 +192,8 @@ integration('PostgreSQL 17 runtime repository', () => {
     ])
     assert.equal(
       attempts.filter(
-        (attempt) => attempt.status === 'fulfilled' && attempt.value.status === 'acquired',
+        (attempt) =>
+          attempt.status === 'fulfilled' && attempt.value.status === 'acquired',
       ).length,
       1,
     )
@@ -192,19 +216,32 @@ integration('PostgreSQL 17 runtime repository', () => {
   })
 
   it('rejects a completed idempotency key when any action hash field changes', async () => {
-    const mission = missionRecord('123e4567-e89b-42d3-a456-426614174211', 'mission-db-0211')
+    const mission = missionRecord(
+      '123e4567-e89b-42d3-a456-426614174211',
+      'mission-db-0211',
+    )
     await first.saveMission(mission)
-    const request = approvalRequest('323e4567-e89b-42d3-a456-426614174211', mission.mission_id)
+    const request = approvalRequest(
+      '323e4567-e89b-42d3-a456-426614174211',
+      mission.mission_id,
+    )
     await first.createApprovalRequest(request)
     await first.saveApprovalDecision(approvalGrant(request))
-    await first.consumeApproval({ missionId: mission.mission_id, actionHash: request.action_hash, nonce: approvalGrant(request).nonce, now: NOW })
+    await first.consumeApproval({
+      missionId: mission.mission_id,
+      actionHash: request.action_hash,
+      nonce: approvalGrant(request).nonce,
+      now: NOW,
+    })
     const claim = {
       missionId: mission.mission_id,
       channel: 'email',
       idempotencyKey: 'mail-db-0211',
       actionHash: 'a'.repeat(64),
     }
-    assert.deepEqual(await first.claimExternalAction(claim), { status: 'acquired' })
+    assert.deepEqual(await first.claimExternalAction(claim), {
+      status: 'acquired',
+    })
     await first.completeExternalAction({
       missionId: mission.mission_id,
       idempotencyKey: claim.idempotencyKey,
@@ -237,17 +274,45 @@ integration('PostgreSQL 17 runtime repository', () => {
     await first.saveMission(mission)
     const action = approvalAction(missionId)
     const secret = 'postgres-test-secret-with-at-least-32-bytes'
-    const firstBroker = new ApprovalBroker({ repository: first, hmacSecret: secret, now: () => new Date(NOW), id: () => '323e4567-e89b-42d3-a456-426614174221', nonce: () => '00112233445566778899aabbccddeeff' })
-    const secondBroker = new ApprovalBroker({ repository: second, hmacSecret: secret, now: () => new Date(NOW), id: () => '423e4567-e89b-42d3-a456-426614174221', nonce: () => 'ffeeddccbbaa99887766554433221100' })
+    const firstBroker = new ApprovalBroker({
+      repository: first,
+      hmacSecret: secret,
+      now: () => new Date(NOW),
+      id: () => '323e4567-e89b-42d3-a456-426614174221',
+      nonce: () => '00112233445566778899aabbccddeeff',
+    })
+    const secondBroker = new ApprovalBroker({
+      repository: second,
+      hmacSecret: secret,
+      now: () => new Date(NOW),
+      id: () => '423e4567-e89b-42d3-a456-426614174221',
+      nonce: () => 'ffeeddccbbaa99887766554433221100',
+    })
     const firstRequest = await firstBroker.request(action)
     const secondRequest = await secondBroker.request(action)
-    const firstToken = (await firstBroker.decide(firstRequest.approval_id, { approved: true, approved_by: 'human-director', expires_at: LATER })).token!
-    const secondToken = (await secondBroker.decide(secondRequest.approval_id, { approved: true, approved_by: 'human-director', expires_at: LATER })).token!
+    const firstToken = (
+      await firstBroker.decide(firstRequest.approval_id, {
+        approved: true,
+        approved_by: 'human-director',
+        expires_at: LATER,
+      })
+    ).token!
+    const secondToken = (
+      await secondBroker.decide(secondRequest.approval_id, {
+        approved: true,
+        approved_by: 'human-director',
+        expires_at: LATER,
+      })
+    ).token!
     let releaseTransport!: () => void
     let transportEntered!: () => void
-    const entered = new Promise<void>((resolve) => { transportEntered = resolve })
-    const released = new Promise<void>((resolve) => { releaseTransport = resolve })
-    const sent: ApprovalAction[] = []
+    const entered = new Promise<void>((resolve) => {
+      transportEntered = resolve
+    })
+    const released = new Promise<void>((resolve) => {
+      releaseTransport = resolve
+    })
+    const sent: Array<ApprovalAction> = []
     const transport: MailTransport = {
       async send(value) {
         sent.push(structuredClone(value))
@@ -256,8 +321,18 @@ integration('PostgreSQL 17 runtime repository', () => {
         return { receipt_id: 'receipt-db-0221' }
       },
     }
-    const firstMail = new MailService({ repository: first, approvals: firstBroker, transport, now: () => new Date(NOW) })
-    const secondMail = new MailService({ repository: second, approvals: secondBroker, transport, now: () => new Date(NOW) })
+    const firstMail = new MailService({
+      repository: first,
+      approvals: firstBroker,
+      transport,
+      now: () => new Date(NOW),
+    })
+    const secondMail = new MailService({
+      repository: second,
+      approvals: secondBroker,
+      transport,
+      now: () => new Date(NOW),
+    })
     const firstSend = firstMail.send({ action, approval_token: firstToken })
     await entered
     await assert.rejects(
@@ -270,20 +345,26 @@ integration('PostgreSQL 17 runtime repository', () => {
       approval_reference: firstRequest.approval_id,
     })
     assert.deepEqual(sent, [action])
-    assert.deepEqual(await second.claimExternalAction({
-      missionId,
-      channel: 'email',
-      idempotencyKey: action.idempotency_key,
-      actionHash: hashAction(action),
-    }), {
-      status: 'completed',
-      receipt_id: 'receipt-db-0221',
-      approval_id: firstRequest.approval_id,
-    })
+    assert.deepEqual(
+      await second.claimExternalAction({
+        missionId,
+        channel: 'email',
+        idempotencyKey: action.idempotency_key,
+        actionHash: hashAction(action),
+      }),
+      {
+        status: 'completed',
+        receipt_id: 'receipt-db-0221',
+        approval_id: firstRequest.approval_id,
+      },
+    )
   })
 
   it('checks channel, mission and global kill switches before each unique claim', async () => {
-    const mission = missionRecord('123e4567-e89b-42d3-a456-426614174301', 'mission-db-0301')
+    const mission = missionRecord(
+      '123e4567-e89b-42d3-a456-426614174301',
+      'mission-db-0301',
+    )
     await first.saveMission(mission)
     const scopes: Array<[string, string]> = [
       ['channel', 'email'],
@@ -336,7 +417,9 @@ integration('PostgreSQL 17 runtime repository', () => {
     )
     assert.deepEqual(stored.rows.at(-1)?.event, event)
     await assert.rejects(
-      secondPool.query('UPDATE control.audit_events SET event = $1::jsonb', [JSON.stringify({})]),
+      secondPool.query('UPDATE control.audit_events SET event = $1::jsonb', [
+        JSON.stringify({}),
+      ]),
       /AUDIT_EVENTS_APPEND_ONLY/,
     )
     await assert.rejects(
@@ -346,19 +429,17 @@ integration('PostgreSQL 17 runtime repository', () => {
   })
 })
 
-function missionRecord(missionId: string, idempotencyKey: string): MissionRecord {
+function missionRecord(
+  missionId: string,
+  idempotencyKey: string,
+): MissionRecord {
   return {
+    ...validWorkOrder(),
     mission_id: missionId,
     idempotency_key: idempotencyKey,
     autonomy_level: 'A3',
     a3_enabled: true,
     objective: 'durable runtime test',
-    project_id: 'proptimiza',
-    project_version: 'v1',
-    offer_id: 'operacion-sin-planillas',
-    offer_version: 'offer-v1',
-    icp_version: 'icp-v1',
-    policy_version: 'policy-v1',
   }
 }
 
@@ -381,7 +462,10 @@ function approvalAction(missionId: string): ApprovalAction {
   }
 }
 
-function approvalRequest(approvalId: string, missionId: string): ApprovalRequestRecord {
+function approvalRequest(
+  approvalId: string,
+  missionId: string,
+): ApprovalRequestRecord {
   return {
     approval_id: approvalId,
     action: approvalAction(missionId),
@@ -411,7 +495,12 @@ function auditEvent(): StructuredAuditEvent {
     started_at: NOW,
     completed_at: NOW,
     duration_ms: 0,
-    token_cost: { input_tokens: 0, output_tokens: 0, currency: 'USD', amount: 0 },
+    token_cost: {
+      input_tokens: 0,
+      output_tokens: 0,
+      currency: 'USD',
+      amount: 0,
+    },
     redacted_input: `sha256:${'c'.repeat(64)}`,
     result: 'status:200',
     error: null,

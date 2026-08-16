@@ -21,17 +21,19 @@
 ### Task 1: Production database principals
 
 **Files:**
+
 - Modify: `commercial-agent-swarm/runtime/src/production.ts`
 - Modify: `commercial-agent-swarm/runtime/test/production.test.ts`
 
 **Interfaces:**
+
 - Produces: `parseDatabasePrincipal(connectionString: string): string`
 - Produces: `resolveDatabaseConfiguration(environment, readSecretFile): Promise<{runtimeUrl,approverUrl,safetyUrl}>`
 - Produces: `verifyProductionCapabilities(pools,expectedLoginPrincipals): Promise<void>` startup/readiness gate
 
 - [ ] Write tests that reject empty URL usernames, equal usernames across any two capabilities, and malformed URLs while allowing one host/database with `runtime`, `approver`, and `safety` usernames.
 - [ ] Write tests for `DATABASE_URL_FILE`, `APPROVER_DATABASE_URL_FILE`, and `SAFETY_DATABASE_URL_FILE` using an injected reader, rejecting simultaneous direct/file values and non-absolute file paths.
-- [ ] Add PostgreSQL tests whose three LOGIN principals each inherit exactly one expected NOLOGIN capability; verify `current_user`, exact membership and startup success.
+- [x] Add PostgreSQL tests whose four LOGIN principals each inherit exactly one expected NOLOGIN capability; verify `current_user`, effective membership, dangerous privileges and startup success.
 - [ ] Add failure cases for URL principal A authenticating as current_user B, missing expected capability, extra commercial capability and inherited elevated/group capability.
 - [ ] Run `pnpm --ignore-workspace test:unit`; verify RED on missing principal/file resolution.
 - [ ] Implement URL username parsing, asynchronous file resolution and live pool identity/membership queries; keep in-memory test/development behavior unchanged.
@@ -41,11 +43,13 @@
 ### Task 2: Capability memberships and default privileges
 
 **Files:**
+
 - Modify: `commercial-agent-swarm/runtime/migrations/002_commercial_control_plane.sql`
 - Modify: `commercial-agent-swarm/runtime/integration/commercial-data-model.test.ts`
 
 **Interfaces:**
-- Consumes: four roles `commercial_runtime`, `commercial_approver`, `commercial_safety_operator`, `commercial_observer`
+
+- Consumes: five roles `commercial_runtime`, `commercial_work_order_ingestor`, `commercial_approver`, `commercial_safety_operator`, `commercial_observer`
 - Produces: migration-time role-membership audit and explicit default-function revocations
 
 - [ ] Add PostgreSQL tests creating an unsafe privileged parent role and granting it to a capability; expect migration failure `UNSAFE_CAPABILITY_MEMBERSHIP`.
@@ -59,10 +63,12 @@
 ### Task 3: Append-only active catalog tuple
 
 **Files:**
+
 - Modify: `commercial-agent-swarm/runtime/migrations/002_commercial_control_plane.sql`
 - Modify: `commercial-agent-swarm/runtime/integration/commercial-data-model.test.ts`
 
 **Interfaces:**
+
 - Produces: `catalog.version_activation_events`
 - Produces: `mail.delivery_activation_events`
 - Produces: current views used by `catalog.mission_versions_exist(...)` and `mail.delivery_policy_allows(...)`
@@ -79,10 +85,12 @@
 ### Task 4: Narrow migration 002 rollback
 
 **Files:**
+
 - Modify: `commercial-agent-swarm/runtime/migrations/002_commercial_control_plane.rollback.sql`
 - Modify: `commercial-agent-swarm/runtime/integration/commercial-data-model.test.ts`
 
 **Interfaces:**
+
 - Produces: rollback that drops only objects created by 002, including `mail.external_actions_approval_id_idx`
 
 - [ ] Extend rollback test with sentinel objects in `catalog`, `control`, `mail`, legacy rows, and representative 001 functions/tables; assert all survive.

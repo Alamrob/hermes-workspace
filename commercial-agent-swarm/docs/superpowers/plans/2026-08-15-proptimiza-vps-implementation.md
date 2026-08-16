@@ -64,7 +64,7 @@
 
 - Execution is split into two trust zones: the broker owns database, approval and mail capabilities but never runs an LLM; the Hermes executor owns only the OpenCode Go inference credential and never receives database, mail, Telegram, Docker or host credentials.
 - Cross-profile dispatch uses a deterministic PostgreSQL-backed queue and a closed six-profile enum. The executor launches a separate, ephemeral `HERMES_HOME` copied from an immutable profile seed, with concurrency one and no model/provider/tool/prompt overrides.
-- The executor uses the supported `hermes --cli chat -q` path. It never uses `--yolo`, `--accept-hooks`, native delegation, Docker socket or the `--oneshot` path that auto-bypasses approvals. Only the broker computes canonical artifact SHA-256 and persists results.
+- The executor uses the exact Hermes 0.20.1 image-verified `hermes -p <profile> -z <prompt> --usage-file <path>` path. It never uses unsupported `-q`/`--cli chat`, `--yolo`, `--accept-hooks`, native delegation, Docker socket or the `--oneshot` path that auto-bypasses approvals. Only the broker computes canonical artifact SHA-256 and persists results.
 - Executor child processes run as a non-root UID with a filtered environment. Database and broker secrets stay in the root-owned deterministic adapter; OpenCode Go is the only credential passed to the child. `/proc/*/environ`, secret mounts and host paths remain unreadable.
 - [ ] Create pre-deploy backup and validate Compose/migrations offline.
 - [ ] Deploy the pinned `commercial-swarm` stack on a private network without Docker socket or host mounts.

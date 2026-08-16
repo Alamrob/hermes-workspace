@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   OPENCODE_GO_PRICING_SNAPSHOT,
+  assertOpenCodeGoExecutionPreflight,
   priceOpenCodeGoUsage,
 } from '../src/opencode-go-pricing.js'
 import type { TrustedUsage } from '../src/executor-contract.js'
@@ -25,7 +26,13 @@ function usage(overrides: Partial<TrustedUsage['tokens']> = {}): TrustedUsage {
     provider: 'custom:deepseek-v4-flash',
     completed: true,
     failed: false,
-    cost: { status: 'unknown', amount_usd: null, source: 'none' },
+    cost: {
+      status: 'unknown',
+      usage_value_usd: null,
+      cash_cost_usd: null,
+      source: 'none',
+      pricing_snapshot_id: null,
+    },
   }
 }
 
@@ -39,8 +46,10 @@ describe('versioned OpenCode Go pricing', () => {
     assert.equal(OPENCODE_GO_PRICING_SNAPSHOT.id, 'opencode-go-2026-08-16-v1')
     assert.deepEqual(priced.cost, {
       status: 'known',
-      amount_usd: 0.4228,
+      usage_value_usd: 0.4228,
+      cash_cost_usd: 0,
       source: 'official_docs_snapshot',
+      pricing_snapshot_id: 'opencode-go-2026-08-16-v1',
     })
   })
 
@@ -59,6 +68,29 @@ describe('versioned OpenCode Go pricing', () => {
     assert.throws(
       () => priceOpenCodeGoUsage(usage(), new Date('2026-09-01T00:00:00Z')),
       /OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED/,
+    )
+  })
+
+  it('reserves the worst-case output-token usage value before execution', () => {
+    assert.doesNotThrow(() =>
+      assertOpenCodeGoExecutionPreflight(
+        {
+          maximum_tokens: 24_576,
+          budget_reservation: { currency: 'USD', amount: 0.006882 },
+        },
+        new Date('2026-08-16T12:00:00Z'),
+      ),
+    )
+    assert.throws(
+      () =>
+        assertOpenCodeGoExecutionPreflight(
+          {
+            maximum_tokens: 24_576,
+            budget_reservation: { currency: 'USD', amount: 0.006881 },
+          },
+          new Date('2026-08-16T12:00:00Z'),
+        ),
+      /OPENCODE_GO_RESERVATION_TOO_LOW/,
     )
   })
 })

@@ -1,6 +1,6 @@
 BEGIN;
-REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_approver,commercial_safety_operator,commercial_observer;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_approver,commercial_safety_operator,commercial_observer;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_work_order_ingestor,commercial_approver,commercial_safety_operator,commercial_observer;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_work_order_ingestor,commercial_approver,commercial_safety_operator,commercial_observer;
 DROP VIEW IF EXISTS control.mission_summaries,control.approval_summaries;
 DROP VIEW IF EXISTS mail.webhook_event_summaries,mail.external_action_summaries,mail.current_delivery_policy_activation;
 DROP VIEW IF EXISTS catalog.offer_catalog,catalog.icp_catalog,catalog.current_version_activation;

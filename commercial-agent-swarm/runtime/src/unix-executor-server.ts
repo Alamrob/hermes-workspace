@@ -1,8 +1,9 @@
-import { createServer, type Server, type Socket } from 'node:net'
+import { createServer } from 'node:net'
 import { lstat, unlink } from 'node:fs/promises'
 import { validateExecuteRequest } from './executor-contract.js'
-import type { ExecutorPort } from './hermes-executor.js'
 import { encodeFrame, readSingleFrame } from './unix-frame.js'
+import type { Server, Socket } from 'node:net'
+import type { ExecutorPort } from './hermes-executor.js'
 import type { SocketSecurityPort } from './socket-security.js'
 
 export interface UnixExecutorServerOptions {
@@ -33,22 +34,21 @@ export class UnixExecutorServer {
       void this.handle(socket)
     })
     this.server = server
-    let listened = false
     try {
       await new Promise<void>((resolve, reject) => {
         server.once('error', reject)
         server.listen(this.options.socketPath, () => {
           server.off('error', reject)
-          listened = true
           resolve()
         })
       })
       await this.options.security?.afterListen(this.options.socketPath)
     } catch (error) {
       this.server = undefined
+      const bound = server.listening
       if (server.listening)
         await new Promise<void>((resolve) => server.close(() => resolve()))
-      if (listened) await removeBoundSocket(this.options.socketPath)
+      if (bound) await removeBoundSocket(this.options.socketPath)
       throw error
     }
   }
@@ -106,7 +106,7 @@ export class UnixExecutorServer {
             errorResponse(
               requestId,
               code,
-              code === 'HERMES_TIMEOUT',
+              false,
               requestId === 'invalid-request' ? 'not_started' : 'finished',
             ),
           ),
@@ -159,10 +159,13 @@ function mapExecutorError(error: unknown): string {
       'HERMES_USAGE_FAILED',
       'HERMES_USAGE_UNKNOWN',
       'HERMES_COST_UNKNOWN',
+      'HERMES_PRICING_AUTHORITY_INVALID',
+      'HERMES_TIMEOUT_HANDSHAKE_MISMATCH',
       'OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED',
       'OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN',
       'OPENCODE_GO_PRICING_IDENTITY_MISMATCH',
       'OPENCODE_GO_PRICE_OVERFLOW',
+      'OPENCODE_GO_RESERVATION_TOO_LOW',
     ].includes(code)
   )
     return code

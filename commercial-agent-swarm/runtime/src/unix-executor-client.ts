@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { createConnection } from 'node:net'
-import type { ExecuteInput } from './executor-contract.js'
-import type { ExecutorEnvelope, ExecutorPort } from './hermes-executor.js'
 import { reconcileAgentResult } from './agent-result.js'
+import { OPENCODE_GO_PRICING_SNAPSHOT } from './opencode-go-pricing.js'
 import { encodeFrame, readSingleFrame } from './unix-frame.js'
+import type { ExecutorEnvelope, ExecutorPort } from './hermes-executor.js'
+import type { ExecuteInput } from './executor-contract.js'
 
 export type ExecutionState = 'not_started' | 'unknown' | 'finished'
 
@@ -152,16 +153,25 @@ function validateEnvelope(value: unknown, input: ExecuteInput): void {
       'total',
     ]) ||
     !isRecord(usage.cost) ||
-    !onlyKeys(usage.cost, ['status', 'amount_usd', 'source']) ||
+    !onlyKeys(usage.cost, [
+      'status',
+      'usage_value_usd',
+      'cash_cost_usd',
+      'source',
+      'pricing_snapshot_id',
+    ]) ||
     usage.completed !== true ||
     usage.failed !== false ||
     usage.model !== 'deepseek-v4-flash' ||
     usage.provider !== 'custom:deepseek-v4-flash' ||
     usage.cost.status !== 'known' ||
-    typeof usage.cost.amount_usd !== 'number' ||
-    !Number.isFinite(usage.cost.amount_usd) ||
-    usage.cost.amount_usd < 0 ||
-    usage.cost.amount_usd > input.reservation.budget_reservation.amount
+    typeof usage.cost.usage_value_usd !== 'number' ||
+    !Number.isFinite(usage.cost.usage_value_usd) ||
+    usage.cost.usage_value_usd < 0 ||
+    usage.cost.usage_value_usd > input.reservation.budget_reservation.amount ||
+    usage.cost.cash_cost_usd !== 0 ||
+    usage.cost.source !== 'official_docs_snapshot' ||
+    usage.cost.pricing_snapshot_id !== OPENCODE_GO_PRICING_SNAPSHOT.id
   )
     throw new Error('INVALID_EXECUTOR_RESPONSE')
   const counts = [
@@ -190,8 +200,8 @@ function validateEnvelope(value: unknown, input: ExecuteInput): void {
     input,
     usage as never,
     input.reservation.budget_reservation,
-    String((value.agent_result as Record<string, unknown>)?.started_at),
-    String((value.agent_result as Record<string, unknown>)?.finished_at),
+    String((value.agent_result as Record<string, unknown>).started_at),
+    String((value.agent_result as Record<string, unknown>).finished_at),
   )
   if (JSON.stringify(result) !== JSON.stringify(value.agent_result))
     throw new Error('INVALID_EXECUTOR_RESPONSE')
@@ -214,10 +224,13 @@ function allowedError(code: string): boolean {
       'HERMES_USAGE_FAILED',
       'HERMES_USAGE_UNKNOWN',
       'HERMES_COST_UNKNOWN',
+      'HERMES_PRICING_AUTHORITY_INVALID',
+      'HERMES_TIMEOUT_HANDSHAKE_MISMATCH',
       'OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED',
       'OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN',
       'OPENCODE_GO_PRICING_IDENTITY_MISMATCH',
       'OPENCODE_GO_PRICE_OVERFLOW',
+      'OPENCODE_GO_RESERVATION_TOO_LOW',
       'EXECUTOR_FAILURE',
     ].includes(code) || /^HERMES_EXIT_[0-9]+$/.test(code)
   )
@@ -226,7 +239,10 @@ function allowedError(code: string): boolean {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
-function onlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
+function onlyKeys(
+  value: Record<string, unknown>,
+  keys: Array<string>,
+): boolean {
   return (
     Object.keys(value).length === keys.length &&
     keys.every((key) => Object.hasOwn(value, key))

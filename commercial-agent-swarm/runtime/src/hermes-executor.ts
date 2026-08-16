@@ -14,17 +14,25 @@ import {
 } from 'node:fs/promises'
 import { constants as fsConstants } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
+import { parse as parseYaml } from 'yaml'
 import {
   ACTIVE_PROFILES,
   buildHermesPrompt,
   validateExecuteRequest,
   validateHermesUsage,
-  type ExecuteInput,
-  type ProfileId,
-  type TrustedUsage,
 } from './executor-contract.js'
-import { reconcileAgentResult, type AgentResult } from './agent-result.js'
-import { priceOpenCodeGoUsage } from './opencode-go-pricing.js'
+import { reconcileAgentResult } from './agent-result.js'
+import {
+  assertOpenCodeGoExecutionPreflight,
+  priceOpenCodeGoUsage,
+} from './opencode-go-pricing.js'
+import type {
+  ExecuteInput,
+  ProfileId,
+  TrustedUsage,
+} from './executor-contract.js'
+import type { AgentResult } from './agent-result.js'
+
 export {
   ACTIVE_PROFILES,
   type ExecuteInput,
@@ -40,7 +48,7 @@ export const HERMES_BASE_URL = 'https://opencode.ai/zen/go/v1'
 
 export interface ProcessInvocation {
   command: string
-  args: string[]
+  args: Array<string>
   env: Record<string, string>
   uid: number
   gid: number
@@ -59,10 +67,10 @@ export interface ProcessOutput {
   timedOut?: boolean
 }
 export interface ProcessRunner {
-  run(invocation: ProcessInvocation): Promise<ProcessOutput>
+  run: (invocation: ProcessInvocation) => Promise<ProcessOutput>
 }
 export interface HomeOwnershipPreparer {
-  prepare(home: string, uid: number, gid: number): Promise<void>
+  prepare: (home: string, uid: number, gid: number) => Promise<void>
 }
 
 export interface ExecutorEnvelope {
@@ -80,10 +88,10 @@ export interface HermesExecutorOptions {
   expectedTemporaryRoot: string
   expectedOwnerUid?: number
   expectedUsageUid?: number
-  childUid: 10000
-  childGid: 10000
+  childUid: number
+  childGid: number
   customApiKeyFile: string
-  safePath: typeof HERMES_SAFE_PATH
+  safePath: string
   timeoutMs: number
   stdoutLimitBytes?: number
   stderrLimitBytes?: number
@@ -91,7 +99,7 @@ export interface HermesExecutorOptions {
 }
 
 export interface ExecutorPort {
-  execute(input: ExecuteInput): Promise<ExecutorEnvelope>
+  execute: (input: ExecuteInput) => Promise<ExecutorEnvelope>
 }
 
 export class HermesExecutor implements ExecutorPort {
@@ -117,13 +125,17 @@ export class HermesExecutor implements ExecutorPort {
   }
 
   async execute(input: ExecuteInput): Promise<ExecutorEnvelope> {
-    if (!ACTIVE_PROFILES.includes(input.profile_id as ProfileId))
+    if (!ACTIVE_PROFILES.includes(input.profile_id))
       throw new Error('UNKNOWN_PROFILE')
     const request = validateExecuteRequest({
       request_id: `local-${input.assignment_id}`,
       type: 'execute',
       ...input,
     })
+    if (request.execution_timeout_ms !== this.options.timeoutMs)
+      throw new Error('HERMES_TIMEOUT_HANDSHAKE_MISMATCH')
+    const pricingNow = (this.options.pricingClock ?? (() => new Date()))()
+    assertOpenCodeGoExecutionPreflight(request.reservation, pricingNow)
     const ownerUid = this.options.expectedOwnerUid ?? process.getuid?.() ?? 0
     await assertSecureDirectory(
       this.options.temporaryRoot,
@@ -202,10 +214,7 @@ export class HermesExecutor implements ExecutorPort {
         ) as unknown,
         input.reservation,
       )
-      const usage = priceOpenCodeGoUsage(
-        nativeUsage,
-        (this.options.pricingClock ?? (() => new Date()))(),
-      )
+      const usage = priceOpenCodeGoUsage(nativeUsage, pricingNow)
       let rawResult: unknown
       try {
         rawResult = JSON.parse(output.stdout)
@@ -240,8 +249,8 @@ export class NodeProcessRunner implements ProcessRunner {
         cwd: invocation.cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
-      const stdout: Buffer[] = []
-      const stderr: Buffer[] = []
+      const stdout: Array<Buffer> = []
+      const stderr: Array<Buffer> = []
       let stdoutBytes = 0
       let stderrBytes = 0
       let timedOut = false
@@ -282,6 +291,7 @@ export class NodeProcessRunner implements ProcessRunner {
         if (settled) return
         settled = true
         clearTimeout(timer)
+        terminate()
         try {
           await waitForProcessGroupExit(child.pid)
         } catch (error) {
@@ -338,16 +348,25 @@ export class PosixHomeOwnershipPreparer implements HomeOwnershipPreparer {
 
 export async function hashProfileSeed(root: string): Promise<string> {
   const hash = createHash('sha256')
+  const field = (value: Buffer) => {
+    const length = Buffer.alloc(8)
+    length.writeBigUInt64BE(BigInt(value.length))
+    hash.update(length)
+    hash.update(value)
+  }
   const walk = async (path: string) => {
     const metadata = await lstat(path)
     if (metadata.isSymbolicLink())
       throw new Error('UNSAFE_PROFILE_SEED_SYMLINK')
     const name = relative(root, path).replaceAll('\\', '/')
-    if (name) hash.update(`${metadata.isDirectory() ? 'd' : 'f'}:${name}\0`)
+    if (name) {
+      hash.update(metadata.isDirectory() ? 'd' : 'f')
+      field(Buffer.from(name, 'utf8'))
+    }
     if (metadata.isDirectory()) {
       for (const entry of (await readdir(path)).sort())
         await walk(join(path, entry))
-    } else hash.update(await readFile(path))
+    } else field(await readFile(path))
   }
   await walk(root)
   return hash.digest('hex')
@@ -384,27 +403,43 @@ async function assertSecureSeed(
   await validateSeedTree(path, ownerUid)
   if ((await hashProfileSeed(path)) !== expectedHash)
     throw new Error('PROFILE_SEED_HASH_MISMATCH')
-  const config = await readFile(
-    join(path, 'profiles', profile, 'config.yaml'),
-    'utf8',
-  )
+  const parsed = parseYaml(
+    await readFile(join(path, 'profiles', profile, 'config.yaml'), 'utf8'),
+  ) as unknown
+  if (!record(parsed)) throw new Error('PROFILE_MANIFEST_MISMATCH')
+  const providers = Array.isArray(parsed.custom_providers)
+    ? parsed.custom_providers
+    : []
+  const provider =
+    providers.length === 1 && record(providers[0]) ? providers[0] : null
+  const model = record(parsed.model) ? parsed.model : null
+  const agent = record(parsed.agent) ? parsed.agent : null
   if (
-    !config.includes(HERMES_PROVIDER) ||
-    !config.includes(HERMES_MODEL) ||
-    !config.includes(HERMES_BASE_URL)
+    !provider ||
+    provider.name !== HERMES_MODEL ||
+    provider.base_url !== HERMES_BASE_URL ||
+    provider.key_env !== 'CUSTOM_API_KEY' ||
+    provider.api_mode !== 'chat_completions' ||
+    !model ||
+    model.default !== HERMES_MODEL ||
+    model.provider !== HERMES_PROVIDER ||
+    !agent
   )
     throw new Error('PROFILE_MANIFEST_MISMATCH')
-  const maxTokens = Number(/max_tokens:\s*(\d+)/.exec(config)?.[1])
-  const maxTurns = Number(/max_turns:\s*(\d+)/.exec(config)?.[1])
+  const maxTokens = model.max_tokens
+  const maxTurns = agent.max_turns
   if (
     !Number.isSafeInteger(maxTokens) ||
-    maxTokens <= 0 ||
+    Number(maxTokens) <= 0 ||
     !Number.isSafeInteger(maxTurns) ||
-    maxTurns <= 0 ||
-    reservation.maximum_tokens < maxTokens * maxTurns ||
-    reservation.maximum_api_calls < maxTurns
+    Number(maxTurns) <= 0 ||
+    reservation.maximum_tokens < Number(maxTokens) * Number(maxTurns) ||
+    reservation.maximum_api_calls < Number(maxTurns)
   )
     throw new Error('PROFILE_BUDGET_CEILING_MISMATCH')
+}
+function record(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 async function validateSeedTree(path: string, ownerUid: number): Promise<void> {
   const metadata = await lstat(path)
