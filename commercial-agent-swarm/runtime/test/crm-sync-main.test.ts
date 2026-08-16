@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   CrmSyncDaemon,
+  createHealthServer,
   createCrmSyncRuntime,
   loadCrmSyncProcessConfig,
 } from '../src/crm-sync-main.js'
@@ -18,6 +19,12 @@ function processStore(): CrmProcessStorePort {
     storeInbox: async () => false,
     advanceCursor: async (_connector, _stream, version) => version + 1,
     listOutcomeUnknown: async () => [{ outboxId: 'outbox-1', errorCode: 'TWENTY_OUTCOME_UNKNOWN' }],
+    summary: async () => ({
+      status: 'known', connector: 'twenty',
+      outbox: { pending: 0, leased: 0, confirmed: 0, failed: 0, outcomeUnknown: 0 },
+      inboxCount: 0, entityLinkCount: 0, cursorCount: 0,
+      lastSuccessfulSyncAt: null, provenance: 'postgres',
+    }),
   }
 }
 
@@ -87,6 +94,55 @@ describe('CRM sync deployable process', () => {
     await assert.rejects(daemon.runCycle(), /CRM_SYNC_CYCLE_FAILED/)
     assert.deepEqual(daemon.health(), { live: true, ready: false, mode: 'shadow' })
     assert.equal(daemon.nextDelayMs(), 120_000)
+  })
+
+  it('returns an explicit disabled CRM summary in simulation and the store summary otherwise', async () => {
+    const simulation = new CrmSyncDaemon({
+      mode: 'simulation', workerId: 'worker', leaseSeconds: 60,
+      pollIntervalMs: 60_000, store: processStore(), client: client([]),
+    })
+    assert.deepEqual(await simulation.summary(), {
+      status: 'disabled', connector: 'twenty', outbox: null,
+      inboxCount: null, entityLinkCount: null, cursorCount: null,
+      lastSuccessfulSyncAt: null, provenance: 'simulation-disabled',
+    })
+    const shadow = new CrmSyncDaemon({
+      mode: 'shadow', workerId: 'worker', leaseSeconds: 60,
+      pollIntervalMs: 60_000, store: processStore(), client: client([]),
+    })
+    assert.deepEqual(await shadow.summary(), {
+      status: 'known', connector: 'twenty',
+      outbox: { pending: 0, leased: 0, confirmed: 0, failed: 0, outcomeUnknown: 0 },
+      inboxCount: 0, entityLinkCount: 0, cursorCount: 0,
+      lastSuccessfulSyncAt: null, provenance: 'postgres',
+    })
+  })
+
+  it('serves CRM summary only on the exact internal GET route with its bearer', async () => {
+    const runtime = new CrmSyncDaemon({
+      mode: 'simulation', workerId: 'worker', leaseSeconds: 60,
+      pollIntervalMs: 60_000, store: processStore(), client: client([]),
+    })
+    const server = createHealthServer(runtime, 'crm-read-model-token')
+    await new Promise<void>((resolve, reject) =>
+      server.once('error', reject).listen(0, '127.0.0.1', resolve),
+    )
+    try {
+      const address = server.address()
+      assert(address && typeof address === 'object')
+      const url = `http://127.0.0.1:${address.port}/internal/v1/read-model/crm-summary`
+      assert.equal((await fetch(url)).status, 401)
+      const response = await fetch(url, {
+        headers: { authorization: 'Bearer crm-read-model-token' },
+      })
+      assert.equal(response.status, 200)
+      assert.equal((await response.json() as any).provenance, 'simulation-disabled')
+      assert.equal((await fetch(`${url}/extra`, {
+        headers: { authorization: 'Bearer crm-read-model-token' },
+      })).status, 404)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
   })
 
   it('accepts the exact allowlisted internal Twenty origin and rejects internal SSRF variants', () => {

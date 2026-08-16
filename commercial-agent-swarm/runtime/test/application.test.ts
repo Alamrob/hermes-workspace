@@ -347,6 +347,28 @@ describe('broker application routes', () => {
     assert.equal('business_context' in mission, false)
   })
 
+  it('serves the exact authenticated portfolio read model without invented metrics', async () => {
+    const state = setup()
+    assert.equal((await state.app.handle({
+      method: 'GET', path: '/internal/v1/read-model/portfolio',
+    })).status, 401)
+    const response = await state.app.handle({
+      method: 'GET', path: '/internal/v1/read-model/portfolio',
+      headers: headers('internal-token'),
+    })
+    assert.equal(response.status, 200)
+    const body = response.body as any
+    assert.deepEqual(Object.keys(body), [
+      'portfolio', 'projects', 'missions', 'missionDrafts', 'approvals',
+      'qa', 'agents', 'experiments', 'costs', 'audit', 'control',
+    ])
+    assert.equal(body.projects.length, 26)
+    assert.equal(body.projects.find((project: any) => project.projectId === 'wspro').displayName, 'WSPro')
+    assert.equal(body.projects.find((project: any) => project.projectId === 'xg-systems').activatable, false)
+    assert.equal(body.costs.usageValueMicroCents, null)
+    assert.equal(body.missionDrafts.count, null)
+  })
+
   it('exposes approval request/decision and the one-time mail endpoint through injected transports', async () => {
     const state = setup()
     await state.app.handle({ method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: signedWorkOrder() })

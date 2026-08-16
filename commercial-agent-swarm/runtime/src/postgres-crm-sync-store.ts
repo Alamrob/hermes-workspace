@@ -4,6 +4,10 @@ import type {
   CrmStream,
   CrmSyncStorePort,
 } from './crm-sync.js'
+import {
+  validateCrmSummaryReadModel,
+  type CrmSummaryReadModel,
+} from './crm-summary-read-model.js'
 
 interface QueryPort {
   query(sql: string, values?: unknown[]): Promise<{ rows: unknown[] }>
@@ -159,5 +163,13 @@ export class PostgresCrmSyncStore implements CrmSyncStorePort {
         throw new Error('CRM_RECONCILIATION_RESULT_INVALID')
       return { outboxId: row.outbox_id, errorCode: row.error_code }
     })
+  }
+
+  async summary(): Promise<CrmSummaryReadModel> {
+    const result = await this.database.query(
+      `SELECT integration.get_crm_summary() AS summary`,
+    )
+    const summary = (result.rows.at(0) as { summary?: unknown } | undefined)?.summary
+    return validateCrmSummaryReadModel(summary)
   }
 }

@@ -22,6 +22,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '002_commercial_control_plane',
         '003_dispatch_queue',
         '004_crm_integration',
+        '005_portfolio_read_models',
       ]
       await runVersionedMigrations(
         pool,
@@ -50,6 +51,30 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
           true,
           relation,
         )
+
+      assert.equal(
+        (await pool.query(`SELECT count(*)::int AS count FROM catalog.project_inventory`)).rows[0].count,
+        26,
+      )
+      assert.equal(
+        (await pool.query(`SELECT activatable FROM catalog.project_inventory WHERE project_id='xg-systems'`)).rows[0].activatable,
+        false,
+      )
+      await assert.rejects(
+        pool.query(`UPDATE catalog.project_inventory SET activatable=true WHERE project_id='xg-systems'`),
+        /project_inventory_check/,
+      )
+      await pool.query(`SET ROLE commercial_runtime`)
+      const portfolio = (await pool.query(`SELECT control.get_portfolio_read_model() AS model`)).rows[0].model
+      assert.equal(portfolio.projects.length, 26)
+      assert.equal(portfolio.costs.usageValueMicroCents, null)
+      assert.equal(portfolio.projects.find((project: any) => project.projectId === 'wspro').displayName, 'WSPro')
+      await pool.query(`RESET ROLE`)
+      await pool.query(`SET ROLE commercial_crm_sync`)
+      const crmSummary = (await pool.query(`SELECT integration.get_crm_summary() AS model`)).rows[0].model
+      assert.equal(crmSummary.connector, 'twenty')
+      assert.equal(crmSummary.provenance, 'postgres')
+      await pool.query(`RESET ROLE`)
 
       const cohortId = randomUUID()
       await pool.query(`SET ROLE commercial_runtime`)

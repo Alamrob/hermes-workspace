@@ -12,7 +12,12 @@ import {
   type TwentyClientPort,
 } from './crm-sync.js'
 import { PostgresCrmSyncStore } from './postgres-crm-sync-store.js'
+import {
+  disabledCrmSummaryReadModel,
+  type CrmSummaryReadModel,
+} from './crm-summary-read-model.js'
 import { readGroupSecretFile } from './secret-file.js'
+import { constantTimeSecretEqual } from './security.js'
 import {
   parseTwentyRestMapping,
   TwentyHttpClient,
@@ -32,6 +37,7 @@ export interface CrmProcessStorePort extends CrmSyncStorePort {
   listOutcomeUnknown(
     limit: number,
   ): Promise<Array<{ outboxId: string; errorCode: 'TWENTY_OUTCOME_UNKNOWN' }>>
+  summary(): Promise<CrmSummaryReadModel>
   close?(): Promise<void>
 }
 
@@ -47,6 +53,7 @@ export interface CrmSyncProcessConfig {
   allowedHttpHost?: string
   tokenFile?: string
   mappingFile?: string
+  readModelBearerFile?: string
 }
 
 export function loadCrmSyncProcessConfig(
@@ -66,6 +73,9 @@ export function loadCrmSyncProcessConfig(
     pollIntervalMs: 60_000 as const,
     workerId: environment.CRM_SYNC_WORKER_ID?.trim() || 'crm-sync-1',
     leaseSeconds: Number(environment.CRM_SYNC_LEASE_SECONDS ?? '60'),
+    ...(environment.CRM_READ_MODEL_BEARER_FILE
+      ? { readModelBearerFile: secretPath(environment.CRM_READ_MODEL_BEARER_FILE, 'CRM_READ_MODEL_BEARER_FILE') }
+      : {}),
   }
   if (!/^[A-Za-z0-9._:-]{1,128}$/.test(common.workerId) || !Number.isSafeInteger(common.leaseSeconds) || common.leaseSeconds < 5 || common.leaseSeconds > 300)
     throw new Error('CRM_SYNC_WORKER_INVALID')
@@ -148,6 +158,11 @@ export class CrmSyncDaemon {
     return this.options.store.listOutcomeUnknown(limit)
   }
 
+  async summary(): Promise<CrmSummaryReadModel> {
+    if (this.options.mode === 'simulation') return disabledCrmSummaryReadModel()
+    return this.options.store.summary()
+  }
+
   start(): void {
     if (this.timer || this.stopped || this.options.mode === 'simulation') return
     const poll = async () => {
@@ -208,7 +223,10 @@ export async function startCrmSyncProcess(
 ): Promise<{ close(): Promise<void> }> {
   const runtime = await createDefaultRuntime(environment)
   const config = loadCrmSyncProcessConfig(environment)
-  const server = createHealthServer(runtime)
+  if (!config.readModelBearerFile)
+    throw new Error('CRM_READ_MODEL_BEARER_FILE_REQUIRED')
+  const readModelBearer = await readGroupSecretFile(config.readModelBearerFile)
+  const server = createHealthServer(runtime, readModelBearer)
   await listen(server, config.healthPort, config.healthHost)
   runtime.start()
   return {
@@ -240,7 +258,7 @@ async function createDefaultRuntime(
   })
 }
 
-function createHealthServer(runtime: CrmSyncDaemon): Server {
+export function createHealthServer(runtime: CrmSyncDaemon, readModelBearer: string): Server {
   return createServer((request, response) => {
     const health = runtime.health()
     if (request.method === 'GET' && request.url === '/healthz') {
@@ -253,6 +271,28 @@ function createHealthServer(runtime: CrmSyncDaemon): Server {
       response.end(JSON.stringify({ status: health.ready ? 'ready' : 'not_ready' }))
       return
     }
+    if (request.method === 'GET' && request.url === '/internal/v1/read-model/crm-summary') {
+      const authorization = request.headers.authorization
+      const supplied = authorization?.startsWith('Bearer ')
+        ? authorization.slice('Bearer '.length)
+        : ''
+      if (!supplied || !constantTimeSecretEqual(supplied, readModelBearer)) {
+        response.writeHead(401, { 'content-type': 'application/json' })
+        response.end(JSON.stringify({ error: 'unauthorized' }))
+        return
+      }
+      void runtime.summary().then(
+        (summary) => {
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(JSON.stringify(summary))
+        },
+        () => {
+          response.writeHead(503, { 'content-type': 'application/json' })
+          response.end(JSON.stringify({ error: 'service_unavailable' }))
+        },
+      )
+      return
+    }
     response.writeHead(404).end()
   })
 }
@@ -263,6 +303,7 @@ const simulationStore: CrmProcessStorePort = {
   markOutcomeUnknown: async () => undefined, storeInbox: async () => false,
   advanceCursor: async (_connector, _stream, version) => version,
   listOutcomeUnknown: async () => [],
+  summary: async () => disabledCrmSummaryReadModel(),
 }
 const simulationClient: TwentyClientPort = {
   apply: async () => { throw new Error('CRM_SIMULATION_DISABLED') },

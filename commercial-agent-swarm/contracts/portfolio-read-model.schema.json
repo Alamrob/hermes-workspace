@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://alam.cl/contracts/portfolio-read-model.schema.json",
+  "title": "Sales Portfolio Read Model v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["portfolio", "projects", "missions", "missionDrafts", "approvals", "qa", "agents", "experiments", "costs", "audit", "control"],
+  "properties": {
+    "portfolio": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "projectCount", "provenance"],
+      "properties": {
+        "status": { "const": "known" },
+        "projectCount": { "const": 26 },
+        "provenance": { "const": "user-approved-inventory-2026-08-16" }
+      }
+    },
+    "projects": {
+      "type": "array", "minItems": 26, "maxItems": 26,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["projectId", "displayName", "operatingState", "activatable", "maturityStatus", "offerEvidence", "icpEvidence", "policyEvidence", "provenance"],
+        "properties": {
+          "projectId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
+          "operatingState": { "enum": ["inactive", "read_only"] },
+          "activatable": { "type": "boolean" },
+          "maturityStatus": { "const": "unknown" },
+          "offerEvidence": { "type": ["string", "null"], "enum": ["versioned-catalog", null] },
+          "icpEvidence": { "type": ["string", "null"], "enum": ["versioned-catalog", null] },
+          "policyEvidence": { "type": ["string", "null"], "enum": ["versioned-catalog", null] },
+          "provenance": { "const": "user-approved-inventory-2026-08-16" }
+        }
+      }
+    },
+    "missions": { "$ref": "#/$defs/knownCount" },
+    "missionDrafts": { "$ref": "#/$defs/unknownCount" },
+    "approvals": { "$ref": "#/$defs/knownCount" },
+    "qa": { "$ref": "#/$defs/unknownCount" },
+    "agents": { "$ref": "#/$defs/unknownCount" },
+    "experiments": { "$ref": "#/$defs/unknownCount" },
+    "costs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "usageValueMicroCents", "cashCostMicroCents", "provenance"],
+      "properties": {
+        "status": { "const": "unknown" },
+        "usageValueMicroCents": { "type": "null" },
+        "cashCostMicroCents": { "type": "null" },
+        "provenance": { "const": "not-aggregated" }
+      }
+    },
+    "audit": { "$ref": "#/$defs/knownCount" },
+    "control": {
+      "type": "object", "additionalProperties": false, "required": ["killSwitch"],
+      "properties": {
+        "killSwitch": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "active", "provenance"],
+          "properties": {
+            "status": { "const": "known" },
+            "active": { "type": "boolean" },
+            "provenance": { "enum": ["postgres", "runtime-memory"] }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "knownCount": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "count", "provenance"],
+      "properties": {
+        "status": { "const": "known" },
+        "count": { "type": "integer", "minimum": 0 },
+        "provenance": { "enum": ["postgres", "runtime-memory"] }
+      }
+    },
+    "unknownCount": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "count", "provenance"],
+      "properties": {
+        "status": { "const": "unknown" },
+        "count": { "type": "null" },
+        "provenance": { "const": "not-modeled" }
+      }
+    }
+  }
+}

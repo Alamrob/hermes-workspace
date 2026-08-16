@@ -9,6 +9,7 @@ describe('versioned migration runner', () => {
   it('orders a closed migration set and calculates stable SHA-256 digests', () => {
     const migrations = validateMigrationSet([
       { version: '004_crm_integration', sql: 'SELECT 4;' },
+      { version: '005_portfolio_read_models', sql: 'SELECT 5;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -20,6 +21,7 @@ describe('versioned migration runner', () => {
         '002_commercial_control_plane',
         '003_dispatch_queue',
         '004_crm_integration',
+        '005_portfolio_read_models',
       ],
     )
     assert.equal(
@@ -40,12 +42,14 @@ describe('versioned migration runner', () => {
         { version: '002_commercial_control_plane', sql: '' },
         { version: '003_dispatch_queue', sql: 'SELECT 3;' },
         { version: '004_crm_integration', sql: 'SELECT 4;' },
+        { version: '005_portfolio_read_models', sql: 'SELECT 5;' },
       ],
       [
         { version: '001_runtime', sql: 'SELECT 1;' },
         { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
         { version: '003_dispatch_queue', sql: 'SELECT 3;' },
         { version: '004_crm_integration', sql: 'SELECT 4;' },
+        { version: '005_portfolio_read_models', sql: 'SELECT 5;' },
         { version: '005_unapproved', sql: 'SELECT 5;' },
       ],
     ])

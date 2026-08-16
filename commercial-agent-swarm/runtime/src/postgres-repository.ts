@@ -9,6 +9,10 @@ import type {
   RuntimeRepository,
   WebhookEventRecord,
 } from './repository.js'
+import {
+  validatePortfolioReadModel,
+  type PortfolioReadModel,
+} from './portfolio-read-model.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -50,6 +54,15 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     } catch {
       return false
     }
+  }
+
+  async getPortfolioReadModel(): Promise<PortfolioReadModel> {
+    const result = await this.pool.query<{ model: PortfolioReadModel }>(
+      'SELECT control.get_portfolio_read_model() AS model',
+    )
+    const model = result.rows[0]?.model
+    if (!model) throw new Error('PORTFOLIO_READ_MODEL_UNAVAILABLE')
+    return validatePortfolioReadModel(model)
   }
 
   async saveMission(record: MissionRecord): Promise<void> {

@@ -1,4 +1,5 @@
 import type { ApprovalAction } from './approvals.js'
+import { inMemoryPortfolioReadModel, type PortfolioReadModel } from './portfolio-read-model.js'
 
 interface ApprovalRecord {
   approval_id: string
@@ -22,6 +23,7 @@ export interface ApprovalGrantRecord extends ApprovalRecord {
 
 export interface RuntimeRepository {
   ready(): Promise<boolean>
+  getPortfolioReadModel(): Promise<PortfolioReadModel>
   saveMission(record: MissionRecord): Promise<void>
   getMission(id: string): Promise<MissionRecord | null>
   isMissionA3Enabled(id: string): Promise<boolean>
@@ -66,6 +68,15 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
 
   async ready(): Promise<boolean> {
     return true
+  }
+
+  async getPortfolioReadModel(): Promise<PortfolioReadModel> {
+    return inMemoryPortfolioReadModel({
+      missionCount: this.missions.size,
+      approvalCount: this.approvals.size,
+      auditCount: 0,
+      killSwitchActive: this.killSwitches.has('global:*'),
+    })
   }
 
   async saveMission(record: MissionRecord): Promise<void> {

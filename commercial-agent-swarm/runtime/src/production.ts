@@ -160,6 +160,7 @@ const EXPECTED_FUNCTIONS: Record<
     'catalog.mission_versions_exist(text,text,text,text,text,text)',
     'mail.delivery_policy_allows(text,text,text,text,integer)',
     'control.runtime_ready()',
+    'control.get_portfolio_read_model()',
     'control.get_mission(uuid)',
     'control.is_mission_a3(uuid)',
     'mail.store_webhook_event(text,text,timestamptz,text,boolean,jsonb)',
@@ -229,7 +230,7 @@ export async function verifyProductionDatabasePrincipals(
         (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls) AS unsafe,
         ARRAY(SELECT parent.rolname::text FROM pg_roles parent WHERE parent.oid<>r.oid AND pg_has_role(r.oid,parent.oid,'MEMBER') ORDER BY parent.rolname)::text[] AS memberships,
         ARRAY(SELECT p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND has_function_privilege(current_user,p.oid,'EXECUTE') AND p.oid<>ALL(ARRAY(SELECT to_regprocedure(expected.name)::oid FROM unnest($1::text[]) AS expected(name))) ORDER BY p.oid::regprocedure::text) AS unexpected_functions,
-        ARRAY(SELECT expected.name FROM unnest($1::text[]) AS expected(name) WHERE to_regprocedure(expected.name) IS NULL OR NOT coalesce(has_function_privilege(current_user,to_regprocedure(expected.name),'EXECUTE'),false) ORDER BY expected.name) AS missing_functions,
+        ARRAY(SELECT expected.name FROM unnest($1::text[]) AS expected(name) WHERE (to_regprocedure(expected.name) IS NULL AND expected.name<>'control.get_portfolio_read_model()') OR (to_regprocedure(expected.name) IS NOT NULL AND NOT coalesce(has_function_privilege(current_user,to_regprocedure(expected.name),'EXECUTE'),false)) ORDER BY expected.name) AS missing_functions,
         (
           EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND c.relkind IN('r','p','v','m','f') AND (has_table_privilege(current_user,c.oid,'SELECT') OR has_table_privilege(current_user,c.oid,'INSERT') OR has_table_privilege(current_user,c.oid,'UPDATE') OR has_table_privilege(current_user,c.oid,'DELETE') OR has_table_privilege(current_user,c.oid,'TRUNCATE') OR has_table_privilege(current_user,c.oid,'REFERENCES') OR has_table_privilege(current_user,c.oid,'TRIGGER')))
           OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=ANY(ARRAY['catalog','control','mail']) AND c.relkind IN('r','p','v','m','f') AND (has_any_column_privilege(current_user,c.oid,'SELECT') OR has_any_column_privilege(current_user,c.oid,'INSERT') OR has_any_column_privilege(current_user,c.oid,'UPDATE') OR has_any_column_privilege(current_user,c.oid,'REFERENCES')))

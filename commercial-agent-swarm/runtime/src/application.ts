@@ -123,6 +123,10 @@ export class BrokerApplication {
       const mission = await this.options.repository.getMission(route.id!)
       return mission ? { status: 200, body: redactMission(mission) } : { status: 404, body: { error: 'not_found' } }
     }
+    if (route.action === 'getPortfolioReadModel') {
+      requireBearer(request.headers?.authorization, this.options.authentication.internal)
+      return { status: 200, body: await this.options.repository.getPortfolioReadModel() }
+    }
     if (route.action === 'requestApproval') {
       requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
       return { status: 201, body: await this.options.approvals.request(request.body) }
@@ -222,6 +226,8 @@ type Route = {
 function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/healthz') return { action: 'health', auditAction: 'health' }
   if (method === 'GET' && path === '/readyz') return { action: 'ready', auditAction: 'ready' }
+  if (method === 'GET' && path === '/internal/v1/read-model/portfolio')
+    return { action: 'getPortfolioReadModel', auditAction: 'read_model.portfolio' }
   if (method === 'POST' && path === '/v1/work-orders') return { action: 'createWorkOrder', auditAction: 'work_order.create' }
   if (method === 'POST' && path === '/v1/approvals/requests') return { action: 'requestApproval', auditAction: 'approval.request' }
   if (method === 'POST' && path === '/v1/mail/send') return { action: 'sendMail', auditAction: 'mail.send' }

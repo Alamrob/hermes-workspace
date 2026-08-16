@@ -23,6 +23,7 @@ integration('PostgreSQL 17 versioned migration runner', () => {
           '002_commercial_control_plane',
           '003_dispatch_queue',
           '004_crm_integration',
+          '005_portfolio_read_models',
         ].map(async (version) => ({
           version,
           sql: await readFile(
@@ -39,7 +40,7 @@ integration('PostgreSQL 17 versioned migration runner', () => {
             `SELECT count(*)::int AS count FROM control.schema_migrations`,
           )
         ).rows[0].count,
-        4,
+        5,
       )
       await pool.query(
         `UPDATE control.schema_migrations SET sha256=$1 WHERE version='003_dispatch_queue'`,
