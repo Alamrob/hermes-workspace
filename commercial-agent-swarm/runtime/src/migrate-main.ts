@@ -35,6 +35,7 @@ export async function loadMigrationSources() {
       '001_runtime',
       '002_commercial_control_plane',
       '003_dispatch_queue',
+      '004_crm_integration',
     ].map(async (version) => ({
       version,
       sql: await readFile(
