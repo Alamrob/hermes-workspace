@@ -42,6 +42,36 @@ integration('PostgreSQL 17 versioned migration runner', () => {
         ).rows[0].count,
         5,
       )
+      const rollback005 = await readFile(
+        new URL('../migrations/005_portfolio_read_models.rollback.sql', import.meta.url),
+        'utf8',
+      )
+      await pool.query(rollback005)
+      assert.equal(
+        (await pool.query(
+          `SELECT count(*)::int AS count FROM control.schema_migrations
+           WHERE version='005_portfolio_read_models'`,
+        )).rows[0].count,
+        0,
+      )
+      assert.equal(
+        (await pool.query(`SELECT count(*)::int AS count FROM catalog.project_inventory`)).rows[0].count,
+        26,
+      )
+      await runVersionedMigrations(pool, sources)
+      assert.equal(
+        (await pool.query(
+          `SELECT count(*)::int AS count FROM control.schema_migrations
+           WHERE version='005_portfolio_read_models'`,
+        )).rows[0].count,
+        1,
+      )
+      assert.equal(
+        (await pool.query(
+          `SELECT has_function_privilege('commercial_runtime','control.get_portfolio_read_model()','EXECUTE') AS allowed`,
+        )).rows[0].allowed,
+        true,
+      )
       await pool.query(
         `UPDATE control.schema_migrations SET sha256=$1 WHERE version='003_dispatch_queue'`,
         ['0'.repeat(64)],
