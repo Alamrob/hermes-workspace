@@ -30,7 +30,7 @@ class FakeMail implements MailTransport {
   }
 }
 
-function setup(mode: ApprovalMode = 'either', ambiguousGateways = false) {
+function setup(mode: ApprovalMode = 'either', ambiguousGateways = false, a3AdmissionEnabled = true) {
   const repository = new InMemoryRuntimeRepository()
   const telegram = new FakeTelegram()
   const approvals = new ApprovalBroker({
@@ -84,6 +84,7 @@ function setup(mode: ApprovalMode = 'either', ambiguousGateways = false) {
       audit,
       now: () => NOW,
       deployedVersion: 'runtime-test-v1',
+      a3AdmissionEnabled,
       authentication: {
         workOrders: { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' } },
         controlPlane: 'control-plane-token', connector: 'connector-token', internal: 'internal-token',
@@ -199,6 +200,18 @@ describe('broker application routes', () => {
     const decision = { decision: 'approved', actor_id: 'unapproved', decided_at: NOW.toISOString(), expires_at: '2026-08-15T20:15:00.000Z' }
     assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decision`, body: decision })).status, 401)
     assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decision`, headers: headers('sales-approval-token'), body: decision })).status, 403)
+  })
+
+  it('rejects A3 admission before persistence while the deployment flag is false', async () => {
+    const state = setup('either', false, false)
+    const order = signedWorkOrder()
+    assert.equal(order.autonomy_level, 'A3')
+    const response = await state.app.handle({
+      method: 'POST', path: '/v1/work-orders',
+      headers: headers('control-plane-token'), body: order,
+    })
+    assert.deepEqual(response, { status: 403, body: { error: 'A3_ADMISSION_DISABLED' } })
+    assert.equal(await state.repository.getMission(order.mission_id), null)
   })
 
   it('derives the evidence channel from separate authenticated routes and dual mode grants only after both', async () => {

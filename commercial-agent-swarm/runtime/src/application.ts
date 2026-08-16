@@ -39,6 +39,7 @@ interface ApplicationOptions {
   audit: AuditSink
   now?: () => Date
   deployedVersion: string
+  a3AdmissionEnabled: boolean
   authentication: {
     workOrders: WorkOrderAuthConfig
     controlPlane: string
@@ -110,6 +111,8 @@ export class BrokerApplication {
       const workOrder = validateWorkOrder(request.body)
       requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
       verifyWorkOrder(workOrder, this.options.authentication.workOrders, this.now())
+      if (workOrder.autonomy_level === 'A3' && !this.options.a3AdmissionEnabled)
+        throw new AuthenticationError('A3_ADMISSION_DISABLED')
       await this.options.repository.saveMission({
         ...workOrder,
         mission_id: workOrder.mission_id,
@@ -320,6 +323,7 @@ function publicFailure(error: unknown): {
       'EXPIRED_AUTHORITY',
       'INVALID_SIGNATURE',
       'FORBIDDEN',
+      'A3_ADMISSION_DISABLED',
     ])
     return {
       status: 403,

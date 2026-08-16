@@ -45,6 +45,7 @@ describe('Simulation broker entrypoint', () => {
     assert.equal(config.port, 8080)
     assert.equal(config.databaseSecretFiles.length, 5)
     assert.equal(config.approvalMode, 'either')
+    assert.equal(config.a3AdmissionEnabled, false)
     assert.equal(config.secretGid, BROKER_SERVICE_GID)
     assert.equal(config.secretGid, 10001)
     assert.deepEqual(config.approvalActors, {

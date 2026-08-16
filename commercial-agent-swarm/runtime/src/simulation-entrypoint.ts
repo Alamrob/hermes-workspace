@@ -52,6 +52,7 @@ export interface SimulationBrokerConfig {
   approvalMode: ApprovalMode
   approvalActors: { sales: string[]; telegram: string[] }
   secretGid: typeof BROKER_SERVICE_GID
+  a3AdmissionEnabled: false
 }
 
 export interface ApplicationSecrets {
@@ -115,6 +116,7 @@ export function loadSimulationBrokerConfig(
     approvalMode: parseApprovalMode(environment.APPROVAL_MODE),
     approvalActors,
     secretGid: BROKER_SERVICE_GID,
+    a3AdmissionEnabled: false,
   }
 }
 

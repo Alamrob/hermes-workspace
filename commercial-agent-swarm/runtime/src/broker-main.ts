@@ -60,6 +60,7 @@ export async function startSimulationBroker(
       }),
       audit: persistence.audit,
       deployedVersion: config.deployedVersion,
+      a3AdmissionEnabled: config.a3AdmissionEnabled,
       authentication: {
         workOrders: {
           issuer: config.workOrderAuthority.issuer,
