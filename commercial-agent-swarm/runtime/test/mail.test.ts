@@ -203,4 +203,15 @@ describe('internal mail policy', () => {
       assert.equal(state.transport.sent.length, 0)
     }
   })
+
+  it('rejects a delivery policy version absent from the repository catalog', async () => {
+    const state = await setup(true)
+    const unknown = action({ policy_version: 'policy-v999' })
+    await state.repository.saveMission({ ...(await state.repository.getMission(MISSION_ID))!, policy_version: 'policy-v999' })
+    await assert.rejects(
+      state.mail.send({ action: unknown, approval_token: 'unused' }),
+      (error: unknown) => error instanceof MailPolicyError && error.code === 'CATALOG_POLICY_DENIED',
+    )
+    assert.equal(state.transport.sent.length, 0)
+  })
 })

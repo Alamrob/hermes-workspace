@@ -1,0 +1,12 @@
+BEGIN;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_approver,commercial_safety_operator,commercial_observer;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_approver,commercial_safety_operator,commercial_observer;
+DROP VIEW IF EXISTS control.mission_summaries,control.approval_summaries;
+DROP VIEW IF EXISTS mail.webhook_event_summaries,mail.external_action_summaries;
+DROP FUNCTION IF EXISTS control.runtime_ready(),control.save_mission(uuid,text,jsonb),control.get_mission(uuid),control.is_mission_a3(uuid),control.request_approval(uuid,jsonb,text,timestamptz),control.get_pending_approval(uuid),control.decide_approval(uuid,text,text,timestamptz,text,text,timestamptz,jsonb,text,timestamptz),control.consume_approval(text,text,text,timestamptz),control.is_kill_switch_active(text,text),control.set_kill_switch(text,text,boolean),control.record_audit_event(jsonb);
+DROP FUNCTION IF EXISTS mail.delivery_policy_allows(text,text,text,text,integer),mail.store_webhook_event(text,text,timestamptz,text,boolean,jsonb),mail.claim_external_action(uuid,text,text,text),mail.complete_external_action(uuid,text,text,text,uuid);
+DROP TABLE IF EXISTS mail.delivery_policies;
+DROP TABLE IF EXISTS control.deployed_versions;
+DROP FUNCTION IF EXISTS control.reject_deployed_version_mutation(),mail.reject_delivery_policy_mutation();
+DROP SCHEMA IF EXISTS catalog CASCADE;
+COMMIT;

@@ -84,8 +84,8 @@ function mailAction(): ApprovalAction {
     content: 'Mensaje controlado',
     content_version: 'v1',
     volume: 1,
-    offer_version: 'v1',
-    policy_version: 'v1',
+    offer_version: 'offer-v1',
+    policy_version: 'policy-v1',
     idempotency_key: 'mail-internal-0001',
   }
 }

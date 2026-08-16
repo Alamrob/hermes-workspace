@@ -37,6 +37,7 @@ export class MailService {
     const mission = await this.options.repository.getMission(action.mission_id)
     if (!mission || mission.autonomy_level !== 'A3' || mission.a3_enabled !== true) throw new MailPolicyError('A3_DISABLED')
     if (!mission || !isLiveMailMission(mission, action, (this.options.now ?? (() => new Date()))())) throw new MailPolicyError('MISSION_POLICY_DENIED')
+    if (!(await this.options.repository.deliveryPolicyAllows(action))) throw new MailPolicyError('CATALOG_POLICY_DENIED')
     const grant = await this.options.approvals.authorize(command.approval_token, action)
     const actionHash = hashAction(action)
     const claim = await this.options.repository.claimExternalAction({ missionId: action.mission_id, channel: action.channel, idempotencyKey: action.idempotency_key, actionHash })

@@ -22,14 +22,30 @@ export function createRuntimePersistence(
 ): RuntimePersistence {
   const databaseUrl = environment.DATABASE_URL?.trim()
   if (databaseUrl) {
+    const approverUrl = environment.APPROVER_DATABASE_URL?.trim()
+    const safetyUrl = environment.SAFETY_DATABASE_URL?.trim()
+    if (environment.NODE_ENV === 'production' && !approverUrl) {
+      throw new Error('APPROVER_DATABASE_URL is required in production')
+    }
+    if (environment.NODE_ENV === 'production' && !safetyUrl) {
+      throw new Error('SAFETY_DATABASE_URL is required in production')
+    }
     const pool = new Pool({
       connectionString: databaseUrl,
       application_name: 'proptimiza-commercial-runtime',
     })
+    const approverPool = new Pool({
+      connectionString: approverUrl ?? databaseUrl,
+      application_name: 'proptimiza-commercial-approver',
+    })
+    const safetyPool = new Pool({
+      connectionString: safetyUrl ?? databaseUrl,
+      application_name: 'proptimiza-commercial-safety',
+    })
     return {
-      repository: new PostgresRuntimeRepository(pool),
+      repository: new PostgresRuntimeRepository(pool, { approverPool, safetyPool }),
       audit: new PostgresAuditSink(pool),
-      close: () => pool.end(),
+      close: async () => { await Promise.all([pool.end(), approverPool.end(), safetyPool.end()]) },
     }
   }
   if (environment.NODE_ENV === 'test' || environment.NODE_ENV === 'development') {

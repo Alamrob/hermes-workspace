@@ -1,229 +1,72 @@
 BEGIN;
-
 CREATE SCHEMA IF NOT EXISTS catalog;
 REVOKE ALL ON SCHEMA catalog FROM PUBLIC;
 
-CREATE TABLE IF NOT EXISTS catalog.projects (
-  project_id text PRIMARY KEY CHECK (project_id ~ '^[a-z][a-z0-9-]{1,63}$'),
-  display_name text NOT NULL CHECK (btrim(display_name) <> ''),
-  created_at timestamptz NOT NULL DEFAULT clock_timestamp()
-);
+CREATE TABLE IF NOT EXISTS catalog.projects (project_id text PRIMARY KEY CHECK (project_id ~ '^[a-z][a-z0-9-]{1,63}$'),display_name text NOT NULL CHECK (btrim(display_name)<>''),created_at timestamptz NOT NULL DEFAULT clock_timestamp());
+CREATE TABLE IF NOT EXISTS catalog.project_versions (project_id text NOT NULL REFERENCES catalog.projects(project_id) ON DELETE RESTRICT,version text NOT NULL CHECK(version~'^v[0-9]+$'),display_name text NOT NULL CHECK(btrim(display_name)<>''),status text NOT NULL CHECK(status IN('active','retired')),created_at timestamptz NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(project_id,version));
+CREATE UNIQUE INDEX IF NOT EXISTS project_versions_one_active_uq ON catalog.project_versions(project_id) WHERE status='active';
+CREATE TABLE IF NOT EXISTS catalog.offer_versions (project_id text NOT NULL,offer_id text NOT NULL CHECK(offer_id~'^[a-z][a-z0-9-]{1,127}$'),version text NOT NULL CHECK(version~'^offer-v[0-9]+$'),project_version text NOT NULL,name text NOT NULL CHECK(btrim(name)<>''),currency text NOT NULL CHECK(currency~'^[A-Z]{3}$'),starting_price numeric(14,2) NOT NULL CHECK(starting_price>=0),description text NOT NULL CHECK(btrim(description)<>''),created_at timestamptz NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(project_id,offer_id,version),CONSTRAINT offer_versions_project_version_fkey FOREIGN KEY(project_id,project_version) REFERENCES catalog.project_versions(project_id,version) ON DELETE RESTRICT);
+CREATE INDEX IF NOT EXISTS offer_versions_project_version_idx ON catalog.offer_versions(project_id,project_version);
+CREATE TABLE IF NOT EXISTS catalog.icp_versions (project_id text NOT NULL,version text NOT NULL CHECK(version~'^icp-v[0-9]+$'),project_version text NOT NULL,country_code text NOT NULL CHECK(country_code~'^[A-Z]{2}$'),business_model text NOT NULL CHECK(business_model IN('B2B','B2C','B2G')),sector text NOT NULL CHECK(btrim(sector)<>''),employee_min integer NOT NULL CHECK(employee_min>0),employee_max integer NOT NULL CHECK(employee_max>=employee_min),operational_signals text[] NOT NULL CHECK(cardinality(operational_signals)>0),description text NOT NULL CHECK(btrim(description)<>''),created_at timestamptz NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(project_id,version),CONSTRAINT icp_versions_project_version_fkey FOREIGN KEY(project_id,project_version) REFERENCES catalog.project_versions(project_id,version) ON DELETE RESTRICT);
+CREATE INDEX IF NOT EXISTS icp_versions_project_version_idx ON catalog.icp_versions(project_id,project_version);
+CREATE TABLE IF NOT EXISTS catalog.policy_versions (project_id text NOT NULL,version text NOT NULL CHECK(version~'^policy-v[0-9]+$'),project_version text NOT NULL,policy jsonb NOT NULL CHECK(jsonb_typeof(policy)='object'),created_at timestamptz NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(project_id,version),CONSTRAINT policy_versions_project_version_fkey FOREIGN KEY(project_id,project_version) REFERENCES catalog.project_versions(project_id,version) ON DELETE RESTRICT);
+CREATE INDEX IF NOT EXISTS policy_versions_project_version_idx ON catalog.policy_versions(project_id,project_version);
+CREATE TABLE IF NOT EXISTS control.deployed_versions (deployed_version text PRIMARY KEY CHECK(btrim(deployed_version)<>''),artifact_sha256 text NOT NULL CHECK(artifact_sha256~'^[0-9a-f]{64}$'),deployed_at timestamptz NOT NULL DEFAULT clock_timestamp());
+CREATE TABLE IF NOT EXISTS mail.delivery_policies (project_id text NOT NULL,policy_version text NOT NULL,sender text NOT NULL CHECK(sender=lower(sender) AND sender LIKE '%@%'),recipient text NOT NULL CHECK(recipient=lower(recipient) AND recipient LIKE '%@%'),maximum_volume integer NOT NULL CHECK(maximum_volume=1),active boolean NOT NULL CHECK(active=true),valid_from timestamptz NOT NULL DEFAULT clock_timestamp(),valid_until timestamptz CHECK(valid_until IS NULL OR valid_until>valid_from),created_at timestamptz NOT NULL DEFAULT clock_timestamp(),PRIMARY KEY(project_id,policy_version),CONSTRAINT delivery_policies_policy_version_fkey FOREIGN KEY(project_id,policy_version) REFERENCES catalog.policy_versions(project_id,version) ON DELETE RESTRICT);
+CREATE INDEX IF NOT EXISTS external_actions_approval_id_idx ON mail.external_actions(approval_id);
 
-CREATE TABLE IF NOT EXISTS catalog.project_versions (
-  project_id text NOT NULL REFERENCES catalog.projects (project_id) ON DELETE RESTRICT,
-  version text NOT NULL CHECK (version ~ '^v[0-9]+$'),
-  display_name text NOT NULL CHECK (btrim(display_name) <> ''),
-  status text NOT NULL CHECK (status IN ('active', 'retired')),
-  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (project_id, version)
-);
+CREATE OR REPLACE FUNCTION catalog.reject_versioned_catalog_mutation() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ BEGIN RAISE EXCEPTION 'VERSIONED_CATALOG_IMMUTABLE'; END $$;
+CREATE OR REPLACE FUNCTION control.reject_deployed_version_mutation() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ BEGIN RAISE EXCEPTION 'DEPLOYED_VERSION_IMMUTABLE'; END $$;
+CREATE OR REPLACE FUNCTION mail.reject_delivery_policy_mutation() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ BEGIN RAISE EXCEPTION 'DELIVERY_POLICY_IMMUTABLE'; END $$;
+REVOKE ALL ON FUNCTION catalog.reject_versioned_catalog_mutation(),control.reject_deployed_version_mutation(),mail.reject_delivery_policy_mutation() FROM PUBLIC;
+DO $$ DECLARE r text;t text;BEGIN FOREACH r IN ARRAY ARRAY['project_versions','offer_versions','icp_versions','policy_versions'] LOOP t:=r||'_immutable';IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname=t AND tgrelid=format('catalog.%I',r)::regclass) THEN EXECUTE format('CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON catalog.%I FOR EACH ROW EXECUTE FUNCTION catalog.reject_versioned_catalog_mutation()',t,r);END IF;END LOOP;IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='deployed_versions_immutable' AND tgrelid='control.deployed_versions'::regclass)THEN CREATE TRIGGER deployed_versions_immutable BEFORE UPDATE OR DELETE ON control.deployed_versions FOR EACH ROW EXECUTE FUNCTION control.reject_deployed_version_mutation();END IF;IF NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='delivery_policies_immutable' AND tgrelid='mail.delivery_policies'::regclass)THEN CREATE TRIGGER delivery_policies_immutable BEFORE UPDATE OR DELETE ON mail.delivery_policies FOR EACH ROW EXECUTE FUNCTION mail.reject_delivery_policy_mutation();END IF;END $$;
 
-CREATE TABLE IF NOT EXISTS catalog.offer_versions (
-  project_id text NOT NULL,
-  offer_id text NOT NULL CHECK (offer_id ~ '^[a-z][a-z0-9-]{1,127}$'),
-  version text NOT NULL CHECK (version ~ '^v[0-9]+$'),
-  project_version text NOT NULL,
-  name text NOT NULL CHECK (btrim(name) <> ''),
-  currency text NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
-  starting_price numeric(14,2) NOT NULL CHECK (starting_price >= 0),
-  description text NOT NULL CHECK (btrim(description) <> ''),
-  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (project_id, offer_id, version),
-  CONSTRAINT offer_versions_project_version_fkey
-    FOREIGN KEY (project_id, project_version)
-    REFERENCES catalog.project_versions (project_id, version) ON DELETE RESTRICT
-);
+INSERT INTO catalog.projects VALUES('proptimiza','Proptimiza',clock_timestamp()) ON CONFLICT DO NOTHING;
+INSERT INTO catalog.project_versions(project_id,version,display_name,status) VALUES('proptimiza','v1','Proptimiza Commercial Control Plane','active') ON CONFLICT DO NOTHING;
+INSERT INTO catalog.offer_versions(project_id,offer_id,version,project_version,name,currency,starting_price,description) VALUES('proptimiza','operacion-sin-planillas','offer-v1','v1','Operación Sin Planillas','CLP',1800000.00,'Automatización operacional controlada para empresas chilenas de servicios.') ON CONFLICT DO NOTHING;
+INSERT INTO catalog.icp_versions(project_id,version,project_version,country_code,business_model,sector,employee_min,employee_max,operational_signals,description) VALUES('proptimiza','icp-v1','v1','CL','B2B','services',10,100,ARRAY['Excel','WhatsApp','correo'],'Empresas chilenas B2B de servicios con 10 a 100 empleados y operaciones manuales en Excel, WhatsApp y correo.') ON CONFLICT DO NOTHING;
+INSERT INTO catalog.policy_versions(project_id,version,project_version,policy) VALUES('proptimiza','policy-v1','v1','{"external_contact":false,"mail_sender":"ventas@proptimiza.com","mail_recipient":"contacto@proptimiza.com","maximum_volume":1}'::jsonb) ON CONFLICT DO NOTHING;
+INSERT INTO mail.delivery_policies(project_id,policy_version,sender,recipient,maximum_volume,active) VALUES('proptimiza','policy-v1','ventas@proptimiza.com','contacto@proptimiza.com',1,true) ON CONFLICT DO NOTHING;
+DO $$ DECLARE p jsonb:='{"external_contact":false,"mail_sender":"ventas@proptimiza.com","mail_recipient":"contacto@proptimiza.com","maximum_volume":1}'::jsonb;BEGIN IF NOT EXISTS(SELECT 1 FROM catalog.projects WHERE project_id='proptimiza' AND display_name='Proptimiza')THEN RAISE EXCEPTION 'PROPTIMIZA_PROJECT_SEED_CONFLICT';END IF;IF NOT EXISTS(SELECT 1 FROM catalog.project_versions WHERE project_id='proptimiza' AND version='v1' AND display_name='Proptimiza Commercial Control Plane' AND status='active')THEN RAISE EXCEPTION 'PROPTIMIZA_PROJECT_VERSION_SEED_CONFLICT';END IF;IF NOT EXISTS(SELECT 1 FROM catalog.offer_versions WHERE project_id='proptimiza' AND offer_id='operacion-sin-planillas' AND version='offer-v1' AND project_version='v1' AND name='Operación Sin Planillas' AND currency='CLP' AND starting_price=1800000 AND description='Automatización operacional controlada para empresas chilenas de servicios.')THEN RAISE EXCEPTION 'PROPTIMIZA_OFFER_SEED_CONFLICT';END IF;IF NOT EXISTS(SELECT 1 FROM catalog.icp_versions WHERE project_id='proptimiza' AND version='icp-v1' AND project_version='v1' AND country_code='CL' AND business_model='B2B' AND sector='services' AND employee_min=10 AND employee_max=100 AND operational_signals=ARRAY['Excel','WhatsApp','correo'] AND description='Empresas chilenas B2B de servicios con 10 a 100 empleados y operaciones manuales en Excel, WhatsApp y correo.')THEN RAISE EXCEPTION 'PROPTIMIZA_ICP_SEED_CONFLICT';END IF;IF NOT EXISTS(SELECT 1 FROM catalog.policy_versions WHERE project_id='proptimiza' AND version='policy-v1' AND project_version='v1' AND policy=p)THEN RAISE EXCEPTION 'PROPTIMIZA_POLICY_SEED_CONFLICT';END IF;IF NOT EXISTS(SELECT 1 FROM mail.delivery_policies WHERE project_id='proptimiza' AND policy_version='policy-v1' AND sender='ventas@proptimiza.com' AND recipient='contacto@proptimiza.com' AND maximum_volume=1 AND active AND valid_until IS NULL)THEN RAISE EXCEPTION 'PROPTIMIZA_DELIVERY_SEED_CONFLICT';END IF;END $$;
 
-CREATE INDEX IF NOT EXISTS offer_versions_project_version_idx
-  ON catalog.offer_versions (project_id, project_version);
+CREATE OR REPLACE FUNCTION catalog.mission_versions_exist(text,text,text,text,text,text) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$ SELECT EXISTS(SELECT 1 FROM catalog.project_versions WHERE project_id=$1 AND version=$2 AND status='active')AND EXISTS(SELECT 1 FROM catalog.offer_versions WHERE project_id=$1 AND offer_id=$3 AND version=$4 AND project_version=$2)AND EXISTS(SELECT 1 FROM catalog.icp_versions WHERE project_id=$1 AND version=$5 AND project_version=$2)AND EXISTS(SELECT 1 FROM catalog.policy_versions WHERE project_id=$1 AND version=$6 AND project_version=$2) $$;
+CREATE OR REPLACE FUNCTION mail.delivery_policy_allows(text,text,text,text,integer) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$ SELECT EXISTS(SELECT 1 FROM mail.delivery_policies WHERE project_id=$1 AND policy_version=$2 AND sender=$3 AND recipient=$4 AND maximum_volume=$5 AND active AND valid_from<=clock_timestamp() AND(valid_until IS NULL OR valid_until>clock_timestamp())) $$;
+CREATE OR REPLACE FUNCTION control.runtime_ready() RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$SELECT EXISTS(SELECT 1 FROM control.kill_switch_guard WHERE guard_id=1)$$;
+CREATE OR REPLACE FUNCTION control.save_mission(uuid,text,jsonb) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$BEGIN IF NOT catalog.mission_versions_exist($3->>'project_id',$3->>'project_version',$3->>'offer_id',$3->>'offer_version',$3->>'icp_version',$3->>'policy_version')THEN RAISE EXCEPTION 'UNKNOWN_CATALOG_VERSION';END IF;INSERT INTO control.missions(mission_id,idempotency_key,payload)VALUES($1,$2,$3)ON CONFLICT DO NOTHING;IF FOUND THEN RETURN'inserted';END IF;IF EXISTS(SELECT 1 FROM control.missions WHERE(mission_id=$1 OR idempotency_key=$2)AND payload=$3)THEN RETURN'existing';END IF;RAISE EXCEPTION'MISSION_CONFLICT';END$$;
+CREATE OR REPLACE FUNCTION control.get_mission(uuid) RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$SELECT payload FROM control.missions WHERE mission_id=$1$$;
+CREATE OR REPLACE FUNCTION control.is_mission_a3(uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$SELECT EXISTS(SELECT 1 FROM control.missions WHERE mission_id=$1 AND payload@>'{"autonomy_level":"A3","a3_enabled":true}'::jsonb)$$;
+CREATE OR REPLACE FUNCTION mail.store_webhook_event(text,text,timestamptz,text,boolean,jsonb) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$BEGIN INSERT INTO mail.webhook_events VALUES($1,$2,$3,$4,$5,$6)ON CONFLICT DO NOTHING;RETURN FOUND;END$$;
+CREATE OR REPLACE FUNCTION control.request_approval(uuid,jsonb,text,timestamptz) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$INSERT INTO control.approvals(approval_id,action,action_hash,requested_at,status)VALUES($1,$2,$3,$4,'pending')$$;
+CREATE OR REPLACE FUNCTION control.get_pending_approval(uuid) RETURNS SETOF control.approvals LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$SELECT*FROM control.approvals WHERE approval_id=$1 AND status='pending'$$;
+CREATE OR REPLACE FUNCTION control.decide_approval(uuid,text,text,timestamptz,text,text,timestamptz,jsonb,text,timestamptz) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$BEGIN IF $2 NOT IN('approved','denied')THEN RAISE EXCEPTION'INVALID_APPROVAL_STATUS';END IF;UPDATE control.approvals SET status=$2,approved_by=$3,expires_at=$4,nonce=$5,token=$6,consumed_at=$7 WHERE approval_id=$1 AND status='pending' AND action=$8 AND action_hash=$9 AND requested_at=$10;RETURN FOUND;END$$;
+CREATE OR REPLACE FUNCTION control.consume_approval(text,text,text,timestamptz) RETURNS SETOF control.approvals LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$UPDATE control.approvals SET consumed_at=$4 WHERE status='approved'AND action->>'mission_id'=$1 AND action_hash=$2 AND nonce=$3 AND consumed_at IS NULL AND expires_at>$4 RETURNING*$$;
+CREATE OR REPLACE FUNCTION control.is_kill_switch_active(text,text) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$SELECT EXISTS(SELECT 1 FROM control.kill_switches WHERE active AND((scope='global'AND scope_id='*')OR(scope='mission'AND scope_id=$1)OR(scope='channel'AND scope_id=$2)))$$;
+CREATE OR REPLACE FUNCTION control.set_kill_switch(text,text,boolean) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$BEGIN IF $1 NOT IN('global','mission','channel')THEN RAISE EXCEPTION'INVALID_KILL_SWITCH_SCOPE';END IF;PERFORM guard_id FROM control.kill_switch_guard WHERE guard_id=1 FOR UPDATE;INSERT INTO control.kill_switches(scope,scope_id,active,activated_at)VALUES($1,$2,$3,clock_timestamp())ON CONFLICT(scope,scope_id)DO UPDATE SET active=EXCLUDED.active,activated_at=EXCLUDED.activated_at;RETURN true;END$$;
+CREATE OR REPLACE FUNCTION mail.claim_external_action(uuid,text,text,text) RETURNS TABLE(status text,receipt_id text,approval_id uuid) LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$DECLARE e mail.external_actions%ROWTYPE;BEGIN PERFORM guard_id FROM control.kill_switch_guard WHERE guard_id=1 FOR UPDATE;IF control.is_kill_switch_active($1::text,$2)THEN RAISE EXCEPTION'KILL_SWITCH_ACTIVE';END IF;INSERT INTO mail.external_actions(mission_id,idempotency_key,action_hash,channel)VALUES($1,$3,$4,$2)ON CONFLICT DO NOTHING;IF FOUND THEN RETURN QUERY SELECT'acquired'::text,NULL::text,NULL::uuid;RETURN;END IF;SELECT*INTO e FROM mail.external_actions WHERE mission_id=$1 AND idempotency_key=$3;IF e.channel<>$2 OR e.action_hash<>$4 THEN RAISE EXCEPTION'IDEMPOTENCY_CONFLICT';END IF;IF e.receipt_id IS NOT NULL AND e.approval_id IS NOT NULL THEN RETURN QUERY SELECT'completed'::text,e.receipt_id,e.approval_id;RETURN;END IF;RAISE EXCEPTION'EXECUTION_IN_PROGRESS';END$$;
+CREATE OR REPLACE FUNCTION mail.complete_external_action(uuid,text,text,text,uuid) RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$BEGIN IF NOT EXISTS(SELECT 1 FROM control.approvals WHERE approval_id=$5 AND status='approved' AND consumed_at IS NOT NULL AND action_hash=$3 AND action->>'mission_id'=$1::text)THEN RAISE EXCEPTION'INVALID_COMPLETION_APPROVAL';END IF;UPDATE mail.external_actions SET receipt_id=$4,approval_id=$5,completed_at=clock_timestamp()WHERE mission_id=$1 AND idempotency_key=$2 AND action_hash=$3 AND receipt_id IS NULL AND approval_id IS NULL;IF FOUND THEN RETURN true;END IF;RETURN EXISTS(SELECT 1 FROM mail.external_actions WHERE mission_id=$1 AND idempotency_key=$2 AND action_hash=$3 AND receipt_id=$4 AND approval_id=$5);END$$;
+CREATE OR REPLACE FUNCTION control.record_audit_event(jsonb) RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path=pg_catalog AS $$INSERT INTO control.audit_events(event)VALUES($1)$$;
 
-CREATE TABLE IF NOT EXISTS catalog.icp_versions (
-  project_id text NOT NULL,
-  version text NOT NULL CHECK (version ~ '^v[0-9]+$'),
-  project_version text NOT NULL,
-  country_code text NOT NULL CHECK (country_code ~ '^[A-Z]{2}$'),
-  business_model text NOT NULL CHECK (business_model IN ('B2B', 'B2C', 'B2G')),
-  sector text NOT NULL CHECK (btrim(sector) <> ''),
-  employee_min integer NOT NULL CHECK (employee_min > 0),
-  employee_max integer NOT NULL CHECK (employee_max >= employee_min),
-  description text NOT NULL CHECK (btrim(description) <> ''),
-  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (project_id, version),
-  CONSTRAINT icp_versions_project_version_fkey
-    FOREIGN KEY (project_id, project_version)
-    REFERENCES catalog.project_versions (project_id, version) ON DELETE RESTRICT
-);
+CREATE OR REPLACE VIEW catalog.offer_catalog WITH(security_barrier=true)AS SELECT project_id,offer_id,version,project_version,name,currency,starting_price,description FROM catalog.offer_versions;
+CREATE OR REPLACE VIEW catalog.icp_catalog WITH(security_barrier=true)AS SELECT project_id,version,project_version,country_code,business_model,sector,employee_min,employee_max,operational_signals,description FROM catalog.icp_versions;
+CREATE OR REPLACE VIEW control.mission_summaries WITH(security_barrier=true)AS SELECT mission_id,idempotency_key,created_at FROM control.missions;
+CREATE OR REPLACE VIEW control.approval_summaries WITH(security_barrier=true)AS SELECT approval_id,action_hash,requested_at,status,expires_at,consumed_at FROM control.approvals;
+CREATE OR REPLACE VIEW mail.webhook_event_summaries WITH(security_barrier=true)AS SELECT mailbox_key,provider_event_id,received_at,trust_classification,instruction_eligible FROM mail.webhook_events;
+CREATE OR REPLACE VIEW mail.external_action_summaries WITH(security_barrier=true)AS SELECT mission_id,idempotency_key,action_hash,channel,claimed_at,completed_at FROM mail.external_actions;
 
-CREATE INDEX IF NOT EXISTS icp_versions_project_version_idx
-  ON catalog.icp_versions (project_id, project_version);
-
-CREATE TABLE IF NOT EXISTS catalog.policy_versions (
-  project_id text NOT NULL,
-  version text NOT NULL CHECK (version ~ '^v[0-9]+$'),
-  project_version text NOT NULL,
-  policy jsonb NOT NULL CHECK (jsonb_typeof(policy) = 'object'),
-  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (project_id, version),
-  CONSTRAINT policy_versions_project_version_fkey
-    FOREIGN KEY (project_id, project_version)
-    REFERENCES catalog.project_versions (project_id, version) ON DELETE RESTRICT
-);
-
-CREATE INDEX IF NOT EXISTS policy_versions_project_version_idx
-  ON catalog.policy_versions (project_id, project_version);
-
-CREATE TABLE IF NOT EXISTS control.deployed_versions (
-  deployed_version text PRIMARY KEY CHECK (btrim(deployed_version) <> ''),
-  artifact_sha256 text NOT NULL CHECK (artifact_sha256 ~ '^[0-9a-f]{64}$'),
-  deployed_at timestamptz NOT NULL DEFAULT clock_timestamp()
-);
-
-CREATE TABLE IF NOT EXISTS mail.delivery_policies (
-  project_id text NOT NULL,
-  policy_version text NOT NULL,
-  sender text NOT NULL CHECK (sender = lower(sender) AND sender LIKE '%@%'),
-  recipient text NOT NULL CHECK (recipient = lower(recipient) AND recipient LIKE '%@%'),
-  maximum_volume integer NOT NULL CHECK (maximum_volume = 1),
-  active boolean NOT NULL DEFAULT true,
-  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-  PRIMARY KEY (project_id, policy_version, sender, recipient),
-  CONSTRAINT delivery_policies_policy_version_fkey
-    FOREIGN KEY (project_id, policy_version)
-    REFERENCES catalog.policy_versions (project_id, version) ON DELETE RESTRICT
-);
-
-CREATE INDEX IF NOT EXISTS external_actions_approval_id_idx
-  ON mail.external_actions (approval_id);
-
-CREATE OR REPLACE FUNCTION catalog.reject_versioned_catalog_mutation()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  RAISE EXCEPTION 'VERSIONED_CATALOG_IMMUTABLE';
-END;
-$$;
-
-DO $$
-DECLARE
-  relation_name text;
-  trigger_name text;
-BEGIN
-  FOREACH relation_name IN ARRAY ARRAY['project_versions', 'offer_versions', 'icp_versions', 'policy_versions']
-  LOOP
-    trigger_name := relation_name || '_immutable';
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_trigger
-      WHERE tgname = trigger_name
-        AND tgrelid = format('catalog.%I', relation_name)::regclass
-    ) THEN
-      EXECUTE format(
-        'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON catalog.%I FOR EACH ROW EXECUTE FUNCTION catalog.reject_versioned_catalog_mutation()',
-        trigger_name,
-        relation_name
-      );
-    END IF;
-  END LOOP;
-END;
-$$;
-
-INSERT INTO catalog.projects (project_id, display_name)
-VALUES ('proptimiza', 'Proptimiza')
-ON CONFLICT (project_id) DO NOTHING;
-
-INSERT INTO catalog.project_versions (project_id, version, display_name, status)
-VALUES ('proptimiza', 'v1', 'Proptimiza Commercial Control Plane', 'active')
-ON CONFLICT (project_id, version) DO NOTHING;
-
-INSERT INTO catalog.offer_versions (
-  project_id, offer_id, version, project_version, name, currency, starting_price, description
-)
-VALUES (
-  'proptimiza', 'operacion-sin-planillas', 'v1', 'v1', 'Operación Sin Planillas', 'CLP',
-  1800000.00, 'Automatización operacional controlada para empresas chilenas de servicios.'
-)
-ON CONFLICT (project_id, offer_id, version) DO NOTHING;
-
-INSERT INTO catalog.icp_versions (
-  project_id, version, project_version, country_code, business_model, sector,
-  employee_min, employee_max, description
-)
-VALUES (
-  'proptimiza', 'v1', 'v1', 'CL', 'B2B', 'services', 10, 100,
-  'Empresas chilenas B2B de servicios con 10 a 100 empleados y operaciones manuales.'
-)
-ON CONFLICT (project_id, version) DO NOTHING;
-
-INSERT INTO catalog.policy_versions (project_id, version, project_version, policy)
-VALUES (
-  'proptimiza', 'v1', 'v1',
-  '{"external_contact":false,"mail_sender":"ventas@proptimiza.com","mail_recipient":"contacto@proptimiza.com","maximum_volume":1}'::jsonb
-)
-ON CONFLICT (project_id, version) DO NOTHING;
-
-INSERT INTO mail.delivery_policies (
-  project_id, policy_version, sender, recipient, maximum_volume, active
-)
-VALUES (
-  'proptimiza', 'v1', 'ventas@proptimiza.com', 'contacto@proptimiza.com', 1, true
-)
-ON CONFLICT (project_id, policy_version, sender, recipient) DO NOTHING;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM catalog.offer_versions
-    WHERE project_id = 'proptimiza'
-      AND offer_id = 'operacion-sin-planillas'
-      AND version = 'v1'
-      AND name = 'Operación Sin Planillas'
-      AND currency = 'CLP'
-      AND starting_price = 1800000.00
-  ) THEN
-    RAISE EXCEPTION 'PROPTIMIZA_OFFER_V1_SEED_CONFLICT';
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM catalog.icp_versions
-    WHERE project_id = 'proptimiza'
-      AND version = 'v1'
-      AND country_code = 'CL'
-      AND business_model = 'B2B'
-      AND sector = 'services'
-      AND employee_min = 10
-      AND employee_max = 100
-  ) THEN
-    RAISE EXCEPTION 'PROPTIMIZA_ICP_V1_SEED_CONFLICT';
-  END IF;
-END;
-$$;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commercial_runtime') THEN
-    CREATE ROLE commercial_runtime NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commercial_observer') THEN
-    CREATE ROLE commercial_observer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;
-  END IF;
-END;
-$$;
-
-GRANT USAGE ON SCHEMA catalog, control, mail TO commercial_runtime;
-GRANT SELECT ON ALL TABLES IN SCHEMA catalog TO commercial_runtime;
-GRANT SELECT, INSERT, UPDATE ON control.missions, control.approvals, control.kill_switches TO commercial_runtime;
-GRANT SELECT, INSERT ON control.audit_events TO commercial_runtime;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA control TO commercial_runtime;
-GRANT SELECT, INSERT ON mail.webhook_events TO commercial_runtime;
-GRANT SELECT, INSERT, UPDATE ON mail.external_actions TO commercial_runtime;
-GRANT SELECT ON mail.delivery_policies TO commercial_runtime;
-
-GRANT USAGE ON SCHEMA catalog, control, mail TO commercial_observer;
-GRANT SELECT ON ALL TABLES IN SCHEMA catalog, control, mail TO commercial_observer;
-
+DO $$DECLARE n text;u boolean;BEGIN PERFORM pg_advisory_xact_lock(hashtext('proptimiza-commercial-capability-roles'));FOREACH n IN ARRAY ARRAY['commercial_runtime','commercial_approver','commercial_safety_operator','commercial_observer']LOOP SELECT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls INTO u FROM pg_roles WHERE rolname=n;IF NOT FOUND THEN EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS',n);ELSIF u THEN RAISE EXCEPTION'UNSAFE_PREEXISTING_ROLE: %',n;END IF;END LOOP;END$$;
+REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_approver,commercial_safety_operator,commercial_observer;
+REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_approver,commercial_safety_operator,commercial_observer;
+ALTER DEFAULT PRIVILEGES IN SCHEMA catalog REVOKE ALL ON TABLES FROM commercial_runtime,commercial_approver,commercial_safety_operator,commercial_observer;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog,control,mail FROM PUBLIC,commercial_runtime,commercial_approver,commercial_safety_operator,commercial_observer;
+GRANT USAGE ON SCHEMA catalog,control,mail TO commercial_runtime;
+GRANT EXECUTE ON FUNCTION catalog.mission_versions_exist(text,text,text,text,text,text),mail.delivery_policy_allows(text,text,text,text,integer),control.runtime_ready(),control.save_mission(uuid,text,jsonb),control.get_mission(uuid),control.is_mission_a3(uuid),mail.store_webhook_event(text,text,timestamptz,text,boolean,jsonb),control.request_approval(uuid,jsonb,text,timestamptz),control.consume_approval(text,text,text,timestamptz),control.is_kill_switch_active(text,text),mail.claim_external_action(uuid,text,text,text),mail.complete_external_action(uuid,text,text,text,uuid),control.record_audit_event(jsonb) TO commercial_runtime;
+GRANT USAGE ON SCHEMA control TO commercial_approver;
+GRANT EXECUTE ON FUNCTION control.get_pending_approval(uuid),control.decide_approval(uuid,text,text,timestamptz,text,text,timestamptz,jsonb,text,timestamptz) TO commercial_approver;
+GRANT USAGE ON SCHEMA control TO commercial_safety_operator;
+GRANT EXECUTE ON FUNCTION control.set_kill_switch(text,text,boolean) TO commercial_safety_operator;
+GRANT USAGE ON SCHEMA catalog,control,mail TO commercial_observer;
+GRANT SELECT ON catalog.offer_catalog,catalog.icp_catalog,control.mission_summaries,control.approval_summaries,mail.webhook_event_summaries,mail.external_action_summaries TO commercial_observer;
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog FROM PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA catalog FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA catalog REVOKE ALL ON TABLES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES IN SCHEMA catalog GRANT SELECT ON TABLES TO commercial_observer;
-ALTER DEFAULT PRIVILEGES IN SCHEMA catalog GRANT SELECT ON TABLES TO commercial_runtime;
-
 COMMIT;

@@ -1,4 +1,4 @@
-import type { Pool, PoolClient } from 'pg'
+import type { Pool } from 'pg'
 import type { ApprovalAction } from './approvals.js'
 import { sanitizeAuditEvent, type AuditSink, type StructuredAuditEvent } from './observability.js'
 import type {
@@ -23,12 +23,18 @@ type ApprovalRow = {
 }
 
 export class PostgresRuntimeRepository implements RuntimeRepository {
-  constructor(private readonly pool: Pool) {}
+  private readonly approverPool: Pool
+  private readonly safetyPool: Pool
+
+  constructor(private readonly pool: Pool, capabilities: { approverPool?: Pool; safetyPool?: Pool } = {}) {
+    this.approverPool = capabilities.approverPool ?? pool
+    this.safetyPool = capabilities.safetyPool ?? pool
+  }
 
   async ready(): Promise<boolean> {
     try {
-      await this.pool.query('SELECT 1 FROM control.kill_switch_guard WHERE guard_id = $1', [1])
-      return true
+      const result = await this.pool.query<{ ready: boolean }>('SELECT control.runtime_ready() AS ready')
+      return result.rows[0]?.ready === true
     } catch {
       return false
     }
@@ -40,51 +46,36 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       throw new Error('MISSION_IDEMPOTENCY_KEY_REQUIRED')
     }
     const payload = JSON.stringify(record)
-    const inserted = await this.pool.query(
-      `INSERT INTO control.missions (mission_id, idempotency_key, payload)
-       VALUES ($1, $2, $3::jsonb)
-       ON CONFLICT DO NOTHING
-       RETURNING mission_id`,
+    await this.pool.query(
+      'SELECT control.save_mission($1::uuid,$2,$3::jsonb)',
       [record.mission_id, idempotencyKey, payload],
     )
-    if (inserted.rowCount === 1) return
-    const same = await this.pool.query(
-      `SELECT 1
-       FROM control.missions
-       WHERE (mission_id = $1 OR idempotency_key = $2)
-         AND payload = $3::jsonb`,
-      [record.mission_id, idempotencyKey, payload],
-    )
-    if (same.rowCount !== 1) throw new Error('MISSION_CONFLICT')
   }
 
   async getMission(id: string): Promise<MissionRecord | null> {
     const result = await this.pool.query<{ payload: MissionRecord }>(
-      'SELECT payload FROM control.missions WHERE mission_id = $1',
+      'SELECT control.get_mission($1::uuid) AS payload',
       [id],
     )
     return result.rows[0]?.payload ?? null
   }
 
   async isMissionA3Enabled(id: string): Promise<boolean> {
-    const result = await this.pool.query(
-      `SELECT 1
-       FROM control.missions
-       WHERE mission_id = $1
-         AND payload @> $2::jsonb`,
-      [id, JSON.stringify({ autonomy_level: 'A3', a3_enabled: true })],
+    const result = await this.pool.query<{ enabled: boolean }>('SELECT control.is_mission_a3($1::uuid) AS enabled',[id])
+    return result.rows[0]?.enabled === true
+  }
+
+  async deliveryPolicyAllows(action: ApprovalAction): Promise<boolean> {
+    const result = await this.pool.query<{ allowed: boolean }>(
+      'SELECT mail.delivery_policy_allows($1,$2,$3,$4,$5) AS allowed',
+      [action.project_id,action.policy_version,action.sender,action.recipients[0] ?? '',action.volume],
     )
-    return result.rowCount === 1
+    return result.rows[0]?.allowed === true
   }
 
   async storeWebhookEvent(record: WebhookEventRecord): Promise<boolean> {
     const result = await this.pool.query(
-      `INSERT INTO mail.webhook_events (
-         mailbox_key, provider_event_id, received_at, trust_classification,
-         instruction_eligible, untrusted_payload
-       ) VALUES ($1, $2, $3::timestamptz, $4, $5, $6::jsonb)
-       ON CONFLICT (mailbox_key, provider_event_id) DO NOTHING
-       RETURNING provider_event_id`,
+      'SELECT mail.store_webhook_event($1,$2,$3::timestamptz,$4,$5,$6::jsonb) AS inserted',
       [
         record.mailbox_key,
         record.provider_event_id,
@@ -94,20 +85,17 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
         JSON.stringify(record.untrusted_payload),
       ],
     )
-    return result.rowCount === 1
+    return result.rows[0]?.inserted === true
   }
 
   async createApprovalRequest(record: ApprovalRequestRecord): Promise<void> {
     await this.pool.query(
-      `INSERT INTO control.approvals (
-         approval_id, action, action_hash, requested_at, status
-       ) VALUES ($1, $2::jsonb, $3, $4::timestamptz, $5)`,
+      'SELECT control.request_approval($1::uuid,$2::jsonb,$3,$4::timestamptz)',
       [
         record.approval_id,
         JSON.stringify(record.action),
         record.action_hash,
         record.requested_at,
-        record.status,
       ],
     )
   }
@@ -115,8 +103,8 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
   async getApprovalRequest(
     id: string,
   ): Promise<ApprovalRequestRecord | ApprovalGrantRecord | null> {
-    const result = await this.pool.query<ApprovalRow>(
-      'SELECT * FROM control.approvals WHERE approval_id = $1',
+    const result = await this.approverPool.query<ApprovalRow>(
+      'SELECT * FROM control.get_pending_approval($1::uuid)',
       [id],
     )
     return result.rows[0] ? approvalFromRow(result.rows[0]) : null
@@ -126,20 +114,8 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     record: ApprovalGrantRecord | (ApprovalRequestRecord & { status: 'denied' }),
   ): Promise<boolean> {
     const approved = record.status === 'approved' ? record : null
-    const result = await this.pool.query(
-      `UPDATE control.approvals
-       SET status = $2,
-           approved_by = $3,
-           expires_at = $4::timestamptz,
-           nonce = $5,
-           token = $6,
-           consumed_at = $7::timestamptz
-       WHERE approval_id = $1
-         AND status = 'pending'
-         AND action = $8::jsonb
-         AND action_hash = $9
-         AND requested_at = $10::timestamptz
-       RETURNING approval_id`,
+    const result = await this.approverPool.query<{ decided: boolean }>(
+      `SELECT control.decide_approval($1::uuid,$2,$3,$4::timestamptz,$5,$6,$7::timestamptz,$8::jsonb,$9,$10::timestamptz) AS decided`,
       [
         record.approval_id,
         record.status,
@@ -153,7 +129,7 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
         record.requested_at,
       ],
     )
-    return result.rowCount === 1
+    return result.rows[0]?.decided === true
   }
 
   async consumeApproval(input: {
@@ -163,15 +139,7 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     now: string
   }): Promise<ApprovalGrantRecord | null> {
     const result = await this.pool.query<ApprovalRow>(
-      `UPDATE control.approvals
-       SET consumed_at = $4::timestamptz
-       WHERE status = 'approved'
-         AND action ->> 'mission_id' = $1
-         AND action_hash = $2
-         AND nonce = $3
-         AND consumed_at IS NULL
-         AND expires_at > $4::timestamptz
-       RETURNING *`,
+      'SELECT * FROM control.consume_approval($1,$2,$3,$4::timestamptz)',
       [input.missionId, input.actionHash, input.nonce, input.now],
     )
     if (result.rowCount === 0) return null
@@ -182,35 +150,18 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
   }
 
   async isKillSwitchActive(input: { missionId: string; channel: string }): Promise<boolean> {
-    const result = await this.pool.query(
-      `SELECT 1
-       FROM control.kill_switches
-       WHERE active = TRUE
-         AND (
-           (scope = 'global' AND scope_id = '*')
-           OR (scope = 'mission' AND scope_id = $1)
-           OR (scope = 'channel' AND scope_id = $2)
-         )
-       LIMIT 1`,
+    const result = await this.pool.query<{ active: boolean }>(
+      'SELECT control.is_kill_switch_active($1,$2) AS active',
       [input.missionId, input.channel],
     )
-    return result.rowCount === 1
+    return result.rows[0]?.active === true
   }
 
   async activateKillSwitch(scope: string, scopeId: string): Promise<void> {
     if (!['global', 'mission', 'channel'].includes(scope)) {
       throw new Error('INVALID_KILL_SWITCH_SCOPE')
     }
-    await inTransaction(this.pool, async (client) => {
-      await lockKillSwitchGuard(client)
-      await client.query(
-        `INSERT INTO control.kill_switches (scope, scope_id, active, activated_at)
-         VALUES ($1, $2, TRUE, clock_timestamp())
-         ON CONFLICT (scope, scope_id)
-         DO UPDATE SET active = TRUE, activated_at = EXCLUDED.activated_at`,
-        [scope, scopeId],
-      )
-    })
+    await this.safetyPool.query('SELECT control.set_kill_switch($1,$2,TRUE)',[scope,scopeId])
   }
 
   async claimExternalAction(input: {
@@ -222,53 +173,9 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     | { status: 'acquired' }
     | { status: 'completed'; receipt_id: string; approval_id: string }
   > {
-    return inTransaction(this.pool, async (client) => {
-      await lockKillSwitchGuard(client)
-      const killed = await client.query(
-        `SELECT 1
-         FROM control.kill_switches
-         WHERE active = TRUE
-           AND (
-             (scope = 'global' AND scope_id = '*')
-             OR (scope = 'mission' AND scope_id = $1)
-             OR (scope = 'channel' AND scope_id = $2)
-           )
-         LIMIT 1`,
-        [input.missionId, input.channel],
-      )
-      if (killed.rowCount === 1) throw new Error('KILL_SWITCH_ACTIVE')
-
-      const inserted = await client.query(
-        `INSERT INTO mail.external_actions (mission_id, idempotency_key, action_hash, channel)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (mission_id, idempotency_key) DO NOTHING
-         RETURNING mission_id`,
-        [input.missionId, input.idempotencyKey, input.actionHash, input.channel],
-      )
-      if (inserted.rowCount === 1) return { status: 'acquired' as const }
-
-      const existing = await client.query<{
-        channel: string
-        action_hash: string
-        receipt_id: string | null
-        approval_id: string | null
-      }>(
-        `SELECT channel, action_hash, receipt_id, approval_id
-         FROM mail.external_actions
-         WHERE mission_id = $1 AND idempotency_key = $2`,
-        [input.missionId, input.idempotencyKey],
-      )
-      const action = existing.rows[0]
-      if (!action || action.channel !== input.channel || action.action_hash !== input.actionHash) throw new Error('IDEMPOTENCY_CONFLICT')
-      if (action.receipt_id && action.approval_id) {
-        return {
-          status: 'completed' as const,
-          receipt_id: action.receipt_id,
-          approval_id: action.approval_id,
-        }
-      }
-      throw new Error('EXECUTION_IN_PROGRESS')
-    })
+    const result = await this.pool.query<{status:'acquired'|'completed';receipt_id:string|null;approval_id:string|null}>('SELECT * FROM mail.claim_external_action($1::uuid,$2,$3,$4)',[input.missionId,input.channel,input.idempotencyKey,input.actionHash])
+    const row=result.rows[0]!
+    return row.status==='completed'?{status:'completed',receipt_id:row.receipt_id!,approval_id:row.approval_id!}:{status:'acquired'}
   }
 
   async completeExternalAction(input: {
@@ -278,31 +185,11 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     receipt_id: string
     approval_id: string
   }): Promise<void> {
-    const completed = await this.pool.query(
-      `UPDATE mail.external_actions
-       SET receipt_id = $4,
-           approval_id = $5,
-           completed_at = clock_timestamp()
-       WHERE mission_id = $1
-         AND idempotency_key = $2
-         AND action_hash = $3
-         AND receipt_id IS NULL
-         AND approval_id IS NULL
-       RETURNING mission_id`,
+    const completed = await this.pool.query<{completed:boolean}>(
+      'SELECT mail.complete_external_action($1::uuid,$2,$3,$4,$5::uuid) AS completed',
       [input.missionId, input.idempotencyKey, input.actionHash, input.receipt_id, input.approval_id],
     )
-    if (completed.rowCount === 1) return
-    const same = await this.pool.query(
-      `SELECT 1
-       FROM mail.external_actions
-       WHERE mission_id = $1
-         AND idempotency_key = $2
-          AND action_hash = $3
-          AND receipt_id = $4
-          AND approval_id = $5`,
-      [input.missionId, input.idempotencyKey, input.actionHash, input.receipt_id, input.approval_id],
-    )
-    if (same.rowCount !== 1) throw new Error('EXTERNAL_ACTION_COMPLETION_CONFLICT')
+    if (completed.rows[0]?.completed !== true) throw new Error('EXTERNAL_ACTION_COMPLETION_CONFLICT')
   }
 }
 
@@ -310,7 +197,7 @@ export class PostgresAuditSink implements AuditSink {
   constructor(private readonly pool: Pool) {}
 
   async record(event: StructuredAuditEvent): Promise<void> {
-    await this.pool.query('INSERT INTO control.audit_events (event) VALUES ($1::jsonb)', [
+    await this.pool.query('SELECT control.record_audit_event($1::jsonb)', [
       JSON.stringify(sanitizeAuditEvent(event)),
     ])
   }
@@ -340,26 +227,4 @@ function approvalFromRow(row: ApprovalRow): ApprovalRequestRecord | ApprovalGran
 
 function iso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString()
-}
-
-async function lockKillSwitchGuard(client: PoolClient): Promise<void> {
-  await client.query(
-    'SELECT guard_id FROM control.kill_switch_guard WHERE guard_id = $1 FOR UPDATE',
-    [1],
-  )
-}
-
-async function inTransaction<T>(pool: Pool, operation: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-    const result = await operation(client)
-    await client.query('COMMIT')
-    return result
-  } catch (error) {
-    await client.query('ROLLBACK')
-    throw error
-  } finally {
-    client.release()
-  }
 }

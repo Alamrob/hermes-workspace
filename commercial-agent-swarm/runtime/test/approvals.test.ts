@@ -20,8 +20,8 @@ function action(overrides: Partial<ApprovalAction> = {}): ApprovalAction {
     content: 'Mensaje controlado',
     content_version: 'mail-v1',
     volume: 1,
-    offer_version: 'operacion-sin-planillas-v1',
-    policy_version: 'commercial-policy-v1',
+    offer_version: 'offer-v1',
+    policy_version: 'policy-v1',
     idempotency_key: 'mail-internal-0001',
     ...overrides,
   }

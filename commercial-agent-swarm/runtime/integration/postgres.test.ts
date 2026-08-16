@@ -18,7 +18,10 @@ import type {
 } from '../src/repository.js'
 
 const ADMIN_URL = process.env.TEST_DATABASE_URL
-const MIGRATION_URL = new URL('../migrations/001_runtime.sql', import.meta.url)
+const MIGRATION_URLS = [
+  new URL('../migrations/001_runtime.sql', import.meta.url),
+  new URL('../migrations/002_commercial_control_plane.sql', import.meta.url),
+]
 const NOW = '2026-08-15T20:00:00.000Z'
 const LATER = '2026-08-15T20:15:00.000Z'
 
@@ -39,9 +42,9 @@ integration('PostgreSQL 17 runtime repository', () => {
     databaseUrl.pathname = `/${databaseName}`
     firstPool = new Pool({ connectionString: databaseUrl.toString(), max: 4 })
     secondPool = new Pool({ connectionString: databaseUrl.toString(), max: 4 })
-    const migration = await readFile(MIGRATION_URL, 'utf8')
-    await firstPool.query(migration)
-    await firstPool.query(migration)
+    const migrations = await Promise.all(MIGRATION_URLS.map((url) => readFile(url, 'utf8')))
+    for (const migration of migrations) await firstPool.query(migration)
+    for (const migration of migrations) await firstPool.query(migration)
     first = new PostgresRuntimeRepository(firstPool)
     second = new PostgresRuntimeRepository(secondPool)
   })
@@ -75,6 +78,15 @@ integration('PostgreSQL 17 runtime repository', () => {
         mission_id: '123e4567-e89b-42d3-a456-426614174102',
       }),
       /MISSION_CONFLICT/,
+    )
+    await assert.rejects(
+      second.saveMission({
+        ...mission,
+        mission_id: '123e4567-e89b-42d3-a456-426614174103',
+        idempotency_key: 'mission-db-unknown-version',
+        offer_version: 'offer-v999',
+      }),
+      /UNKNOWN_CATALOG_VERSION/,
     )
   })
 
@@ -143,6 +155,7 @@ integration('PostgreSQL 17 runtime repository', () => {
     await first.saveMission(mission)
     await first.createApprovalRequest(request)
     await first.saveApprovalDecision(approvalGrant(request))
+    await first.consumeApproval({ missionId: mission.mission_id, actionHash: request.action_hash, nonce: approvalGrant(request).nonce, now: NOW })
 
     const claim = {
       missionId: mission.mission_id,
@@ -181,6 +194,10 @@ integration('PostgreSQL 17 runtime repository', () => {
   it('rejects a completed idempotency key when any action hash field changes', async () => {
     const mission = missionRecord('123e4567-e89b-42d3-a456-426614174211', 'mission-db-0211')
     await first.saveMission(mission)
+    const request = approvalRequest('323e4567-e89b-42d3-a456-426614174211', mission.mission_id)
+    await first.createApprovalRequest(request)
+    await first.saveApprovalDecision(approvalGrant(request))
+    await first.consumeApproval({ missionId: mission.mission_id, actionHash: request.action_hash, nonce: approvalGrant(request).nonce, now: NOW })
     const claim = {
       missionId: mission.mission_id,
       channel: 'email',
@@ -193,7 +210,7 @@ integration('PostgreSQL 17 runtime repository', () => {
       idempotencyKey: claim.idempotencyKey,
       actionHash: claim.actionHash,
       receipt_id: 'receipt-db-0211',
-      approval_id: '323e4567-e89b-42d3-a456-426614174111',
+      approval_id: request.approval_id,
     })
 
     await assert.rejects(
@@ -336,6 +353,12 @@ function missionRecord(missionId: string, idempotencyKey: string): MissionRecord
     autonomy_level: 'A3',
     a3_enabled: true,
     objective: 'durable runtime test',
+    project_id: 'proptimiza',
+    project_version: 'v1',
+    offer_id: 'operacion-sin-planillas',
+    offer_version: 'offer-v1',
+    icp_version: 'icp-v1',
+    policy_version: 'policy-v1',
   }
 }
 

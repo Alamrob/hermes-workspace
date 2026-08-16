@@ -25,6 +25,7 @@ export interface RuntimeRepository {
   saveMission(record: MissionRecord): Promise<void>
   getMission(id: string): Promise<MissionRecord | null>
   isMissionA3Enabled(id: string): Promise<boolean>
+  deliveryPolicyAllows(action: ApprovalAction): Promise<boolean>
   storeWebhookEvent(record: WebhookEventRecord): Promise<boolean>
   createApprovalRequest(record: ApprovalRequestRecord): Promise<void>
   getApprovalRequest(id: string): Promise<ApprovalRequestRecord | ApprovalGrantRecord | null>
@@ -79,6 +80,12 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   async isMissionA3Enabled(id: string): Promise<boolean> {
     const mission = this.missions.get(id)
     return mission?.autonomy_level === 'A3' && mission.a3_enabled === true
+  }
+
+  async deliveryPolicyAllows(action: ApprovalAction): Promise<boolean> {
+    return action.project_id === 'proptimiza' && action.policy_version === 'policy-v1' &&
+      action.sender === 'ventas@proptimiza.com' && action.recipients.length === 1 &&
+      action.recipients[0] === 'contacto@proptimiza.com' && action.volume === 1
   }
 
   async storeWebhookEvent(record: WebhookEventRecord): Promise<boolean> {
