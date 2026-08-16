@@ -1,4 +1,5 @@
 import type { TrustedUsage } from './executor-contract.js'
+import { readBoundedHttpBody } from './bounded-http-body.js'
 
 export const OPENCODE_USAGE_EXPORT_URL =
   'https://console.opencode.ai/api/v1/usage/export'
@@ -63,6 +64,66 @@ export interface OpenCodeUsageExportReadPort {
     range: '24h' | '7d' | '30d'
     serviceAccountId: string
   }): Promise<string>
+}
+
+export class FetchOpenCodeUsageExportReader
+  implements OpenCodeUsageExportReadPort
+{
+  private readonly fetcher: typeof fetch
+  private readonly timeoutMs: number
+
+  constructor(options: { fetch?: typeof fetch; timeoutMs?: number } = {}) {
+    this.fetcher = options.fetch ?? fetch
+    this.timeoutMs = options.timeoutMs ?? 5_000
+    if (
+      !Number.isSafeInteger(this.timeoutMs) ||
+      this.timeoutMs < 100 ||
+      this.timeoutMs > 30_000
+    )
+      throw new Error('OPENCODE_USAGE_EXPORT_TIMEOUT_INVALID')
+  }
+
+  async getCsvExport(
+    request: Parameters<OpenCodeUsageExportReadPort['getCsvExport']>[0],
+  ): Promise<string> {
+    validateQuery(request)
+    if (
+      request.url !== OPENCODE_USAGE_EXPORT_URL ||
+      !request.bearerToken.trim() ||
+      Buffer.byteLength(request.bearerToken) > 8_192
+    )
+      throw new Error('OPENCODE_USAGE_EXPORT_REQUEST_INVALID')
+    const url = new URL(OPENCODE_USAGE_EXPORT_URL)
+    url.searchParams.set('scope', request.scope)
+    url.searchParams.set('range', request.range)
+    url.searchParams.set('service_account_id', request.serviceAccountId)
+    let response: Response
+    try {
+      response = await this.fetcher(url, {
+        method: 'GET',
+        headers: {
+          accept: 'text/csv',
+          authorization: `Bearer ${request.bearerToken}`,
+        },
+        redirect: 'error',
+        signal: AbortSignal.timeout(this.timeoutMs),
+      })
+    } catch (error) {
+      throw new Error('OPENCODE_USAGE_EXPORT_FAILED', { cause: error })
+    }
+    if (
+      !response.ok ||
+      !response.headers.get('content-type')?.toLowerCase().startsWith('text/csv')
+    )
+      throw new Error('OPENCODE_USAGE_EXPORT_FAILED')
+    return (
+      await readBoundedHttpBody(
+        response,
+        MAX_CSV_BYTES,
+        'OPENCODE_USAGE_CSV_TOO_LARGE',
+      )
+    ).toString('utf8')
+  }
 }
 
 interface ExportQuery {

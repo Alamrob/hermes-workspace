@@ -5,6 +5,7 @@ import {
   MAX_RUN_USAGE_VALUE_MICRO_CENTS,
   MAX_TOTAL_USAGE_VALUE_MICRO_CENTS,
   OpenCodeUsageExportClient,
+  FetchOpenCodeUsageExportReader,
   OpenCodeUsageProbe,
   parseOpenCodeUsageCsv,
 } from '../src/opencode-usage-api.js'
@@ -39,6 +40,41 @@ const localUsage: TrustedUsage = {
 }
 
 describe('read-only OpenCode Usage Export gate', () => {
+  it('streams and cancels an oversized chunked Usage export body', async () => {
+    let cancelled = false
+    let requestedUrl = ''
+    let requestedInit: RequestInit | undefined
+    const chunk = new Uint8Array(600_000)
+    const reader = new FetchOpenCodeUsageExportReader({
+      fetch: async (url, init) => {
+        requestedUrl = String(url)
+        requestedInit = init
+        return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(chunk)
+          controller.enqueue(chunk)
+        },
+        cancel() { cancelled = true },
+        }), { status: 200, headers: { 'content-type': 'text/csv' } })
+      },
+    })
+    await assert.rejects(
+      reader.getCsvExport({
+        url: 'https://console.opencode.ai/api/v1/usage/export',
+        bearerToken: 'token', scope: 'service_account', range: '24h',
+        serviceAccountId: 'svc-12345678',
+      }),
+      /OPENCODE_USAGE_CSV_TOO_LARGE/,
+    )
+    assert.equal(cancelled, true)
+    const url = new URL(requestedUrl)
+    assert.equal(url.origin + url.pathname, 'https://console.opencode.ai/api/v1/usage/export')
+    assert.deepEqual(Object.fromEntries(url.searchParams), {
+      scope: 'service_account', range: '24h', service_account_id: 'svc-12345678',
+    })
+    assert.equal(requestedInit?.redirect, 'error')
+  })
+
   it('uses only the official CSV export endpoint with an explicit service-account scope/range', async () => {
     const requests: unknown[] = []
     const client = new OpenCodeUsageExportClient({

@@ -12,7 +12,7 @@ import {
   type TwentyClientPort,
 } from './crm-sync.js'
 import { PostgresCrmSyncStore } from './postgres-crm-sync-store.js'
-import { readOwnerSecretFile } from './simulation-entrypoint.js'
+import { readGroupSecretFile } from './secret-file.js'
 import {
   parseTwentyRestMapping,
   TwentyHttpClient,
@@ -44,6 +44,7 @@ export interface CrmSyncProcessConfig {
   leaseSeconds: number
   databaseUrlFile?: string
   apiBaseUrl?: string
+  allowedHttpHost?: string
   tokenFile?: string
   mappingFile?: string
 }
@@ -75,6 +76,7 @@ export function loadCrmSyncProcessConfig(
   return {
     ...common,
     apiBaseUrl: twenty.apiBaseUrl,
+    allowedHttpHost: twenty.allowedHttpHost,
     tokenFile: twenty.tokenFile,
     databaseUrlFile,
     mappingFile,
@@ -168,6 +170,7 @@ interface RuntimeDependencies {
   createStore(databaseUrl: string): Promise<CrmProcessStorePort>
   createClient(options: {
     apiBaseUrl: string
+    allowedHttpHost?: string
     token: string
     mapping: TwentyRestMapping
   }): TwentyClientPort
@@ -191,7 +194,12 @@ export async function createCrmSyncRuntime(
   ])
   const mapping = parseTwentyRestMapping(mappingDocument)
   const store = await dependencies.createStore(databaseUrl)
-  const client = dependencies.createClient({ apiBaseUrl: config.apiBaseUrl!, token, mapping })
+  const client = dependencies.createClient({
+    apiBaseUrl: config.apiBaseUrl!,
+    allowedHttpHost: config.allowedHttpHost,
+    token,
+    mapping,
+  })
   return new CrmSyncDaemon({ ...config, store, client })
 }
 
@@ -216,7 +224,7 @@ async function createDefaultRuntime(
 ): Promise<CrmSyncDaemon> {
   let pool: Pool | undefined
   return createCrmSyncRuntime(environment, {
-    readSecretFile: readOwnerSecretFile,
+    readSecretFile: readGroupSecretFile,
     readMappingFile: async (path) => {
       const document = await readFile(path, 'utf8')
       if (Buffer.byteLength(document) > 1_048_576) throw new Error('TWENTY_MAPPING_INVALID')

@@ -88,4 +88,23 @@ describe('CRM sync deployable process', () => {
     assert.deepEqual(daemon.health(), { live: true, ready: false, mode: 'shadow' })
     assert.equal(daemon.nextDelayMs(), 120_000)
   })
+
+  it('accepts the exact allowlisted internal Twenty origin and rejects internal SSRF variants', () => {
+    const base = {
+      NODE_ENV: 'production', CRM_SYNC_MODE: 'shadow',
+      CRM_HEALTH_HOST: '0.0.0.0', CRM_HEALTH_PORT: '8081',
+      CRM_DATABASE_URL_FILE: '/run/secrets/crm-db',
+      TWENTY_API_TOKEN_FILE: '/run/secrets/twenty-token',
+      TWENTY_MAPPING_FILE: '/run/secrets/twenty-mapping',
+      TWENTY_API_ALLOWED_HOST: 'twenty-server:3000',
+    }
+    assert.equal(loadCrmSyncProcessConfig({
+      ...base, TWENTY_API_BASE_URL: 'http://twenty-server:3000',
+    }).allowedHttpHost, 'twenty-server:3000')
+    for (const value of ['http://127.0.0.1:3000', 'http://169.254.169.254', 'http://twenty-server:3001'])
+      assert.throws(
+        () => loadCrmSyncProcessConfig({ ...base, TWENTY_API_BASE_URL: value }),
+        /TWENTY_API_BASE_URL_INVALID/,
+      )
+  })
 })

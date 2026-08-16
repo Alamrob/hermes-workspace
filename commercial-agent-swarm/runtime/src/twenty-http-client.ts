@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { isIP } from 'node:net'
+import { readBoundedHttpBody } from './bounded-http-body.js'
 import type {
   CrmOperation,
   CrmRecordType,
@@ -111,6 +113,7 @@ export class TwentyHttpClient implements TwentyClientPort {
   constructor(
     private readonly options: {
       apiBaseUrl: string
+      allowedHttpHost?: string
       token: string
       mapping: TwentyRestMapping
       fetch?: typeof fetch
@@ -119,7 +122,18 @@ export class TwentyHttpClient implements TwentyClientPort {
   ) {
     let base: URL
     try { base = new URL(options.apiBaseUrl) } catch { throw new Error('TWENTY_ORIGIN_INVALID') }
-    if (base.protocol !== 'https:' || base.pathname !== '/' || base.search || base.hash || base.username || base.password)
+    const allowed = options.allowedHttpHost
+    const allowedValid =
+      typeof allowed === 'string' &&
+      /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*:[1-9][0-9]{0,4}$/i.test(allowed) &&
+      Number(allowed.slice(allowed.lastIndexOf(':') + 1)) <= 65_535 &&
+      isIP(allowed.slice(0, allowed.lastIndexOf(':'))) === 0
+    if (
+      !['http:', 'https:'].includes(base.protocol) ||
+      base.pathname !== '/' || base.search || base.hash || base.username || base.password ||
+      (base.protocol === 'http:' && (!allowedValid || base.host !== allowed)) ||
+      (base.protocol === 'https:' && allowed !== undefined && (!allowedValid || base.host !== allowed))
+    )
       throw new Error('TWENTY_ORIGIN_INVALID')
     if (!options.token.trim() || Buffer.byteLength(options.token) > 8192)
       throw new Error('TWENTY_TOKEN_INVALID')
@@ -222,11 +236,7 @@ export class TwentyHttpClient implements TwentyClientPort {
     }
     if (!response.ok || !response.headers.get('content-type')?.toLowerCase().startsWith('application/json'))
       throw new Error('TWENTY_RESPONSE_INVALID')
-    const declared = Number(response.headers.get('content-length'))
-    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES)
-      throw new Error('TWENTY_BODY_INVALID')
-    const bytes = Buffer.from(await response.arrayBuffer())
-    if (bytes.byteLength > MAX_BODY_BYTES) throw new Error('TWENTY_BODY_INVALID')
+    const bytes = await readBoundedHttpBody(response, MAX_BODY_BYTES, 'TWENTY_BODY_INVALID')
     try { return JSON.parse(bytes.toString('utf8')) } catch { throw new Error('TWENTY_RESPONSE_INVALID') }
   }
 }

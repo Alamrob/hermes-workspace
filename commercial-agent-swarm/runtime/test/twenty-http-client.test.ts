@@ -35,6 +35,29 @@ function object(path: string, fields: Record<string, string>) {
 }
 
 describe('versioned Twenty REST client', () => {
+  it('allows HTTP only for the exact internal Docker host allowlist and rejects SSRF origins', () => {
+    assert.doesNotThrow(() => new TwentyHttpClient({
+      apiBaseUrl: 'http://twenty-server:3000',
+      allowedHttpHost: 'twenty-server:3000',
+      token: 'token',
+      mapping: parseTwentyRestMapping(JSON.stringify(mappingDocument)),
+      fetch: async () => new Response('{}'),
+    }))
+    for (const apiBaseUrl of [
+      'http://127.0.0.1:3000',
+      'http://169.254.169.254',
+      'http://twenty-server:3001',
+      'http://user:pass@twenty-server:3000',
+      'http://twenty-server:3000/rest/companies',
+    ])
+      assert.throws(() => new TwentyHttpClient({
+        apiBaseUrl,
+        allowedHttpHost: 'twenty-server:3000',
+        token: 'token',
+        mapping: parseTwentyRestMapping(JSON.stringify(mappingDocument)),
+      }), /TWENTY_ORIGIN_INVALID/)
+  })
+
   it('uses only an explicitly mapped workspace route and closed field mapping', async () => {
     const requests: Array<{ url: string; init: RequestInit }> = []
     const client = new TwentyHttpClient({
@@ -60,6 +83,7 @@ describe('versioned Twenty REST client', () => {
     )
     assert.equal(requests[0]?.url, 'https://crm.example/rest/companies')
     assert.equal(requests[0]?.init.method, 'POST')
+    assert.equal(requests[0]?.init.redirect, 'error')
     assert.equal((requests[0]?.init.headers as Record<string, string>)['idempotency-key'], '11111111-1111-4111-8111-111111111111')
     assert.equal(requests[0]?.init.body, JSON.stringify({ name: 'Acme' }))
   })
@@ -118,5 +142,28 @@ describe('versioned Twenty REST client', () => {
         /TWENTY_(?:RESPONSE|BODY)_INVALID/,
       )
     }
+
+    let cancelled = false
+    const chunk = new Uint8Array(600_000)
+    const chunked = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk)
+        controller.enqueue(chunk)
+      },
+      cancel() { cancelled = true },
+    })
+    const client = new TwentyHttpClient({
+      apiBaseUrl: 'https://crm.example', token: 'token',
+      mapping: parseTwentyRestMapping(JSON.stringify(mappingDocument)),
+      fetch: async () => new Response(chunked, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    })
+    await assert.rejects(
+      client.apply({ idempotencyKey: 'idempotency', operation: 'upsert_account', payload: { name: 'Acme' }, sourceVersion: 1 }),
+      /TWENTY_BODY_INVALID/,
+    )
+    assert.equal(cancelled, true)
   })
 })

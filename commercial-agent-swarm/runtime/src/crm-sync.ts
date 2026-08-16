@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path'
+import { isIP } from 'node:net'
 
 export type CrmSyncMode = 'simulation' | 'shadow' | 'active'
 export type CrmOperation =
@@ -79,6 +80,7 @@ export interface TwentyClientConfig {
   apiBaseUrl: string
   tokenFile: string
   mode: CrmSyncMode
+  allowedHttpHost?: string
 }
 
 export class TwentyOutcomeUnknownError extends Error {
@@ -113,8 +115,14 @@ export function loadTwentyClientConfig(
   } catch {
     throw new Error('TWENTY_API_BASE_URL_INVALID')
   }
+  const allowedHttpHost = environment.TWENTY_API_ALLOWED_HOST?.trim()
+  const validAllowedHost =
+    allowedHttpHost !== undefined &&
+    /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*:[1-9][0-9]{0,4}$/i.test(allowedHttpHost) &&
+    Number(allowedHttpHost.slice(allowedHttpHost.lastIndexOf(':') + 1)) <= 65_535 &&
+    isIP(allowedHttpHost.slice(0, allowedHttpHost.lastIndexOf(':'))) === 0
   if (
-    parsed.protocol !== 'https:' ||
+    !['http:', 'https:'].includes(parsed.protocol) ||
     parsed.username ||
     parsed.password ||
     parsed.search ||
@@ -123,12 +131,23 @@ export function loadTwentyClientConfig(
   )
     throw new Error('TWENTY_API_BASE_URL_INVALID')
   if (
+    (parsed.protocol === 'http:' &&
+      (!validAllowedHost || parsed.host !== allowedHttpHost)) ||
+    (parsed.protocol === 'https:' && allowedHttpHost && parsed.host !== allowedHttpHost)
+  )
+    throw new Error('TWENTY_API_BASE_URL_INVALID')
+  if (
     !tokenFile ||
     !isAbsolute(tokenFile) ||
     !tokenFile.startsWith('/run/secrets/')
   )
     throw new Error('TWENTY_API_TOKEN_FILE_INVALID')
-  return { apiBaseUrl: parsed.origin, tokenFile, mode: mode as CrmSyncMode }
+  return {
+    apiBaseUrl: parsed.origin,
+    tokenFile,
+    mode: mode as CrmSyncMode,
+    ...(parsed.protocol === 'http:' ? { allowedHttpHost } : {}),
+  }
 }
 
 export async function runCrmSyncOnce(options: {
