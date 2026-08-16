@@ -16,7 +16,7 @@ import {
   disabledCrmSummaryReadModel,
   type CrmSummaryReadModel,
 } from './crm-summary-read-model.js'
-import { readGroupSecretFile } from './secret-file.js'
+import { assertPrimaryServiceGid, readGroupSecretFile } from './secret-file.js'
 import { constantTimeSecretEqual } from './security.js'
 import {
   parseTwentyRestMapping,
@@ -27,6 +27,11 @@ import {
 const STREAMS: CrmStream[] = [
   'pilot_targets', 'accounts', 'contacts', 'opportunities', 'notes',
 ]
+export const CRM_SYNC_SERVICE_GID = 10011
+
+export function assertCrmSyncServiceIdentity(actualGid = process.getgid?.()): void {
+  assertPrimaryServiceGid(CRM_SYNC_SERVICE_GID, actualGid)
+}
 
 export interface CrmProcessStorePort extends CrmSyncStorePort {
   ready(): Promise<boolean>
@@ -54,6 +59,7 @@ export interface CrmSyncProcessConfig {
   tokenFile?: string
   mappingFile?: string
   readModelBearerFile?: string
+  secretGid: typeof CRM_SYNC_SERVICE_GID
 }
 
 export function loadCrmSyncProcessConfig(
@@ -73,6 +79,7 @@ export function loadCrmSyncProcessConfig(
     pollIntervalMs: 60_000 as const,
     workerId: environment.CRM_SYNC_WORKER_ID?.trim() || 'crm-sync-1',
     leaseSeconds: Number(environment.CRM_SYNC_LEASE_SECONDS ?? '60'),
+    secretGid: CRM_SYNC_SERVICE_GID as typeof CRM_SYNC_SERVICE_GID,
     ...(environment.CRM_READ_MODEL_BEARER_FILE
       ? { readModelBearerFile: secretPath(environment.CRM_READ_MODEL_BEARER_FILE, 'CRM_READ_MODEL_BEARER_FILE') }
       : {}),
@@ -180,7 +187,7 @@ export class CrmSyncDaemon {
 }
 
 interface RuntimeDependencies {
-  readSecretFile(path: string): Promise<string>
+  readSecretFile(path: string, expectedGid: number): Promise<string>
   readMappingFile(path: string): Promise<string>
   createStore(databaseUrl: string): Promise<CrmProcessStorePort>
   createClient(options: {
@@ -203,8 +210,8 @@ export async function createCrmSyncRuntime(
       client: simulationClient,
     })
   const [databaseUrl, token, mappingDocument] = await Promise.all([
-    dependencies.readSecretFile(config.databaseUrlFile!),
-    dependencies.readSecretFile(config.tokenFile!),
+    dependencies.readSecretFile(config.databaseUrlFile!, config.secretGid),
+    dependencies.readSecretFile(config.tokenFile!, config.secretGid),
     dependencies.readMappingFile(config.mappingFile!),
   ])
   const mapping = parseTwentyRestMapping(mappingDocument)
@@ -225,7 +232,7 @@ export async function startCrmSyncProcess(
   const config = loadCrmSyncProcessConfig(environment)
   if (!config.readModelBearerFile)
     throw new Error('CRM_READ_MODEL_BEARER_FILE_REQUIRED')
-  const readModelBearer = await readGroupSecretFile(config.readModelBearerFile)
+  const readModelBearer = await readGroupSecretFile(config.readModelBearerFile, config.secretGid)
   const server = createHealthServer(runtime, readModelBearer)
   await listen(server, config.healthPort, config.healthHost)
   runtime.start()
@@ -240,6 +247,7 @@ export async function startCrmSyncProcess(
 async function createDefaultRuntime(
   environment: Record<string, string | undefined>,
 ): Promise<CrmSyncDaemon> {
+  assertCrmSyncServiceIdentity()
   let pool: Pool | undefined
   return createCrmSyncRuntime(environment, {
     readSecretFile: readGroupSecretFile,

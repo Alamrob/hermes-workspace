@@ -10,12 +10,14 @@ import {
   expandDatabaseSecretFiles,
   loadSimulationBrokerConfig,
   readApplicationSecrets,
+  assertBrokerServiceIdentity,
 } from './simulation-entrypoint.js'
 import { WebhookService } from './webhook.js'
 
 export async function startSimulationBroker(
   environment: Record<string, string | undefined> = process.env,
 ): Promise<{ close: () => Promise<void> }> {
+  assertBrokerServiceIdentity()
   const config = loadSimulationBrokerConfig(environment)
   const [databaseEnvironment, secrets] = await Promise.all([
     expandDatabaseSecretFiles(config, environment),

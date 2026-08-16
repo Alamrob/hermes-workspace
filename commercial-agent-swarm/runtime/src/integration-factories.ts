@@ -14,6 +14,7 @@ import {
 import { readGroupSecretFile } from './secret-file.js'
 
 type Environment = Record<string, string | undefined>
+export const OPENCODE_USAGE_SERVICE_GID = 10000
 
 interface KillSwitchPort {
   isActive(input: { missionId: string; channel: string }): Promise<boolean>
@@ -80,7 +81,7 @@ export function createOpenCodeUsageProbeFromEnvironment(
   environment: Environment,
   dependencies: {
     reader?: OpenCodeUsageExportReadPort
-    readToken?: (path: string) => Promise<string>
+    readToken?: (path: string, expectedGid: number) => Promise<string>
   } = {},
 ): OpenCodeUsageProbeFactoryResult {
   if (environment.OPENCODE_USAGE_TOKEN?.trim())
@@ -95,7 +96,7 @@ export function createOpenCodeUsageProbeFromEnvironment(
   const readToken = dependencies.readToken ?? readGroupSecretFile
   const client = new OpenCodeUsageExportClient({
     reader: dependencies.reader ?? new FetchOpenCodeUsageExportReader(),
-    readToken: () => readToken(tokenFile),
+    readToken: () => readToken(tokenFile, OPENCODE_USAGE_SERVICE_GID),
   })
   return {
     enabled: true,

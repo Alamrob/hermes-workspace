@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  CRM_SYNC_SERVICE_GID,
+  assertCrmSyncServiceIdentity,
   CrmSyncDaemon,
   createHealthServer,
   createCrmSyncRuntime,
@@ -42,6 +44,18 @@ function client(calls: string[]): TwentyClientPort {
 }
 
 describe('CRM sync deployable process', () => {
+  it('binds every file-backed CRM secret to the fixed crm-sync group', () => {
+    const config = loadCrmSyncProcessConfig({
+      NODE_ENV: 'production', CRM_SYNC_MODE: 'simulation',
+      CRM_HEALTH_HOST: '127.0.0.1', CRM_HEALTH_PORT: '8081',
+    })
+    assert.equal(config.secretGid, CRM_SYNC_SERVICE_GID)
+    assert.equal(config.secretGid, 10011)
+    assert.doesNotThrow(() => assertCrmSyncServiceIdentity(10011))
+    assert.throws(() => assertCrmSyncServiceIdentity(10000), /SERVICE_PRIMARY_GID_INVALID/)
+    assert.throws(() => assertCrmSyncServiceIdentity(10001), /SERVICE_PRIMARY_GID_INVALID/)
+  })
+
   it('constructs simulation without reading a token, mapping, database, or client', async () => {
     const touched: string[] = []
     const runtime = await createCrmSyncRuntime(

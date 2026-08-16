@@ -50,8 +50,9 @@ describe('disabled-default integration factories', () => {
         OPENCODE_USAGE_TOKEN_FILE: '/run/secrets/opencode-usage-token',
       },
       {
-        readToken: async (path) => {
+        readToken: async (path, expectedGid) => {
           assert.equal(path, '/run/secrets/opencode-usage-token')
+          assert.equal(expectedGid, 10000)
           return 'read-only-token'
         },
         reader: { getCsvExport: async () => { throw new Error('no network in unit test') } },

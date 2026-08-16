@@ -18,6 +18,7 @@
     "test:integration": "tsx --test --test-concurrency=1 integration/**/*.test.ts",
     "test:postgres:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-postgres-17.ps1",
     "test:linux-identity": "node scripts/test-linux-runtime-identity.mjs",
+    "test:linux-service-secrets": "node scripts/test-linux-service-secrets.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

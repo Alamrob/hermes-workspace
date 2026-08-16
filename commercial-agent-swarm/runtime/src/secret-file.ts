@@ -26,6 +26,15 @@ export function currentProcessIdentity(): ProcessIdentity {
   return { uid, gid, groups: process.getgroups?.() ?? [gid] }
 }
 
+export function assertPrimaryServiceGid(
+  expectedGid: number,
+  actualGid = process.getgid?.(),
+): number {
+  if (!Number.isSafeInteger(expectedGid) || expectedGid < 1 || actualGid !== expectedGid)
+    throw new Error('SERVICE_PRIMARY_GID_INVALID')
+  return expectedGid
+}
+
 export function validateGroupSecretFileMetadata(
   metadata: SecretFileMetadata,
   expectedGid: number,

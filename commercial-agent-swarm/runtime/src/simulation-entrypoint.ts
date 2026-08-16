@@ -2,9 +2,10 @@ import { constants as fsConstants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { parseApprovalMode, type ApprovalMode } from './approval-mode.js'
-import { readGroupSecretFile } from './secret-file.js'
+import { assertPrimaryServiceGid, readGroupSecretFile } from './secret-file.js'
 
 type Environment = Record<string, string | undefined>
+export const BROKER_SERVICE_GID = 10001
 
 const DATABASE_FILES = [
   'DATABASE_URL_FILE',
@@ -50,6 +51,7 @@ export interface SimulationBrokerConfig {
   workOrderAuthority: { issuer: string; audience: string; keyId: string }
   approvalMode: ApprovalMode
   approvalActors: { sales: string[]; telegram: string[] }
+  secretGid: typeof BROKER_SERVICE_GID
 }
 
 export interface ApplicationSecrets {
@@ -112,6 +114,7 @@ export function loadSimulationBrokerConfig(
     },
     approvalMode: parseApprovalMode(environment.APPROVAL_MODE),
     approvalActors,
+    secretGid: BROKER_SERVICE_GID,
   }
 }
 
@@ -174,7 +177,7 @@ export async function expandDatabaseSecretFiles(
 ): Promise<Environment> {
   const expanded: Environment = { ...environment }
   for (const secret of config.databaseSecretFiles)
-    expanded[secret.name] = await readGroupSecretFile(secret.path)
+    expanded[secret.name] = await readGroupSecretFile(secret.path, config.secretGid)
   return expanded
 }
 
@@ -183,20 +186,26 @@ export async function readApplicationSecrets(
 ): Promise<ApplicationSecrets> {
   const files = config.applicationSecretFiles
   const secrets = {
-    workOrderHmac: await readGroupSecretFile(files.WORK_ORDER_HMAC_SECRET_FILE),
-    controlPlane: await readGroupSecretFile(files.CONTROL_PLANE_BEARER_FILE),
+    workOrderHmac: await readGroupSecretFile(files.WORK_ORDER_HMAC_SECRET_FILE, config.secretGid),
+    controlPlane: await readGroupSecretFile(files.CONTROL_PLANE_BEARER_FILE, config.secretGid),
     approvalSalesGateway: await readGroupSecretFile(
       files.APPROVAL_SALES_GATEWAY_BEARER_FILE,
+      config.secretGid,
     ),
     approvalTelegramGateway: await readGroupSecretFile(
       files.APPROVAL_TELEGRAM_GATEWAY_BEARER_FILE,
+      config.secretGid,
     ),
-    connector: await readGroupSecretFile(files.CONNECTOR_BEARER_FILE),
-    internal: await readGroupSecretFile(files.INTERNAL_BEARER_FILE),
-    approvalHmac: await readGroupSecretFile(files.APPROVAL_HMAC_SECRET_FILE),
+    connector: await readGroupSecretFile(files.CONNECTOR_BEARER_FILE, config.secretGid),
+    internal: await readGroupSecretFile(files.INTERNAL_BEARER_FILE, config.secretGid),
+    approvalHmac: await readGroupSecretFile(files.APPROVAL_HMAC_SECRET_FILE, config.secretGid),
   }
   assertDistinctApplicationSecrets(secrets)
   return secrets
+}
+
+export function assertBrokerServiceIdentity(actualGid = process.getgid?.()): void {
+  assertPrimaryServiceGid(BROKER_SERVICE_GID, actualGid)
 }
 
 export function assertDistinctApplicationSecrets(
