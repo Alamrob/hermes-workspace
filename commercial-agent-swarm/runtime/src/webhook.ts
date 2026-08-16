@@ -1,5 +1,5 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
 import type { RuntimeRepository } from './repository.js'
+import { constantTimeSecretEqual } from './security.js'
 
 export class WebhookError extends Error {
   constructor(readonly code: string) {
@@ -58,10 +58,4 @@ export class WebhookService {
     })
     return { accepted: true, duplicate: !inserted }
   }
-}
-
-function constantTimeSecretEqual(left: string, right: string): boolean {
-  const leftDigest = createHash('sha256').update(left).digest()
-  const rightDigest = createHash('sha256').update(right).digest()
-  return timingSafeEqual(leftDigest, rightDigest)
 }

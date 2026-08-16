@@ -131,16 +131,30 @@ export class BrokerApplication {
       duration_ms: Math.max(0, completed.getTime() - started.getTime()),
       token_cost: { input_tokens: 0, output_tokens: 0, currency: 'USD', amount: 0 },
       redacted_input: `sha256:${hashAction({ method: request.method, path: request.path })}`,
-      result: response ? JSON.stringify(response.body) : null,
+      result: response ? `status:${response.status}` : null,
       error,
       retries: 0,
       external_action: toolAction === 'mail.send',
-      approval_reference: (response?.body as { approval_reference?: string } | undefined)?.approval_reference ?? request.body?.approval_id ?? null,
+      approval_reference: approvalReference(request, response),
+      receipt_reference: responseReference(response, 'receipt_id'),
       evidence: [],
       state_changes: response ? [toolAction] : [],
       deployed_version: this.options.deployedVersion,
     })
   }
+}
+
+function approvalReference(request: ApplicationRequest, response: ApplicationResponse | null): string | null {
+  return responseReference(response, 'approval_reference') ??
+    responseReference(response, 'approval_id') ??
+    /^\/v1\/approvals\/([^/]+)\/decision$/.exec(request.path)?.[1] ??
+    null
+}
+
+function responseReference(response: ApplicationResponse | null, field: string): string | null {
+  if (!response || response.body === null || typeof response.body !== 'object' || Array.isArray(response.body)) return null
+  const value = (response.body as Record<string, unknown>)[field]
+  return typeof value === 'string' ? value : null
 }
 
 type Route = { action: string; auditAction: string; id?: string }

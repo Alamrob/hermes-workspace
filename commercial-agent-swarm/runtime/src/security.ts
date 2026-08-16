@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { canonicalJson } from './canonical.js'
 import type { WorkOrder } from './work-orders.js'
 
@@ -22,14 +22,23 @@ export function verifyWorkOrder(workOrder: WorkOrder, config: WorkOrderAuthConfi
   if (workOrder.project_id !== 'proptimiza') throw new AuthenticationError('INVALID_PROJECT')
   if (typeof keyId !== 'string' || typeof signature !== 'string' || !/^[0-9a-f]{64}$/.test(signature)) throw new AuthenticationError('INVALID_AUTHORITY')
   const secret = config.keys[keyId]
-  if (!secret || Date.parse(workOrder.expires_at as string) <= now.getTime()) throw new AuthenticationError('EXPIRED_AUTHORITY')
-  if (!safeEqual(signature, signWorkOrder(workOrder, secret))) throw new AuthenticationError('INVALID_SIGNATURE')
+  if (!secret) throw new AuthenticationError('INVALID_AUTHORITY')
+  if (Date.parse(workOrder.created_at as string) > now.getTime()) throw new AuthenticationError('AUTHORITY_NOT_YET_VALID')
+  if (Date.parse(workOrder.expires_at as string) <= now.getTime()) throw new AuthenticationError('EXPIRED_AUTHORITY')
+  if (!constantTimeSecretEqual(signature, signWorkOrder(workOrder, secret))) throw new AuthenticationError('INVALID_SIGNATURE')
 }
 
 export function requireBearer(value: string | undefined, expected: string): void {
   const token = value?.match(/^Bearer ([^\s]+)$/)?.[1]
-  if (!token || !safeEqual(token, expected)) throw new AuthenticationError('UNAUTHORIZED')
+  if (!token || !constantTimeSecretEqual(token, expected)) throw new AuthenticationError('UNAUTHORIZED')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value) }
-function safeEqual(left: string, right: string): boolean { const a = Buffer.from(left); const b = Buffer.from(right); return a.length === b.length && timingSafeEqual(a, b) }
+
+export function digestSecretForComparison(value: string): Buffer {
+  return createHash('sha256').update(value).digest()
+}
+
+export function constantTimeSecretEqual(left: string, right: string): boolean {
+  return timingSafeEqual(digestSecretForComparison(left), digestSecretForComparison(right))
+}

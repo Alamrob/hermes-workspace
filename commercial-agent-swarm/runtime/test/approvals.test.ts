@@ -45,6 +45,28 @@ function broker(repository = new InMemoryRuntimeRepository()) {
 }
 
 describe('approval broker', () => {
+  it('rejects unknown or malformed ApprovalAction fields before persistence', async () => {
+    const setup = broker()
+    const invalidActions = [
+      { ...action(), cc: ['director@example.com'] },
+      { ...action(), bcc: ['director@example.com'] },
+      { ...action(), provider_headers: { authorization: 'Bearer must-not-pass' } },
+      { ...action(), recipients: 'contacto@proptimiza.com' },
+      { ...action(), volume: 1.5 },
+    ]
+
+    for (const invalid of invalidActions) {
+      await assert.rejects(
+        setup.broker.request(invalid as never),
+        (error: unknown) => error instanceof ApprovalError && error.code === 'INVALID_ACTION',
+      )
+    }
+    assert.equal(
+      await setup.repository.getApprovalRequest('323e4567-e89b-42d3-a456-426614174000'),
+      null,
+    )
+  })
+
   it('issues the exact six-segment signed approval token', async () => {
     const setup = broker()
     const approvedAction = action()
@@ -126,7 +148,7 @@ describe('approval broker', () => {
     )
   })
 
-  it('fails closed while a mission or email-channel kill switch is active', async () => {
+  it('fails closed while a mission kill switch is active', async () => {
     const setup = broker()
     const request = await setup.broker.request(action())
     const decision = await setup.broker.decide(request.approval_id, {
@@ -135,6 +157,22 @@ describe('approval broker', () => {
       expires_at: '2026-08-15T20:15:00.000Z',
     })
     await setup.repository.activateKillSwitch('mission', MISSION_ID)
+
+    await assert.rejects(
+      setup.broker.authorize(decision.token, action()),
+      (error: unknown) => error instanceof ApprovalError && error.code === 'KILL_SWITCH_ACTIVE',
+    )
+  })
+
+  it('fails closed while the email-channel kill switch is active', async () => {
+    const setup = broker()
+    const request = await setup.broker.request(action())
+    const decision = await setup.broker.decide(request.approval_id, {
+      approved: true,
+      approved_by: 'human-director',
+      expires_at: '2026-08-15T20:15:00.000Z',
+    })
+    await setup.repository.activateKillSwitch('channel', 'email')
 
     await assert.rejects(
       setup.broker.authorize(decision.token, action()),

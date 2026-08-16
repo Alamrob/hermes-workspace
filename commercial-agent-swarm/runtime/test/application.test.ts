@@ -101,6 +101,47 @@ describe('broker application routes', () => {
     assert.equal(response.status, 403)
   })
 
+  it('rejects a bad work-order signature after accepting the control-plane bearer', async () => {
+    const state = setup()
+    const order = signedWorkOrder()
+    order.authority.signature = 'f'.repeat(64)
+
+    const response = await state.app.handle({
+      method: 'POST',
+      path: '/v1/work-orders',
+      headers: headers('control-plane-token'),
+      body: order,
+    })
+
+    assert.deepEqual(response, {
+      status: 403,
+      body: { error: 'INVALID_SIGNATURE', issues: undefined },
+    })
+    assert.equal(await state.repository.getMission(order.mission_id), null)
+  })
+
+  it('rejects a validly signed work order whose created_at is in the future', async () => {
+    const state = setup()
+    const order = validWorkOrder()
+    order.created_at = '2026-08-15T20:00:00.001Z'
+    order.expires_at = '2026-08-15T21:00:00.000Z'
+    order.authority.algorithm = 'HMAC-SHA256'
+    order.authority.signature = signWorkOrder(order as never, 'test-control-key-with-at-least-32-bytes')
+
+    const response = await state.app.handle({
+      method: 'POST',
+      path: '/v1/work-orders',
+      headers: headers('control-plane-token'),
+      body: order,
+    })
+
+    assert.deepEqual(response, {
+      status: 403,
+      body: { error: 'AUTHORITY_NOT_YET_VALID', issues: undefined },
+    })
+    assert.equal(await state.repository.getMission(order.mission_id), null)
+  })
+
   it('rejects a signed work order for the wrong issuer, audience, key, project, or validity', async () => {
     for (const mutate of [
       (order: any) => { order.authority.issuer = 'wrong' },
@@ -162,9 +203,30 @@ describe('broker application routes', () => {
     const event = state.audit.events.find((entry) => entry.tool_action === 'work_order.create')!
     assert.deepEqual(Object.keys(event).sort(), [
       'agent_id', 'approval_reference', 'completed_at', 'deployed_version', 'duration_ms',
-      'error', 'evidence', 'external_action', 'mission_id', 'redacted_input', 'result',
+       'error', 'evidence', 'external_action', 'mission_id', 'receipt_reference', 'redacted_input', 'result',
       'retries', 'started_at', 'state_changes', 'token_cost', 'tool_action',
     ].sort())
+  })
+
+  it('requires internal authentication and redacts authority, approval token, and business context from mission reads', async () => {
+    const state = setup()
+    const baseOrder = signedWorkOrder()
+    const order = {
+      ...baseOrder,
+      authority: { ...baseOrder.authority },
+      approval_token: `APPROVAL::${baseOrder.mission_id}::${'a'.repeat(64)}::2026-08-15T20:15:00.000Z::00112233445566778899aabbccddeeff::${'b'.repeat(64)}`,
+    }
+    order.authority.signature = signWorkOrder(order as never, 'test-control-key-with-at-least-32-bytes')
+    await state.app.handle({ method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: order })
+
+    const path = `/v1/missions/${order.mission_id}`
+    assert.equal((await state.app.handle({ method: 'GET', path })).status, 403)
+    const authenticated = await state.app.handle({ method: 'GET', path, headers: headers('internal-token') })
+    assert.equal(authenticated.status, 200)
+    const mission = authenticated.body as Record<string, unknown>
+    assert.equal('authority' in mission, false)
+    assert.equal('approval_token' in mission, false)
+    assert.equal('business_context' in mission, false)
   })
 
   it('exposes approval request/decision and the one-time mail endpoint through injected transports', async () => {
@@ -188,6 +250,48 @@ describe('broker application routes', () => {
       body: { action, approval_token: (decided.body as any).token },
     })
     assert.deepEqual(sent, { status: 200, body: { receipt_id: 'mail-receipt-1', approval_reference: '323e4567-e89b-42d3-a456-426614174000' } })
+  })
+
+  it('stores only allowlisted audit summaries, hashes, and explicit receipt/approval references', async () => {
+    const state = setup()
+    const order = signedWorkOrder()
+    order.business_context = 'SENSITIVE-BUSINESS-CONTEXT-9371'
+    order.authority.signature = signWorkOrder(order as never, 'test-control-key-with-at-least-32-bytes')
+    await state.app.handle({ method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: order })
+    const action = { ...mailAction(), content: 'SENSITIVE-MESSAGE-CONTENT-2846' }
+    const requested = await state.app.handle({ method: 'POST', path: '/v1/approvals/requests', headers: headers('control-plane-token'), body: action })
+    const approvalId = (requested.body as { approval_id: string }).approval_id
+    const decided = await state.app.handle({
+      method: 'POST',
+      path: `/v1/approvals/${approvalId}/decision`,
+      headers: headers('approval-gateway-token'),
+      body: { approved: true, approved_by: 'human-director', expires_at: '2026-08-15T20:15:00.000Z' },
+    })
+    const approvalToken = (decided.body as { token: string }).token
+    await state.app.handle({
+      method: 'POST',
+      path: '/v1/mail/send',
+      headers: headers('connector-token'),
+      body: { action, approval_token: approvalToken },
+    })
+
+    const serialized = JSON.stringify(state.audit.events)
+    for (const prohibited of [
+      'SENSITIVE-BUSINESS-CONTEXT-9371',
+      'SENSITIVE-MESSAGE-CONTENT-2846',
+      approvalToken,
+      'control-plane-token',
+      'approval-gateway-token',
+      'connector-token',
+    ]) {
+      assert.equal(serialized.includes(prohibited), false, `audit leaked ${prohibited}`)
+    }
+    const decisionEvent = state.audit.events.find((event) => event.tool_action === 'approval.decision')!
+    assert.equal(decisionEvent.approval_reference, approvalId)
+    assert.equal(decisionEvent.result, 'status:200')
+    const sendEvent = state.audit.events.find((event) => event.tool_action === 'mail.send')! as typeof decisionEvent & { receipt_reference?: string }
+    assert.equal(sendEvent.approval_reference, approvalId)
+    assert.equal(sendEvent.receipt_reference, 'mail-receipt-1')
   })
 
   it('exposes the authenticated Hostinger webhook route', async () => {

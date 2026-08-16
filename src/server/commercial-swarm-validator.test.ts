@@ -94,6 +94,26 @@ describe('commercial swarm package validator', () => {
     }
   })
 
+  it('excludes nested node_modules from the commercial package audit', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'commercial-swarm-dependency-'))
+    const dependencyRoot = join(tempRoot, 'nested', 'node_modules', 'dependency')
+    mkdirSync(dependencyRoot, { recursive: true })
+    writeFileSync(join(tempRoot, 'README.md'), 'Simulation')
+    writeFileSync(
+      join(dependencyRoot, 'fixture.js'),
+      `export const fixture = "sk-${'a'.repeat(32)}"`,
+    )
+
+    try {
+      const result = validateCommercialSwarm(tempRoot)
+      expect(
+        result.errors.some((error) => error.includes('possible OpenAI secret')),
+      ).toBe(false)
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true })
+    }
+  })
+
   it('accepts an approval display token whose ISO-8601 expiry contains colons', () => {
     const schema = JSON.parse(
       readFileSync(

@@ -3,7 +3,9 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { after, before, describe, it } from 'node:test'
 import { Pool } from 'pg'
-import type { ApprovalAction } from '../src/approvals.js'
+import { ApprovalBroker, type ApprovalAction } from '../src/approvals.js'
+import { hashAction } from '../src/canonical.js'
+import { MailService, type MailTransport } from '../src/mail.js'
 import type { StructuredAuditEvent } from '../src/observability.js'
 import {
   PostgresAuditSink,
@@ -108,6 +110,30 @@ integration('PostgreSQL 17 runtime repository', () => {
     assert.equal(consumed.filter((record) => record === null).length, 1)
   })
 
+  it('enforces one approved grant for an exact mission, action hash, and nonce', async () => {
+    const missionId = '123e4567-e89b-42d3-a456-426614174111'
+    const firstRequest = approvalRequest('323e4567-e89b-42d3-a456-426614174111', missionId)
+    const duplicateRequest = approvalRequest('423e4567-e89b-42d3-a456-426614174111', missionId)
+    await first.createApprovalRequest(firstRequest)
+    await first.createApprovalRequest(duplicateRequest)
+    assert.equal(await first.saveApprovalDecision(approvalGrant(firstRequest)), true)
+
+    await assert.rejects(
+      second.saveApprovalDecision({
+        ...approvalGrant(duplicateRequest),
+        token: `APPROVAL::${missionId}::${duplicateRequest.action_hash}::${LATER}::00112233445566778899aabbccddeeff::${'c'.repeat(64)}`,
+      }),
+      /duplicate key|unique constraint/i,
+    )
+    const consumed = await second.consumeApproval({
+      missionId,
+      actionHash: firstRequest.action_hash,
+      nonce: approvalGrant(firstRequest).nonce,
+      now: NOW,
+    })
+    assert.equal(consumed?.approval_id, firstRequest.approval_id)
+  })
+
   it('permits exactly one concurrent action claim and returns its persisted receipt and approval', async () => {
     const mission = missionRecord('123e4567-e89b-42d3-a456-426614174201', 'mission-db-0201')
     const request = approvalRequest(
@@ -122,6 +148,7 @@ integration('PostgreSQL 17 runtime repository', () => {
       missionId: mission.mission_id,
       channel: 'email',
       idempotencyKey: 'mail-db-0201',
+      actionHash: request.action_hash,
     }
     const attempts = await Promise.allSettled([
       first.claimExternalAction(claim),
@@ -140,6 +167,7 @@ integration('PostgreSQL 17 runtime repository', () => {
     await first.completeExternalAction({
       missionId: mission.mission_id,
       idempotencyKey: claim.idempotencyKey,
+      actionHash: claim.actionHash,
       receipt_id: 'receipt-db-0201',
       approval_id: request.approval_id,
     })
@@ -147,6 +175,93 @@ integration('PostgreSQL 17 runtime repository', () => {
       status: 'completed',
       receipt_id: 'receipt-db-0201',
       approval_id: request.approval_id,
+    })
+  })
+
+  it('rejects a completed idempotency key when any action hash field changes', async () => {
+    const mission = missionRecord('123e4567-e89b-42d3-a456-426614174211', 'mission-db-0211')
+    await first.saveMission(mission)
+    const claim = {
+      missionId: mission.mission_id,
+      channel: 'email',
+      idempotencyKey: 'mail-db-0211',
+      actionHash: 'a'.repeat(64),
+    }
+    assert.deepEqual(await first.claimExternalAction(claim), { status: 'acquired' })
+    await first.completeExternalAction({
+      missionId: mission.mission_id,
+      idempotencyKey: claim.idempotencyKey,
+      actionHash: claim.actionHash,
+      receipt_id: 'receipt-db-0211',
+      approval_id: '323e4567-e89b-42d3-a456-426614174111',
+    })
+
+    await assert.rejects(
+      second.claimExternalAction({ ...claim, actionHash: 'b'.repeat(64) }),
+      /IDEMPOTENCY_CONFLICT/,
+    )
+  })
+
+  it('runs a full overlapping two-grant flow with one transport send', async () => {
+    const missionId = '123e4567-e89b-42d3-a456-426614174221'
+    const mission = {
+      ...missionRecord(missionId, 'mission-db-0221'),
+      expires_at: '2026-08-15T21:00:00.000Z',
+      allowed_actions: ['mail.send'],
+      prohibited_actions: [],
+      approved_channels: ['email'],
+      approved_tools: ['broker.mail'],
+      dry_run: false,
+      project_id: 'proptimiza',
+      project_version: 'v1',
+      offer_version: 'offer-v1',
+      policy_version: 'policy-v1',
+    }
+    await first.saveMission(mission)
+    const action = approvalAction(missionId)
+    const secret = 'postgres-test-secret-with-at-least-32-bytes'
+    const firstBroker = new ApprovalBroker({ repository: first, hmacSecret: secret, now: () => new Date(NOW), id: () => '323e4567-e89b-42d3-a456-426614174221', nonce: () => '00112233445566778899aabbccddeeff' })
+    const secondBroker = new ApprovalBroker({ repository: second, hmacSecret: secret, now: () => new Date(NOW), id: () => '423e4567-e89b-42d3-a456-426614174221', nonce: () => 'ffeeddccbbaa99887766554433221100' })
+    const firstRequest = await firstBroker.request(action)
+    const secondRequest = await secondBroker.request(action)
+    const firstToken = (await firstBroker.decide(firstRequest.approval_id, { approved: true, approved_by: 'human-director', expires_at: LATER })).token!
+    const secondToken = (await secondBroker.decide(secondRequest.approval_id, { approved: true, approved_by: 'human-director', expires_at: LATER })).token!
+    let releaseTransport!: () => void
+    let transportEntered!: () => void
+    const entered = new Promise<void>((resolve) => { transportEntered = resolve })
+    const released = new Promise<void>((resolve) => { releaseTransport = resolve })
+    const sent: ApprovalAction[] = []
+    const transport: MailTransport = {
+      async send(value) {
+        sent.push(structuredClone(value))
+        transportEntered()
+        await released
+        return { receipt_id: 'receipt-db-0221' }
+      },
+    }
+    const firstMail = new MailService({ repository: first, approvals: firstBroker, transport, now: () => new Date(NOW) })
+    const secondMail = new MailService({ repository: second, approvals: secondBroker, transport, now: () => new Date(NOW) })
+    const firstSend = firstMail.send({ action, approval_token: firstToken })
+    await entered
+    await assert.rejects(
+      secondMail.send({ action, approval_token: secondToken }),
+      /EXECUTION_IN_PROGRESS/,
+    )
+    releaseTransport()
+    assert.deepEqual(await firstSend, {
+      receipt_id: 'receipt-db-0221',
+      approval_reference: firstRequest.approval_id,
+    })
+    assert.deepEqual(sent, [action])
+    assert.deepEqual(await second.claimExternalAction({
+      missionId,
+      channel: 'email',
+      idempotencyKey: action.idempotency_key,
+      actionHash: hashAction(action),
+    }), {
+      status: 'completed',
+      receipt_id: 'receipt-db-0221',
+      approval_id: firstRequest.approval_id,
     })
   })
 
@@ -166,6 +281,7 @@ integration('PostgreSQL 17 runtime repository', () => {
           missionId: mission.mission_id,
           channel: 'email',
           idempotencyKey: `mail-kill-${index}`,
+          actionHash: `${index}`.repeat(64),
         }),
         /KILL_SWITCH_ACTIVE/,
       )
@@ -274,11 +390,12 @@ function auditEvent(): StructuredAuditEvent {
     duration_ms: 0,
     token_cost: { input_tokens: 0, output_tokens: 0, currency: 'USD', amount: 0 },
     redacted_input: `sha256:${'c'.repeat(64)}`,
-    result: '{"status":"ok"}',
+    result: 'status:200',
     error: null,
     retries: 0,
     external_action: false,
     approval_reference: null,
+    receipt_reference: null,
     evidence: [],
     state_changes: ['mission.get'],
     deployed_version: 'test',

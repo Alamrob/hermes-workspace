@@ -9,8 +9,10 @@ const NOW = new Date('2026-08-15T20:00:00.000Z')
 
 class ControlledMailTransport implements MailTransport {
   readonly sent: ApprovalAction[] = []
+  readonly received: ApprovalAction[] = []
 
   async send(action: ApprovalAction) {
+    this.received.push(action)
     this.sent.push(structuredClone(action))
     return { receipt_id: `receipt-${this.sent.length}` }
   }
@@ -42,12 +44,13 @@ async function setup(
 ) {
   const repository = new InMemoryRuntimeRepository()
   let approvalIdIndex = 0
+  let nonceIndex = 0
   await repository.saveMission({ mission_id: MISSION_ID, autonomy_level: 'A3', a3_enabled: a3Enabled, expires_at: '2026-08-15T21:00:00.000Z', allowed_actions: ['mail.send'], prohibited_actions: [], approved_channels: ['email'], approved_tools: ['broker.mail'], dry_run: false, project_id: 'proptimiza', project_version: 'v1', offer_version: 'offer-v1', policy_version: 'policy-v1' })
   const approvals = new ApprovalBroker({
     repository,
     hmacSecret: 'test-secret-with-at-least-32-bytes',
     now: () => NOW,
-    nonce: () => '00112233445566778899aabbccddeeff',
+    nonce: () => `${nonceIndex++}`.padStart(32, '0'),
     id: () => approvalIds[approvalIdIndex++]!,
   })
   const transport = new ControlledMailTransport()
@@ -95,6 +98,23 @@ describe('internal mail policy', () => {
 
     assert.deepEqual(result, { receipt_id: 'receipt-1', approval_reference: '323e4567-e89b-42d3-a456-426614174000' })
     assert.deepEqual(state.transport.sent, [approvedAction])
+    assert.notEqual(state.transport.received[0], approvedAction)
+  })
+
+  it('rejects provider options on mail actions before approval or transport', async () => {
+    const state = await setup(true)
+    const approvedAction = action()
+    const approvalToken = await tokenFor(state.approvals, approvedAction)
+    const unsafeAction = {
+      ...approvedAction,
+      provider_options: { headers: { authorization: 'Bearer must-not-pass' } },
+    }
+
+    await assert.rejects(
+      state.mail.send({ action: unsafeAction as never, approval_token: approvalToken }),
+      (error: unknown) => error instanceof Error && error.message === 'INVALID_ACTION',
+    )
+    assert.equal(state.transport.sent.length, 0)
   })
 
   it('returns the original receipt and approval for multiple grants with one idempotency key', async () => {
@@ -113,6 +133,24 @@ describe('internal mail policy', () => {
     assert.deepEqual(state.transport.sent, [approvedAction])
   })
 
+  it('rejects an idempotency key reused for a changed action instead of inheriting its receipt', async () => {
+    const state = await setup(true, [
+      '323e4567-e89b-42d3-a456-426614174000',
+      '423e4567-e89b-42d3-a456-426614174000',
+    ])
+    const firstAction = action()
+    const changedAction = action({ content: 'Mensaje distinto', content_version: 'mail-v2' })
+    const firstToken = await tokenFor(state.approvals, firstAction)
+    const changedToken = await tokenFor(state.approvals, changedAction)
+    await state.mail.send({ action: firstAction, approval_token: firstToken })
+
+    await assert.rejects(
+      state.mail.send({ action: changedAction, approval_token: changedToken }),
+      /IDEMPOTENCY_CONFLICT/,
+    )
+    assert.deepEqual(state.transport.sent, [firstAction])
+  })
+
   it('revalidates the live mission dry-run policy before invoking transport', async () => {
     const state = await setup(true)
     await state.repository.saveMission({ mission_id: MISSION_ID, autonomy_level: 'A3', a3_enabled: true, expires_at: '2026-08-15T21:00:00.000Z', allowed_actions: ['mail.send'], prohibited_actions: [], approved_channels: ['email'], approved_tools: ['broker.mail'], dry_run: true, project_id: 'proptimiza', project_version: 'v1', offer_version: 'offer-v1', policy_version: 'policy-v1' })
@@ -120,5 +158,49 @@ describe('internal mail policy', () => {
     const approvalToken = await tokenFor(state.approvals, approvedAction)
     await assert.rejects(state.mail.send({ action: approvedAction, approval_token: approvalToken }), (error: unknown) => error instanceof MailPolicyError && error.code === 'MISSION_POLICY_DENIED')
     assert.equal(state.transport.sent.length, 0)
+  })
+
+  it('rejects an expired mission at send time before invoking transport', async () => {
+    const state = await setup(true)
+    await state.repository.saveMission({ mission_id: MISSION_ID, autonomy_level: 'A3', a3_enabled: true, expires_at: '2026-08-15T19:59:59.999Z', allowed_actions: ['mail.send'], prohibited_actions: [], approved_channels: ['email'], approved_tools: ['broker.mail'], dry_run: false, project_id: 'proptimiza', project_version: 'v1', offer_version: 'offer-v1', policy_version: 'policy-v1' })
+    const approvedAction = action()
+    const approvalToken = await tokenFor(state.approvals, approvedAction)
+
+    await assert.rejects(
+      state.mail.send({ action: approvedAction, approval_token: approvalToken }),
+      (error: unknown) => error instanceof MailPolicyError && error.code === 'MISSION_POLICY_DENIED',
+    )
+    assert.equal(state.transport.sent.length, 0)
+  })
+
+  it('rejects an action prohibited by the live mission before invoking transport', async () => {
+    const state = await setup(true)
+    await state.repository.saveMission({ mission_id: MISSION_ID, autonomy_level: 'A3', a3_enabled: true, expires_at: '2026-08-15T21:00:00.000Z', allowed_actions: ['mail.send'], prohibited_actions: ['mail.send'], approved_channels: ['email'], approved_tools: ['broker.mail'], dry_run: false, project_id: 'proptimiza', project_version: 'v1', offer_version: 'offer-v1', policy_version: 'policy-v1' })
+    const approvedAction = action()
+    const approvalToken = await tokenFor(state.approvals, approvedAction)
+
+    await assert.rejects(
+      state.mail.send({ action: approvedAction, approval_token: approvalToken }),
+      (error: unknown) => error instanceof MailPolicyError && error.code === 'MISSION_POLICY_DENIED',
+    )
+    assert.equal(state.transport.sent.length, 0)
+  })
+
+  it('rejects a mission with the wrong approved channel or tool before transport', async () => {
+    for (const policy of [
+      { approved_channels: ['internal'], approved_tools: ['broker.mail'] },
+      { approved_channels: ['email'], approved_tools: ['broker.calendar'] },
+    ]) {
+      const state = await setup(true)
+      await state.repository.saveMission({ mission_id: MISSION_ID, autonomy_level: 'A3', a3_enabled: true, expires_at: '2026-08-15T21:00:00.000Z', allowed_actions: ['mail.send'], prohibited_actions: [], dry_run: false, project_id: 'proptimiza', project_version: 'v1', offer_version: 'offer-v1', policy_version: 'policy-v1', ...policy })
+      const approvedAction = action()
+      const approvalToken = await tokenFor(state.approvals, approvedAction)
+
+      await assert.rejects(
+        state.mail.send({ action: approvedAction, approval_token: approvalToken }),
+        (error: unknown) => error instanceof MailPolicyError && error.code === 'MISSION_POLICY_DENIED',
+      )
+      assert.equal(state.transport.sent.length, 0)
+    }
   })
 })

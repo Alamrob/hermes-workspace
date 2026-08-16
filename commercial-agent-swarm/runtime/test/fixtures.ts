@@ -36,8 +36,8 @@ export function validWorkOrder() {
       issuer: 'codex',
       audience: 'hermes-commercial-orchestrator',
       key_id: 'control-key-1',
-      algorithm: 'EdDSA',
-      signature: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      algorithm: 'HMAC-SHA256',
+      signature: 'a'.repeat(64),
     },
     data_policy: {
       classification: 'internal',

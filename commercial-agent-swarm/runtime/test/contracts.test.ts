@@ -52,6 +52,59 @@ describe('work-order contract', () => {
       },
     )
   })
+
+  it('enforces the closed nested work-order contract and its bounded values', () => {
+    const invalid = {
+      ...validWorkOrder(),
+      allowed_actions: ['mail.send', 'mail.send'],
+      budget_limit: { currency: 'clp', maximum: -1, credential: 'must-not-pass' },
+      volume_limits: {
+        ...validWorkOrder().volume_limits,
+        maximum_external_actions: 1.5,
+        unexpected: true,
+      },
+      success_criteria: [],
+      authority: { ...validWorkOrder().authority, unexpected: true },
+      data_policy: {
+        ...validWorkOrder().data_policy,
+        allowed_countries: ['Chile'],
+        retention_days: 3651,
+        unexpected: true,
+      },
+      contact_policy: {
+        ...validWorkOrder().contact_policy,
+        suppression_check_required: false,
+        allowed_local_time_start: '25:00',
+        unexpected: true,
+      },
+    }
+
+    assert.throws(
+      () => validateWorkOrder(invalid),
+      (error: unknown) => {
+        assert.ok(error instanceof ValidationError)
+        for (const expected of [
+          'allowed_actions must contain unique items',
+          'budget_limit.credential is not allowed',
+          'budget_limit.currency is invalid',
+          'budget_limit.maximum is invalid',
+          'volume_limits.maximum_external_actions is invalid',
+          'volume_limits.unexpected is not allowed',
+          'success_criteria must contain at least one item',
+          'authority.unexpected is not allowed',
+          'data_policy.allowed_countries is invalid',
+          'data_policy.retention_days is invalid',
+          'data_policy.unexpected is not allowed',
+          'contact_policy.suppression_check_required must be true',
+          'contact_policy.allowed_local_time_start is invalid',
+          'contact_policy.unexpected is not allowed',
+        ]) {
+          assert.ok(error.issues.includes(expected), `missing issue: ${expected}`)
+        }
+        return true
+      },
+    )
+  })
 })
 
 describe('canonical action hash', () => {

@@ -31,6 +31,10 @@ CREATE TABLE IF NOT EXISTS control.approvals (
   )
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS approvals_approved_mission_action_nonce_uq
+ON control.approvals ((action ->> 'mission_id'), action_hash, nonce)
+WHERE status = 'approved';
+
 CREATE TABLE IF NOT EXISTS control.kill_switch_guard (
   guard_id smallint PRIMARY KEY CHECK (guard_id = 1)
 );
@@ -91,17 +95,54 @@ CREATE TABLE IF NOT EXISTS mail.webhook_events (
 CREATE TABLE IF NOT EXISTS mail.external_actions (
   mission_id uuid NOT NULL REFERENCES control.missions (mission_id) ON DELETE RESTRICT,
   idempotency_key text NOT NULL,
+  action_hash text NOT NULL,
   channel text NOT NULL,
   claimed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   receipt_id text,
   approval_id uuid REFERENCES control.approvals (approval_id) ON DELETE RESTRICT,
   completed_at timestamptz,
   PRIMARY KEY (mission_id, idempotency_key),
+  CONSTRAINT external_actions_action_hash_format CHECK (action_hash ~ '^[0-9a-f]{64}$'),
   CHECK (
     (receipt_id IS NULL AND approval_id IS NULL AND completed_at IS NULL)
     OR (receipt_id IS NOT NULL AND approval_id IS NOT NULL AND completed_at IS NOT NULL)
   )
 );
+
+ALTER TABLE mail.external_actions
+ADD COLUMN IF NOT EXISTS action_hash text;
+
+UPDATE mail.external_actions AS external_action
+SET action_hash = approval.action_hash
+FROM control.approvals AS approval
+WHERE external_action.action_hash IS NULL
+  AND external_action.approval_id = approval.approval_id;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM mail.external_actions WHERE action_hash IS NULL) THEN
+    RAISE EXCEPTION 'EXTERNAL_ACTION_HASH_BACKFILL_REQUIRED';
+  END IF;
+END;
+$$;
+
+ALTER TABLE mail.external_actions
+ALTER COLUMN action_hash SET NOT NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'external_actions_action_hash_format'
+      AND conrelid = 'mail.external_actions'::regclass
+  ) THEN
+    ALTER TABLE mail.external_actions
+    ADD CONSTRAINT external_actions_action_hash_format
+    CHECK (action_hash ~ '^[0-9a-f]{64}$');
+  END IF;
+END;
+$$;
 
 REVOKE ALL ON ALL TABLES IN SCHEMA control FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA mail FROM PUBLIC;

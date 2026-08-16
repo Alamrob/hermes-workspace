@@ -1,4 +1,5 @@
-import type { ApprovalAction, ApprovalBroker } from './approvals.js'
+import { validateApprovalAction, type ApprovalAction, type ApprovalBroker } from './approvals.js'
+import { hashAction } from './canonical.js'
 import type { RuntimeRepository } from './repository.js'
 
 export interface MailTransport {
@@ -21,7 +22,7 @@ export class MailService {
   }) {}
 
   async send(command: { action: ApprovalAction; approval_token: string }): Promise<{ receipt_id: string; approval_reference: string }> {
-    const { action } = command
+    const action = validateApprovalAction(command.action)
     if (action.sender !== 'ventas@proptimiza.com') throw new MailPolicyError('SENDER_NOT_ALLOWED')
     if (
       action.recipients.length !== 1 ||
@@ -37,12 +38,13 @@ export class MailService {
     if (!mission || mission.autonomy_level !== 'A3' || mission.a3_enabled !== true) throw new MailPolicyError('A3_DISABLED')
     if (!mission || !isLiveMailMission(mission, action, (this.options.now ?? (() => new Date()))())) throw new MailPolicyError('MISSION_POLICY_DENIED')
     const grant = await this.options.approvals.authorize(command.approval_token, action)
-    const claim = await this.options.repository.claimExternalAction({ missionId: action.mission_id, channel: action.channel, idempotencyKey: action.idempotency_key })
+    const actionHash = hashAction(action)
+    const claim = await this.options.repository.claimExternalAction({ missionId: action.mission_id, channel: action.channel, idempotencyKey: action.idempotency_key, actionHash })
     if (claim.status === 'completed') {
       return { receipt_id: claim.receipt_id, approval_reference: claim.approval_id }
     }
     const receipt = await this.options.transport.send(action)
-    await this.options.repository.completeExternalAction({ missionId: action.mission_id, idempotencyKey: action.idempotency_key, receipt_id: receipt.receipt_id, approval_id: grant.approval_id })
+    await this.options.repository.completeExternalAction({ missionId: action.mission_id, idempotencyKey: action.idempotency_key, actionHash, receipt_id: receipt.receipt_id, approval_id: grant.approval_id })
     return { ...receipt, approval_reference: grant.approval_id }
   }
 }

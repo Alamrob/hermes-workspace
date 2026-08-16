@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from 'pg'
 import type { ApprovalAction } from './approvals.js'
-import type { AuditSink, StructuredAuditEvent } from './observability.js'
+import { sanitizeAuditEvent, type AuditSink, type StructuredAuditEvent } from './observability.js'
 import type {
   ApprovalGrantRecord,
   ApprovalRequestRecord,
@@ -174,8 +174,9 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
        RETURNING *`,
       [input.missionId, input.actionHash, input.nonce, input.now],
     )
-    const row = result.rows[0]
-    if (!row) return null
+    if (result.rowCount === 0) return null
+    if (result.rowCount !== 1) throw new Error('APPROVAL_CONSUMPTION_CONFLICT')
+    const row = result.rows[0]!
     const record = approvalFromRow(row)
     return record.status === 'approved' ? record : null
   }
@@ -216,6 +217,7 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     missionId: string
     channel: string
     idempotencyKey: string
+    actionHash: string
   }): Promise<
     | { status: 'acquired' }
     | { status: 'completed'; receipt_id: string; approval_id: string }
@@ -237,26 +239,27 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       if (killed.rowCount === 1) throw new Error('KILL_SWITCH_ACTIVE')
 
       const inserted = await client.query(
-        `INSERT INTO mail.external_actions (mission_id, idempotency_key, channel)
-         VALUES ($1, $2, $3)
+        `INSERT INTO mail.external_actions (mission_id, idempotency_key, action_hash, channel)
+         VALUES ($1, $2, $3, $4)
          ON CONFLICT (mission_id, idempotency_key) DO NOTHING
          RETURNING mission_id`,
-        [input.missionId, input.idempotencyKey, input.channel],
+        [input.missionId, input.idempotencyKey, input.actionHash, input.channel],
       )
       if (inserted.rowCount === 1) return { status: 'acquired' as const }
 
       const existing = await client.query<{
         channel: string
+        action_hash: string
         receipt_id: string | null
         approval_id: string | null
       }>(
-        `SELECT channel, receipt_id, approval_id
+        `SELECT channel, action_hash, receipt_id, approval_id
          FROM mail.external_actions
          WHERE mission_id = $1 AND idempotency_key = $2`,
         [input.missionId, input.idempotencyKey],
       )
       const action = existing.rows[0]
-      if (!action || action.channel !== input.channel) throw new Error('IDEMPOTENCY_CONFLICT')
+      if (!action || action.channel !== input.channel || action.action_hash !== input.actionHash) throw new Error('IDEMPOTENCY_CONFLICT')
       if (action.receipt_id && action.approval_id) {
         return {
           status: 'completed' as const,
@@ -271,20 +274,22 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
   async completeExternalAction(input: {
     missionId: string
     idempotencyKey: string
+    actionHash: string
     receipt_id: string
     approval_id: string
   }): Promise<void> {
     const completed = await this.pool.query(
       `UPDATE mail.external_actions
-       SET receipt_id = $3,
-           approval_id = $4,
+       SET receipt_id = $4,
+           approval_id = $5,
            completed_at = clock_timestamp()
        WHERE mission_id = $1
          AND idempotency_key = $2
+         AND action_hash = $3
          AND receipt_id IS NULL
          AND approval_id IS NULL
        RETURNING mission_id`,
-      [input.missionId, input.idempotencyKey, input.receipt_id, input.approval_id],
+      [input.missionId, input.idempotencyKey, input.actionHash, input.receipt_id, input.approval_id],
     )
     if (completed.rowCount === 1) return
     const same = await this.pool.query(
@@ -292,9 +297,10 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
        FROM mail.external_actions
        WHERE mission_id = $1
          AND idempotency_key = $2
-         AND receipt_id = $3
-         AND approval_id = $4`,
-      [input.missionId, input.idempotencyKey, input.receipt_id, input.approval_id],
+          AND action_hash = $3
+          AND receipt_id = $4
+          AND approval_id = $5`,
+      [input.missionId, input.idempotencyKey, input.actionHash, input.receipt_id, input.approval_id],
     )
     if (same.rowCount !== 1) throw new Error('EXTERNAL_ACTION_COMPLETION_CONFLICT')
   }
@@ -305,7 +311,7 @@ export class PostgresAuditSink implements AuditSink {
 
   async record(event: StructuredAuditEvent): Promise<void> {
     await this.pool.query('INSERT INTO control.audit_events (event) VALUES ($1::jsonb)', [
-      JSON.stringify(event),
+      JSON.stringify(sanitizeAuditEvent(event)),
     ])
   }
 }
