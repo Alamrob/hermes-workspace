@@ -81,6 +81,9 @@ export function assertOpenCodeGoExecutionPreflight(
   if (reservedMicrodollars < requiredMicrodollars) {
     throw new Error('OPENCODE_GO_RESERVATION_TOO_LOW')
   }
+  if (OPENCODE_GO_PRICING_SNAPSHOT.picodollars_per_token.cache_write === null) {
+    throw new Error('OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN')
+  }
 }
 
 function assertSnapshotCurrent(now: Date): void {

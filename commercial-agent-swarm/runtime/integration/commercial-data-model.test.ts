@@ -665,21 +665,26 @@ integration('commercial catalog/control/mail data model', () => {
       await rollbackPool.query(await readFile(RUNTIME_MIGRATION, 'utf8'))
       await rollbackPool.query(await readFile(COMMERCIAL_MIGRATION, 'utf8'))
       await rollbackPool.query(
-        'CREATE TABLE catalog.keep_after_002(value text)',
+        `INSERT INTO catalog.projects(project_id,display_name) VALUES('rollback-guard','Rollback Guard')`,
       )
       await assert.rejects(
         rollbackPool.query(await readFile(COMMERCIAL_ROLLBACK, 'utf8')),
-        /cannot drop schema catalog/,
+        /ROLLBACK_BLOCKED_COMMERCIAL_DATA/,
       )
       assert.equal(
         (
           await rollbackPool.query(
-            `SELECT to_regclass('catalog.keep_after_002') IS NOT NULL AS kept,to_regclass('catalog.projects') IS NOT NULL AS migration_kept`,
+            `SELECT count(*)::int AS count FROM catalog.projects WHERE project_id='rollback-guard'`,
           )
-        ).rows[0].migration_kept,
-        true,
+        ).rows[0].count,
+        1,
       )
-      await rollbackPool.query('DROP TABLE catalog.keep_after_002')
+      await rollbackPool.query(
+        `DELETE FROM catalog.projects WHERE project_id='rollback-guard'`,
+      )
+      await rollbackPool.query(
+        'CREATE TABLE catalog.keep_after_002(value text)',
+      )
       await rollbackPool.query(await readFile(COMMERCIAL_ROLLBACK, 'utf8'))
       assert.equal(
         (
@@ -700,6 +705,14 @@ integration('commercial catalog/control/mail data model', () => {
       assert.deepEqual(
         (await rollbackPool.query('SELECT * FROM public.approvals')).rows,
         [{ id: '9' }],
+      )
+      assert.equal(
+        (
+          await rollbackPool.query(
+            `SELECT to_regclass('catalog.keep_after_002') IS NOT NULL AS kept`,
+          )
+        ).rows[0].kept,
+        true,
       )
     } finally {
       await rollbackPool.end()

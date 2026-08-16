@@ -96,10 +96,24 @@ export interface HermesExecutorOptions {
   stdoutLimitBytes?: number
   stderrLimitBytes?: number
   pricingClock?: () => Date
+  pricingPreflight?: typeof assertOpenCodeGoExecutionPreflight
 }
 
 export interface ExecutorPort {
   execute: (input: ExecuteInput) => Promise<ExecutorEnvelope>
+}
+
+export type ExecutorExecutionState = 'not_started' | 'unknown' | 'finished'
+
+export class ExecutorExecutionError extends Error {
+  constructor(
+    message: string,
+    readonly executionState: ExecutorExecutionState,
+    options?: { cause?: unknown },
+  ) {
+    super(message, options)
+    this.name = 'ExecutorExecutionError'
+  }
 }
 
 export class HermesExecutor implements ExecutorPort {
@@ -125,6 +139,25 @@ export class HermesExecutor implements ExecutorPort {
   }
 
   async execute(input: ExecuteInput): Promise<ExecutorEnvelope> {
+    let executionState: ExecutorExecutionState = 'not_started'
+    try {
+      return await this.executeTracked(input, (state) => {
+        executionState = state
+      })
+    } catch (error) {
+      if (error instanceof ExecutorExecutionError) throw error
+      throw new ExecutorExecutionError(
+        error instanceof Error ? error.message : 'EXECUTOR_FAILURE',
+        executionState,
+        { cause: error },
+      )
+    }
+  }
+
+  private async executeTracked(
+    input: ExecuteInput,
+    setExecutionState: (state: ExecutorExecutionState) => void,
+  ): Promise<ExecutorEnvelope> {
     if (!ACTIVE_PROFILES.includes(input.profile_id))
       throw new Error('UNKNOWN_PROFILE')
     const request = validateExecuteRequest({
@@ -135,7 +168,10 @@ export class HermesExecutor implements ExecutorPort {
     if (request.execution_timeout_ms !== this.options.timeoutMs)
       throw new Error('HERMES_TIMEOUT_HANDSHAKE_MISMATCH')
     const pricingNow = (this.options.pricingClock ?? (() => new Date()))()
-    assertOpenCodeGoExecutionPreflight(request.reservation, pricingNow)
+    ;(this.options.pricingPreflight ?? assertOpenCodeGoExecutionPreflight)(
+      request.reservation,
+      pricingNow,
+    )
     const ownerUid = this.options.expectedOwnerUid ?? process.getuid?.() ?? 0
     await assertSecureDirectory(
       this.options.temporaryRoot,
@@ -176,6 +212,7 @@ export class HermesExecutor implements ExecutorPort {
         throw new Error('HERMES_CWD_NOT_EMPTY')
       const usageFile = join(cwd, 'usage.json')
       const startedAt = new Date().toISOString()
+      setExecutionState('unknown')
       const output = await this.options.runner.run({
         command: HERMES_BINARY,
         args: [
@@ -203,6 +240,7 @@ export class HermesExecutor implements ExecutorPort {
         stderrLimitBytes: this.options.stderrLimitBytes ?? 262_144,
       })
       if (output.timedOut) throw new Error('HERMES_TIMEOUT')
+      setExecutionState('finished')
       if (output.exitCode !== 0)
         throw new Error(`HERMES_EXIT_${output.exitCode}`)
       const nativeUsage = validateHermesUsage(

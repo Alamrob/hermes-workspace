@@ -310,6 +310,29 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
 
   it('rollback removes only 003 and preserves 001, 002, and unrelated objects', async () => {
     await a.query('CREATE TABLE control.keep_after_003(value text)')
+    await assert.rejects(
+      a.query(
+        await readFile(
+          new URL(
+            '../migrations/003_dispatch_queue.rollback.sql',
+            import.meta.url,
+          ),
+          'utf8',
+        ),
+      ),
+      /ROLLBACK_BLOCKED_DISPATCH_HISTORY/,
+    )
+    assert.equal(
+      (
+        await a.query(
+          `SELECT count(*)::int AS count FROM control.dispatch_jobs`,
+        )
+      ).rows[0].count > 0,
+      true,
+    )
+    await a.query(
+      'TRUNCATE control.dispatch_events,control.dispatch_dependencies,control.dispatch_jobs',
+    )
     await a.query(
       await readFile(
         new URL(

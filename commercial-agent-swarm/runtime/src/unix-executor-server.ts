@@ -3,7 +3,7 @@ import { lstat, unlink } from 'node:fs/promises'
 import { validateExecuteRequest } from './executor-contract.js'
 import { encodeFrame, readSingleFrame } from './unix-frame.js'
 import type { Server, Socket } from 'node:net'
-import type { ExecutorPort } from './hermes-executor.js'
+import { ExecutorExecutionError, type ExecutorPort } from './hermes-executor.js'
 import type { SocketSecurityPort } from './socket-security.js'
 
 export interface UnixExecutorServerOptions {
@@ -101,15 +101,14 @@ export class UnixExecutorServer {
     } catch (error) {
       if (!socket.destroyed) {
         const code = mapExecutorError(error)
+        const executionState =
+          error instanceof ExecutorExecutionError
+            ? error.executionState
+            : requestId === 'invalid-request'
+              ? 'not_started'
+              : 'unknown'
         socket.end(
-          encodeFrame(
-            errorResponse(
-              requestId,
-              code,
-              false,
-              requestId === 'invalid-request' ? 'not_started' : 'finished',
-            ),
-          ),
+          encodeFrame(errorResponse(requestId, code, false, executionState)),
         )
       }
     }

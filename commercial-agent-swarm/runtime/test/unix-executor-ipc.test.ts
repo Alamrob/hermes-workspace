@@ -8,6 +8,7 @@ import {
   UnixExecutorClient,
 } from '../src/unix-executor-client.js'
 import { UnixExecutorServer } from '../src/unix-executor-server.js'
+import { ExecutorExecutionError } from '../src/hermes-executor.js'
 import type { ExecuteInput } from '../src/executor-contract.js'
 import type { ExecutorEnvelope, ExecutorPort } from '../src/hermes-executor.js'
 
@@ -203,7 +204,10 @@ describe('Unix executor IPC', () => {
     const path = socketPath()
     const executor: ExecutorPort = {
       execute: async () => {
-        throw new Error('OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED')
+        throw new ExecutorExecutionError(
+          'OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED',
+          'not_started',
+        )
       },
     }
     const server = new UnixExecutorServer({
@@ -221,7 +225,7 @@ describe('Unix executor IPC', () => {
           error instanceof ExecutorTransportError &&
           error.code === 'OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED' &&
           !error.recoverable &&
-          error.executionState === 'finished',
+          error.executionState === 'not_started',
       )
     } finally {
       await server.stop()
@@ -234,7 +238,7 @@ describe('Unix executor IPC', () => {
       socketPath: path,
       executor: {
         execute: async () => {
-          throw new Error('HERMES_TIMEOUT')
+          throw new ExecutorExecutionError('HERMES_TIMEOUT', 'unknown')
         },
       },
       frameTimeoutMs: 500,
@@ -249,7 +253,34 @@ describe('Unix executor IPC', () => {
           error instanceof ExecutorTransportError &&
           error.code === 'HERMES_TIMEOUT' &&
           !error.recoverable &&
-          error.executionState === 'finished',
+          error.executionState === 'unknown',
+      )
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('treats an unclassified post-validation executor failure as unknown, never as proven finished', async () => {
+    const path = socketPath()
+    const server = new UnixExecutorServer({
+      socketPath: path,
+      executor: {
+        execute: async () => {
+          throw new Error('EXECUTOR_FAILURE')
+        },
+      },
+      frameTimeoutMs: 500,
+    })
+    await server.start()
+    try {
+      await assert.rejects(
+        new UnixExecutorClient({ socketPath: path, timeoutMs: 1_000 }).execute(
+          input,
+        ),
+        (error: unknown) =>
+          error instanceof ExecutorTransportError &&
+          error.code === 'EXECUTOR_FAILURE' &&
+          error.executionState === 'unknown',
       )
     } finally {
       await server.stop()

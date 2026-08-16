@@ -1,4 +1,25 @@
 BEGIN;
+DO $$
+BEGIN
+ IF (SELECT count(*) FROM catalog.projects) <> 1
+    OR NOT EXISTS(SELECT 1 FROM catalog.projects WHERE project_id='proptimiza' AND display_name='Proptimiza')
+    OR (SELECT count(*) FROM catalog.project_versions) <> 1
+    OR (SELECT count(*) FROM catalog.offer_versions) <> 1
+    OR (SELECT count(*) FROM catalog.icp_versions) <> 1
+    OR (SELECT count(*) FROM catalog.policy_versions) <> 1
+    OR (SELECT count(*) FROM catalog.version_activations) <> 1
+    OR (SELECT count(*) FROM mail.delivery_policies) <> 1
+    OR (SELECT count(*) FROM mail.delivery_policy_activations) <> 1
+    OR EXISTS(SELECT 1 FROM control.deployed_versions)
+    OR EXISTS(SELECT 1 FROM control.missions)
+    OR EXISTS(SELECT 1 FROM control.approvals)
+    OR EXISTS(SELECT 1 FROM control.audit_events)
+    OR EXISTS(SELECT 1 FROM mail.webhook_events)
+    OR EXISTS(SELECT 1 FROM mail.external_actions)
+ THEN
+   RAISE EXCEPTION 'ROLLBACK_BLOCKED_COMMERCIAL_DATA';
+ END IF;
+END $$;
 REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_work_order_ingestor,commercial_approver,commercial_safety_operator,commercial_observer;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog,control,mail FROM commercial_runtime,commercial_work_order_ingestor,commercial_approver,commercial_safety_operator,commercial_observer;
 DROP VIEW IF EXISTS control.mission_summaries,control.approval_summaries;
@@ -12,5 +33,4 @@ DROP TABLE IF EXISTS catalog.version_activations,catalog.offer_versions,catalog.
 DROP TABLE IF EXISTS control.deployed_versions;
 DROP FUNCTION IF EXISTS catalog.reject_versioned_catalog_mutation(),catalog.require_published_activation(),control.reject_deployed_version_mutation(),mail.reject_delivery_policy_mutation(),mail.require_published_delivery_activation();
 DROP INDEX IF EXISTS mail.external_actions_approval_id_idx;
-DROP SCHEMA IF EXISTS catalog;
 COMMIT;

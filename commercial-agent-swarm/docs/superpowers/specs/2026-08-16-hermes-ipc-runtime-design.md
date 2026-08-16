@@ -30,6 +30,8 @@ Every job reserves bounded `maximum_tokens`, bounded `maximum_api_calls` and a U
 
 Hermes 0.20.1 is invoked with its supported `-z <prompt> --usage-file <executor-controlled-path>` noninteractive path. The executor validates the closed usage JSON and independently prices trusted token counts from the dated official OpenCode Go snapshot. Before reading the API key or spawning, it rejects an expired snapshot, unpublished cache-write pricing or a reservation below worst-case output-token value. The stored snapshot identifier is mandatory; model-authored accounting fields are never authoritative.
 
+The dated `opencode-go-2026-08-16-v1` snapshot has no published DeepSeek V4 Flash cache-write rate, so production inference remains blocked at preflight. This does not change the approved OpenCode Go endpoint or model. A reviewed replacement snapshot, or a closed and verified guarantee that cache-write tokens cannot occur, is required before the executor may read the Go key or start Hermes.
+
 ## Child process and filesystem containment
 
 The executor accepts only UID/GID `10000`, the fixed image path `/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin`, and an absolute, existing temporary root whose entire resolved path is not a symlink. This path resolves the stock image's `/opt/hermes/.venv/bin/hermes` without a runtime override. Before every copy, the seed path must be absolute and real, owned by root, not group/world writable, contain no symlink and match an approved manifest of relative file SHA-256 values with no missing or extra files. The copied tree is verified again before it is transferred to UID/GID `10000`.
@@ -42,11 +44,13 @@ The invocation is the exact path verified against the pinned Hermes 0.20.1 image
 
 `003_dispatch_queue.rollback.sql` revokes and drops only migration 003 functions, trigger, dispatch event/dependency/job tables and their identity sequence through table removal. It does not drop or mutate schema objects from migrations 001 or 002. A PostgreSQL 17 test inserts sentinel rows into the non-empty legacy tables, applies 001/002/003, executes the rollback and proves the legacy rows plus representative 001/002 functions and catalog seed remain intact.
 
+Both rollback scripts fail closed before any destructive statement when their owned tables contain non-seed operational data. Migration 002 permits only its exact reproducible Proptimiza seed and no dependent mission, approval, audit, webhook or external-action state; migration 003 requires empty dispatch history. Operators must preserve and explicitly clear any such history under an approved recovery procedure before a schema downgrade.
+
 Rollback fails closed if PostgreSQL cannot drop the 003 objects cleanly. It does not delete queued work separately; deployment must verify the queue is empty before invoking it.
 
 ## Error handling and audit behavior
 
-IPC protocol violations do not reach Hermes. Server busy and confirmed Hermes timeout become recoverable dispatcher failures and consume the existing attempt budget. Client timeout or connection loss leaves the lease untouched until server-clock expiry, preventing a new child from starting while the first may still run. Closed-schema executor failures and malformed output remain non-recoverable. PostgreSQL continues to provide the authoritative lease, retry, kill-switch, budget and append-only state history; IPC adds no second durable queue.
+IPC protocol violations do not reach Hermes. Server busy is a recoverable dispatcher failure and consumes the existing attempt budget. A confirmed Hermes timeout is terminal `usage_unknown`, because killing and reaping the process cannot prove that the provider recorded no usage. Client timeout or connection loss leaves the lease untouched until server-clock expiry, preventing a new child from starting while the first may still run. Closed-schema executor failures and malformed output remain non-recoverable. PostgreSQL continues to provide the authoritative lease, retry, kill-switch, budget and append-only state history; IPC adds no second durable queue.
 
 Error frames and database event reasons contain bounded codes, not raw secrets, full stderr or arbitrary stack traces.
 

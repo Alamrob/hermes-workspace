@@ -104,7 +104,7 @@ class FakeRunner implements ProcessRunner {
   }
 }
 
-async function setup() {
+async function setup(options: { productionPricing?: boolean } = {}) {
   const root = join(tmpdir(), `executor-test-${crypto.randomUUID()}`)
   const seed = join(root, 'seed')
   await mkdir(join(seed, 'profiles', profileId), { recursive: true })
@@ -136,6 +136,7 @@ async function setup() {
     safePath: '/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin',
     timeoutMs: 1_000,
     pricingClock: () => new Date('2026-08-16T12:00:00Z'),
+    pricingPreflight: options.productionPricing ? undefined : () => undefined,
   })
   return { root, seed, runner, ownershipCalls, executor }
 }
@@ -217,7 +218,7 @@ describe('isolated Hermes executor', () => {
   })
 
   it('rejects an expired pricing snapshot or insufficient reservation before reading the key or spawning Hermes', async () => {
-    const expired = await setup()
+    const expired = await setup({ productionPricing: true })
     ;(
       expired.executor as unknown as { options: { pricingClock: () => Date } }
     ).options.pricingClock = () => new Date('2026-09-01T00:00:00Z')
@@ -227,7 +228,7 @@ describe('isolated Hermes executor', () => {
     )
     assert.equal(expired.runner.invocations.length, 0)
 
-    const underfunded = await setup()
+    const underfunded = await setup({ productionPricing: true })
     await assert.rejects(
       underfunded.executor.execute({
         ...input(),
@@ -239,6 +240,13 @@ describe('isolated Hermes executor', () => {
       /OPENCODE_GO_RESERVATION_TOO_LOW/,
     )
     assert.equal(underfunded.runner.invocations.length, 0)
+
+    const unpricedCacheWrite = await setup({ productionPricing: true })
+    await assert.rejects(
+      unpricedCacheWrite.executor.execute(input()),
+      /OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN/,
+    )
+    assert.equal(unpricedCacheWrite.runner.invocations.length, 0)
   })
 
   it('wraps prompt injection as untrusted data and never enables forbidden flags', async () => {

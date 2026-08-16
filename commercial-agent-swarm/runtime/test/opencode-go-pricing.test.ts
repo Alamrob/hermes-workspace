@@ -71,15 +71,17 @@ describe('versioned OpenCode Go pricing', () => {
     )
   })
 
-  it('reserves the worst-case output-token usage value before execution', () => {
-    assert.doesNotThrow(() =>
-      assertOpenCodeGoExecutionPreflight(
-        {
-          maximum_tokens: 24_576,
-          budget_reservation: { currency: 'USD', amount: 0.006882 },
-        },
-        new Date('2026-08-16T12:00:00Z'),
-      ),
+  it('checks the output-token reservation, then blocks while cache-write pricing is unpublished', () => {
+    assert.throws(
+      () =>
+        assertOpenCodeGoExecutionPreflight(
+          {
+            maximum_tokens: 24_576,
+            budget_reservation: { currency: 'USD', amount: 0.006882 },
+          },
+          new Date('2026-08-16T12:00:00Z'),
+        ),
+      /OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN/,
     )
     assert.throws(
       () =>

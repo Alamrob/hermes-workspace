@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { DeterministicDispatcher } from '../src/dispatch-queue.js'
-import { ExecutorTransportError } from '../src/unix-executor-client.js'
+import {
+  ExecutorTransportError,
+  UnixExecutorClient,
+} from '../src/unix-executor-client.js'
+import { UnixExecutorServer } from '../src/unix-executor-server.js'
+import { ExecutorExecutionError } from '../src/hermes-executor.js'
 import type { ClaimedJob } from '../src/dispatch-queue.js'
 import type { ExecutorEnvelope } from '../src/hermes-executor.js'
 
@@ -213,6 +221,42 @@ describe('deterministic dispatcher', () => {
     })
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(queue.failed[0][4], 'not_started')
+  })
+
+  it('refunds a pre-spawn failure after it crosses the real Unix executor protocol', async () => {
+    const queue = new FakeQueue()
+    const socketPath =
+      process.platform === 'win32'
+        ? `\\\\.\\pipe\\dispatcher-refund-${randomUUID()}`
+        : join(tmpdir(), `dispatcher-refund-${randomUUID()}.sock`)
+    const server = new UnixExecutorServer({
+      socketPath,
+      executor: {
+        execute: async () => {
+          throw new ExecutorExecutionError(
+            'OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN',
+            'not_started',
+          )
+        },
+      },
+      frameTimeoutMs: 500,
+    })
+    await server.start()
+    try {
+      const dispatcher = new DeterministicDispatcher({
+        queue: queue as never,
+        executor: new UnixExecutorClient({ socketPath, timeoutMs: 1_000 }),
+        workerId: 'worker-1',
+        leaseSeconds: 60,
+        childTimeoutSeconds: 30,
+        hermesTimeoutMs: 30_000,
+      })
+      assert.equal(await dispatcher.runOnce(), true)
+      assert.equal(queue.failed[0][2], 'OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN')
+      assert.equal(queue.failed[0][4], 'not_started')
+    } finally {
+      await server.stop()
+    }
   })
 
   it('leaves the lease untouched when IPC outcome is uncertain', async () => {
