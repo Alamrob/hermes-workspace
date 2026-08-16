@@ -123,6 +123,9 @@ export class TwentyHttpClient implements TwentyClientPort {
     let base: URL
     try { base = new URL(options.apiBaseUrl) } catch { throw new Error('TWENTY_ORIGIN_INVALID') }
     const allowed = options.allowedHttpHost
+    const hostname = base.hostname.startsWith('[') && base.hostname.endsWith(']')
+      ? base.hostname.slice(1, -1)
+      : base.hostname
     const allowedValid =
       typeof allowed === 'string' &&
       /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*:[1-9][0-9]{0,4}$/i.test(allowed) &&
@@ -130,6 +133,7 @@ export class TwentyHttpClient implements TwentyClientPort {
       isIP(allowed.slice(0, allowed.lastIndexOf(':'))) === 0
     if (
       !['http:', 'https:'].includes(base.protocol) ||
+      isIP(hostname) !== 0 ||
       base.pathname !== '/' || base.search || base.hash || base.username || base.password ||
       (base.protocol === 'http:' && (!allowedValid || base.host !== allowed)) ||
       (base.protocol === 'https:' && allowed !== undefined && (!allowedValid || base.host !== allowed))

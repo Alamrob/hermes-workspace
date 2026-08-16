@@ -347,6 +347,32 @@ describe('broker application routes', () => {
     assert.equal('business_context' in mission, false)
   })
 
+  it('returns closed parser/body errors without reflecting attacker-controlled input', async () => {
+    const state = setup()
+    const server = createBrokerHttpServer(state.app, { maxBodyBytes: 32 })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const address = server.address()
+      assert.ok(address && typeof address === 'object')
+      const base = `http://127.0.0.1:${address.port}/v1/work-orders`
+      const malformed = '"super-secret-payload'
+      const invalid = await fetch(base, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: malformed,
+      })
+      assert.equal(invalid.status, 400)
+      const invalidBody = await invalid.json()
+      assert.deepEqual(invalidBody, { error: 'invalid_json' })
+      assert.equal(JSON.stringify(invalidBody).includes('super-secret'), false)
+      const large = await fetch(base, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: 'x'.repeat(33),
+      })
+      assert.equal(large.status, 413)
+      assert.deepEqual(await large.json(), { error: 'payload_too_large' })
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
   it('serves the exact authenticated portfolio read model without invented metrics', async () => {
     const state = setup()
     assert.equal((await state.app.handle({

@@ -11,7 +11,14 @@ export function createBrokerHttpServer(
         const rawBody = await readBoundedBody(request, options.maxBodyBytes)
         const path = new URL(request.url ?? '/', 'http://broker.local').pathname
         const isWebhook = path.startsWith('/webhooks/hostinger-mail/')
-        const body = rawBody.length > 0 && !isWebhook ? JSON.parse(rawBody.toString('utf8')) : undefined
+        let body: unknown
+        if (rawBody.length > 0 && !isWebhook) {
+          try {
+            body = JSON.parse(rawBody.toString('utf8'))
+          } catch {
+            throw new InvalidJsonError()
+          }
+        }
         const result = await app.handle({
           method: request.method ?? 'GET',
           path,
@@ -26,9 +33,14 @@ export function createBrokerHttpServer(
         response.setHeader('content-type', 'application/json')
         response.end(JSON.stringify(result.body))
       } catch (error) {
-        response.statusCode = error instanceof PayloadTooLargeError ? 413 : 400
+        const known = error instanceof PayloadTooLargeError
+          ? { status: 413, code: 'payload_too_large' }
+          : error instanceof InvalidJsonError
+            ? { status: 400, code: 'invalid_json' }
+            : { status: 500, code: 'internal_error' }
+        response.statusCode = known.status
         response.setHeader('content-type', 'application/json')
-        response.end(JSON.stringify({ error: error instanceof Error ? error.message : 'bad_request' }))
+        response.end(JSON.stringify({ error: known.code }))
       }
     })()
   })
@@ -39,6 +51,8 @@ class PayloadTooLargeError extends Error {
     super('payload_too_large')
   }
 }
+
+class InvalidJsonError extends Error {}
 
 async function readBoundedBody(
   request: AsyncIterable<Buffer | Uint8Array | string> & { headers: Record<string, unknown> },

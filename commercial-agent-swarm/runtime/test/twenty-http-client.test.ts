@@ -46,6 +46,10 @@ describe('versioned Twenty REST client', () => {
     for (const apiBaseUrl of [
       'http://127.0.0.1:3000',
       'http://169.254.169.254',
+      'https://127.0.0.1:3000',
+      'https://169.254.169.254',
+      'https://[::1]:3000',
+      'https://[::ffff:127.0.0.1]:3000',
       'http://twenty-server:3001',
       'http://user:pass@twenty-server:3000',
       'http://twenty-server:3000/rest/companies',
@@ -53,6 +57,17 @@ describe('versioned Twenty REST client', () => {
       assert.throws(() => new TwentyHttpClient({
         apiBaseUrl,
         allowedHttpHost: 'twenty-server:3000',
+        token: 'token',
+        mapping: parseTwentyRestMapping(JSON.stringify(mappingDocument)),
+      }), /TWENTY_ORIGIN_INVALID/)
+    for (const apiBaseUrl of [
+      'https://127.0.0.1:3000',
+      'https://169.254.169.254',
+      'https://[::1]:3000',
+      'https://[::ffff:127.0.0.1]:3000',
+    ])
+      assert.throws(() => new TwentyHttpClient({
+        apiBaseUrl,
         token: 'token',
         mapping: parseTwentyRestMapping(JSON.stringify(mappingDocument)),
       }), /TWENTY_ORIGIN_INVALID/)
