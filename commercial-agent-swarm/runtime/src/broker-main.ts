@@ -2,8 +2,8 @@ import { pathToFileURL } from 'node:url'
 import { ApprovalBroker } from './approvals.js'
 import { ApprovalModeCoordinator } from './approval-mode.js'
 import { BrokerApplication } from './application.js'
-import { DisabledExternalMailTransport } from './disabled-transports.js'
 import { MailService } from './mail.js'
+import { createBrokerExternalTransports } from './integration-factories.js'
 import { createRuntimePersistence } from './production.js'
 import { createBrokerHttpServer } from './server.js'
 import {
@@ -31,9 +31,11 @@ export async function startSimulationBroker(
     )
       throw new Error('SIMULATION_KILL_SWITCH_NOT_ACTIVE')
 
+    const externalTransports = createBrokerExternalTransports(environment)
     const approvals = new ApprovalBroker({
       repository: persistence.repository,
       hmacSecret: secrets.approvalHmac,
+      telegram: externalTransports.telegram,
     })
     const approvalCoordinator = new ApprovalModeCoordinator({
       mode: config.approvalMode,
@@ -47,7 +49,7 @@ export async function startSimulationBroker(
       mail: new MailService({
         repository: persistence.repository,
         approvals,
-        transport: new DisabledExternalMailTransport(),
+        transport: externalTransports.mail,
       }),
       webhook: new WebhookService({
         repository: persistence.repository,
