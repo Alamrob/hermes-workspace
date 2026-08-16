@@ -1,62 +1,72 @@
-export type KnownCrmSummaryReadModel = {
-  status: 'known'
-  connector: 'twenty'
-  outbox: { pending: number; leased: number; confirmed: number; failed: number; outcomeUnknown: number }
-  inboxCount: number
-  entityLinkCount: number
-  cursorCount: number
-  lastSuccessfulSyncAt: string | null
-  provenance: 'postgres'
+export type CrmSummaryReadModel = {
+  availability: 'available' | 'unavailable'
+  accounts: number | null
+  contacts: number | null
+  opportunities: number | null
+  pipelineUsd: number | null
+  provenance: {
+    source: 'twenty'
+    sourceId: string
+    observedAt: string
+    synthetic: false
+  }
+  message?: string
 }
-
-export type DisabledCrmSummaryReadModel = {
-  status: 'disabled'
-  connector: 'twenty'
-  outbox: null
-  inboxCount: null
-  entityLinkCount: null
-  cursorCount: null
-  lastSuccessfulSyncAt: null
-  provenance: 'simulation-disabled'
-}
-
-export type CrmSummaryReadModel = KnownCrmSummaryReadModel | DisabledCrmSummaryReadModel
 
 const SUMMARY_KEYS = [
-  'status', 'connector', 'outbox', 'inboxCount', 'entityLinkCount',
-  'cursorCount', 'lastSuccessfulSyncAt', 'provenance',
+  'availability', 'accounts', 'contacts', 'opportunities', 'pipelineUsd',
+  'provenance',
 ] as const
-const OUTBOX_KEYS = ['pending', 'leased', 'confirmed', 'failed', 'outcomeUnknown'] as const
 
-export function disabledCrmSummaryReadModel(): DisabledCrmSummaryReadModel {
+export function disabledCrmSummaryReadModel(
+  observedAt = new Date().toISOString(),
+): CrmSummaryReadModel {
   return {
-    status: 'disabled', connector: 'twenty', outbox: null,
-    inboxCount: null, entityLinkCount: null, cursorCount: null,
-    lastSuccessfulSyncAt: null, provenance: 'simulation-disabled',
+    availability: 'unavailable',
+    accounts: null,
+    contacts: null,
+    opportunities: null,
+    pipelineUsd: null,
+    message: 'CRM sync disabled',
+    provenance: {
+      source: 'twenty',
+      sourceId: 'crm:simulation-disabled',
+      observedAt,
+      synthetic: false,
+    },
   }
 }
 
 export function validateCrmSummaryReadModel(value: unknown): CrmSummaryReadModel {
   try {
     const summary = object(value)
-    exactKeys(summary, SUMMARY_KEYS)
-    if (summary.connector !== 'twenty') throw new Error('connector')
-    if (summary.status === 'disabled') {
-      if (summary.outbox !== null || summary.inboxCount !== null || summary.entityLinkCount !== null ||
-          summary.cursorCount !== null || summary.lastSuccessfulSyncAt !== null ||
-          summary.provenance !== 'simulation-disabled') throw new Error('disabled')
-      return value as DisabledCrmSummaryReadModel
-    }
-    if (summary.status !== 'known' || summary.provenance !== 'postgres') throw new Error('status')
-    const outbox = object(summary.outbox)
-    exactKeys(outbox, OUTBOX_KEYS)
-    for (const key of OUTBOX_KEYS) if (!count(outbox[key])) throw new Error('outbox')
-    for (const key of ['inboxCount', 'entityLinkCount', 'cursorCount'] as const)
-      if (!count(summary[key])) throw new Error('count')
-    if (summary.lastSuccessfulSyncAt !== null &&
-        (typeof summary.lastSuccessfulSyncAt !== 'string' ||
-         !Number.isFinite(Date.parse(summary.lastSuccessfulSyncAt)))) throw new Error('timestamp')
-    return value as KnownCrmSummaryReadModel
+    const expectedKeys = summary.message === undefined
+      ? SUMMARY_KEYS
+      : [...SUMMARY_KEYS, 'message']
+    exactKeys(summary, expectedKeys)
+    if (summary.availability !== 'available' && summary.availability !== 'unavailable')
+      throw new Error('availability')
+    if (summary.message !== undefined && typeof summary.message !== 'string')
+      throw new Error('message')
+    for (const key of ['accounts', 'contacts', 'opportunities'] as const)
+      if (summary[key] !== null && !nonnegativeInteger(summary[key])) throw new Error(key)
+    if (summary.pipelineUsd !== null &&
+        (typeof summary.pipelineUsd !== 'number' || !Number.isFinite(summary.pipelineUsd) || summary.pipelineUsd < 0))
+      throw new Error('pipeline')
+    if (summary.availability === 'unavailable' &&
+        (summary.accounts !== null || summary.contacts !== null ||
+         summary.opportunities !== null || summary.pipelineUsd !== null))
+      throw new Error('unavailable values')
+    if (summary.availability === 'available' &&
+        (summary.accounts === null || summary.contacts === null || summary.opportunities === null))
+      throw new Error('available counts')
+    const provenance = object(summary.provenance)
+    exactKeys(provenance, ['source', 'sourceId', 'observedAt', 'synthetic'])
+    if (provenance.source !== 'twenty' || typeof provenance.sourceId !== 'string' ||
+        provenance.sourceId.length === 0 || typeof provenance.observedAt !== 'string' ||
+        !Number.isFinite(Date.parse(provenance.observedAt)) || provenance.synthetic !== false)
+      throw new Error('provenance')
+    return value as CrmSummaryReadModel
   } catch {
     throw new Error('CRM_SUMMARY_RESULT_INVALID')
   }
@@ -73,6 +83,6 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[]):
   if (actual.length !== keys.length || actual.some((key, index) => key !== keys[index])) throw new Error('keys')
 }
 
-function count(value: unknown): boolean {
+function nonnegativeInteger(value: unknown): boolean {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }

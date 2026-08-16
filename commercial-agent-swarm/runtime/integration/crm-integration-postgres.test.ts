@@ -23,6 +23,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '003_dispatch_queue',
         '004_crm_integration',
         '005_portfolio_read_models',
+        '006_sales_read_models',
       ]
       await runVersionedMigrations(
         pool,
@@ -77,14 +78,18 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
       )
       await pool.query(`SET ROLE commercial_runtime`)
       const portfolio = (await pool.query(`SELECT control.get_portfolio_read_model() AS model`)).rows[0].model
-      assert.equal(portfolio.projects.length, 26)
-      assert.equal(portfolio.costs.usageValueMicroCents, null)
-      assert.equal(portfolio.projects.find((project: any) => project.projectId === 'wspro').displayName, 'WSPro')
+      assert.equal(portfolio.portfolio.length, 26)
+      assert.equal(portfolio.projects.length, 0)
+      assert.deepEqual(portfolio.costs, [])
+      assert.equal(portfolio.portfolio.find((item: any) => item.id === 'wspro').name, 'WSPro')
+      assert.equal(typeof portfolio.control.killSwitch, 'boolean')
       await pool.query(`RESET ROLE`)
       await pool.query(`SET ROLE commercial_crm_sync`)
       const crmSummary = (await pool.query(`SELECT integration.get_crm_summary() AS model`)).rows[0].model
-      assert.equal(crmSummary.connector, 'twenty')
-      assert.equal(crmSummary.provenance, 'postgres')
+      assert.equal(crmSummary.availability, 'unavailable')
+      assert.equal(crmSummary.accounts, null)
+      assert.equal(crmSummary.pipelineUsd, null)
+      assert.equal(crmSummary.provenance.source, 'twenty')
       await pool.query(`RESET ROLE`)
 
       const cohortId = randomUUID()

@@ -401,11 +401,13 @@ describe('broker application routes', () => {
       'portfolio', 'projects', 'missions', 'missionDrafts', 'approvals',
       'qa', 'agents', 'experiments', 'costs', 'audit', 'control',
     ])
-    assert.equal(body.projects.length, 26)
-    assert.equal(body.projects.find((project: any) => project.projectId === 'wspro').displayName, 'WSPro')
-    assert.equal(body.projects.find((project: any) => project.projectId === 'xg-systems').activatable, false)
-    assert.equal(body.costs.usageValueMicroCents, null)
-    assert.equal(body.missionDrafts.count, null)
+    assert.equal(body.portfolio.length, 26)
+    assert.equal(body.projects.length, 0)
+    assert.equal(body.portfolio.find((item: any) => item.id === 'wspro').name, 'WSPro')
+    assert.equal(body.portfolio.find((item: any) => item.id === 'xg-systems').activatable, false)
+    assert.deepEqual(body.costs, [])
+    assert.deepEqual(body.missionDrafts, [])
+    assert.equal(typeof body.control.killSwitch, 'boolean')
   })
 
   it('exposes approval request/decision and the one-time mail endpoint through injected transports', async () => {

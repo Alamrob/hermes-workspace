@@ -28,15 +28,19 @@ describe('versioned Sales read-model contracts', () => {
       'portfolio', 'projects', 'missions', 'missionDrafts', 'approvals', 'qa',
       'agents', 'experiments', 'costs', 'audit', 'control',
     ])
-    assert.equal(schema.properties.projects.minItems, 26)
-    assert.equal(schema.properties.projects.maxItems, 26)
+    assert.equal(schema.properties.portfolio.type, 'array')
+    assert.equal(schema.properties.portfolio.minItems, 26)
+    assert.equal(schema.properties.portfolio.maxItems, 26)
+    assert.equal(schema.properties.control.properties.killSwitch.type, 'boolean')
   })
 
   it('publishes a closed CRM schema for known and simulation-disabled summaries', async () => {
     const schema = await contract('crm-summary')
     assert.equal(schema.$id, 'https://alam.cl/contracts/crm-summary.schema.json')
-    assert.equal(schema.oneOf.length, 2)
-    for (const variant of schema.oneOf) assert.equal(variant.additionalProperties, false)
+    assert.equal(schema.additionalProperties, false)
+    assert.deepEqual(schema.required, [
+      'availability', 'accounts', 'contacts', 'opportunities', 'pipelineUsd', 'provenance',
+    ])
   })
 
   it('accepts the exact portfolio model and rejects extra, missing, or invented data', () => {
@@ -45,21 +49,22 @@ describe('versioned Sales read-model contracts', () => {
     })
     assert.deepEqual(validatePortfolioReadModel(model), model)
     assert.equal(INITIAL_PROJECT_INVENTORY.length, 26)
+    assert.equal(model.portfolio.length, 26)
+    assert.equal(model.projects.length, 0)
+    assert.equal(model.portfolio.find((item) => item.id === 'wspro')?.name, 'WSPro')
     assert.throws(
       () => validatePortfolioReadModel({ ...model, revenue: 42 }),
       /PORTFOLIO_READ_MODEL_INVALID/,
     )
     assert.throws(
-      () => validatePortfolioReadModel({ ...model, projects: model.projects.slice(1) }),
+      () => validatePortfolioReadModel({ ...model, portfolio: model.portfolio.slice(1) }),
       /PORTFOLIO_READ_MODEL_INVALID/,
     )
     assert.throws(
       () => validatePortfolioReadModel({
         ...model,
-        projects: model.projects.map((project) =>
-          project.projectId === 'xg-systems'
-            ? { ...project, activatable: true }
-            : project,
+        portfolio: model.portfolio.map((item) =>
+          item.id === 'xg-systems' ? { ...item, activatable: true } : item,
         ),
       }),
       /PORTFOLIO_READ_MODEL_INVALID/,
@@ -68,19 +73,18 @@ describe('versioned Sales read-model contracts', () => {
 
   it('accepts only closed CRM summaries with bounded nonnegative counts', () => {
     const known = {
-      status: 'known', connector: 'twenty',
-      outbox: { pending: 1, leased: 0, confirmed: 2, failed: 0, outcomeUnknown: 0 },
-      inboxCount: 4, entityLinkCount: 3, cursorCount: 5,
-      lastSuccessfulSyncAt: '2026-08-16T12:00:00.000Z', provenance: 'postgres',
+      availability: 'available', accounts: 4, contacts: 3, opportunities: 2,
+      pipelineUsd: null,
+      provenance: { source: 'twenty', sourceId: 'crm-summary:postgres', observedAt: '2026-08-16T12:00:00.000Z', synthetic: false },
     }
     assert.deepEqual(validateCrmSummaryReadModel(known), known)
     assert.deepEqual(validateCrmSummaryReadModel({
-      status: 'disabled', connector: 'twenty', outbox: null,
-      inboxCount: null, entityLinkCount: null, cursorCount: null,
-      lastSuccessfulSyncAt: null, provenance: 'simulation-disabled',
-    }).status, 'disabled')
+      availability: 'unavailable', accounts: null, contacts: null,
+      opportunities: null, pipelineUsd: null, message: 'CRM sync disabled',
+      provenance: { source: 'twenty', sourceId: 'crm:simulation-disabled', observedAt: '2026-08-16T12:00:00.000Z', synthetic: false },
+    }).availability, 'unavailable')
     assert.throws(
-      () => validateCrmSummaryReadModel({ ...known, inboxCount: -1 }),
+      () => validateCrmSummaryReadModel({ ...known, accounts: -1 }),
       /CRM_SUMMARY_RESULT_INVALID/,
     )
     assert.throws(

@@ -22,10 +22,9 @@ function processStore(): CrmProcessStorePort {
     advanceCursor: async (_connector, _stream, version) => version + 1,
     listOutcomeUnknown: async () => [{ outboxId: 'outbox-1', errorCode: 'TWENTY_OUTCOME_UNKNOWN' }],
     summary: async () => ({
-      status: 'known', connector: 'twenty',
-      outbox: { pending: 0, leased: 0, confirmed: 0, failed: 0, outcomeUnknown: 0 },
-      inboxCount: 0, entityLinkCount: 0, cursorCount: 0,
-      lastSuccessfulSyncAt: null, provenance: 'postgres',
+      availability: 'available', accounts: 0, contacts: 0, opportunities: 0,
+      pipelineUsd: null,
+      provenance: { source: 'twenty', sourceId: 'crm-summary:postgres', observedAt: '2026-08-16T12:00:00.000Z', synthetic: false },
     }),
   }
 }
@@ -115,20 +114,21 @@ describe('CRM sync deployable process', () => {
       mode: 'simulation', workerId: 'worker', leaseSeconds: 60,
       pollIntervalMs: 60_000, store: processStore(), client: client([]),
     })
-    assert.deepEqual(await simulation.summary(), {
-      status: 'disabled', connector: 'twenty', outbox: null,
-      inboxCount: null, entityLinkCount: null, cursorCount: null,
-      lastSuccessfulSyncAt: null, provenance: 'simulation-disabled',
+    const disabled = await simulation.summary()
+    assert.deepEqual({ ...disabled, provenance: { ...disabled.provenance, observedAt: 'TIME' } }, {
+      availability: 'unavailable', accounts: null, contacts: null,
+      opportunities: null, pipelineUsd: null, message: 'CRM sync disabled',
+      provenance: { source: 'twenty', sourceId: 'crm:simulation-disabled', observedAt: 'TIME', synthetic: false },
     })
+    assert.equal(Number.isFinite(Date.parse(disabled.provenance.observedAt)), true)
     const shadow = new CrmSyncDaemon({
       mode: 'shadow', workerId: 'worker', leaseSeconds: 60,
       pollIntervalMs: 60_000, store: processStore(), client: client([]),
     })
     assert.deepEqual(await shadow.summary(), {
-      status: 'known', connector: 'twenty',
-      outbox: { pending: 0, leased: 0, confirmed: 0, failed: 0, outcomeUnknown: 0 },
-      inboxCount: 0, entityLinkCount: 0, cursorCount: 0,
-      lastSuccessfulSyncAt: null, provenance: 'postgres',
+      availability: 'available', accounts: 0, contacts: 0, opportunities: 0,
+      pipelineUsd: null,
+      provenance: { source: 'twenty', sourceId: 'crm-summary:postgres', observedAt: '2026-08-16T12:00:00.000Z', synthetic: false },
     })
   })
 
@@ -150,7 +150,7 @@ describe('CRM sync deployable process', () => {
         headers: { authorization: 'Bearer crm-read-model-token' },
       })
       assert.equal(response.status, 200)
-      assert.equal((await response.json() as any).provenance, 'simulation-disabled')
+      assert.equal((await response.json() as any).provenance.sourceId, 'crm:simulation-disabled')
       assert.equal((await fetch(`${url}/extra`, {
         headers: { authorization: 'Bearer crm-read-model-token' },
       })).status, 404)

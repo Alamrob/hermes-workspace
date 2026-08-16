@@ -2,45 +2,26 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://alam.cl/contracts/crm-summary.schema.json",
   "title": "Twenty CRM Summary v1",
-  "oneOf": [
-    {
-      "type": "object", "additionalProperties": false,
-      "required": ["status", "connector", "outbox", "inboxCount", "entityLinkCount", "cursorCount", "lastSuccessfulSyncAt", "provenance"],
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["availability", "accounts", "contacts", "opportunities", "pipelineUsd", "provenance"],
+  "properties": {
+    "availability": { "enum": ["available", "unavailable"] },
+    "accounts": { "type": ["integer", "null"], "minimum": 0 },
+    "contacts": { "type": ["integer", "null"], "minimum": 0 },
+    "opportunities": { "type": ["integer", "null"], "minimum": 0 },
+    "pipelineUsd": { "type": ["number", "null"], "minimum": 0 },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "sourceId", "observedAt", "synthetic"],
       "properties": {
-        "status": { "const": "known" },
-        "connector": { "const": "twenty" },
-        "outbox": {
-          "type": "object", "additionalProperties": false,
-          "required": ["pending", "leased", "confirmed", "failed", "outcomeUnknown"],
-          "properties": {
-            "pending": { "$ref": "#/$defs/count" },
-            "leased": { "$ref": "#/$defs/count" },
-            "confirmed": { "$ref": "#/$defs/count" },
-            "failed": { "$ref": "#/$defs/count" },
-            "outcomeUnknown": { "$ref": "#/$defs/count" }
-          }
-        },
-        "inboxCount": { "$ref": "#/$defs/count" },
-        "entityLinkCount": { "$ref": "#/$defs/count" },
-        "cursorCount": { "$ref": "#/$defs/count" },
-        "lastSuccessfulSyncAt": { "type": ["string", "null"], "format": "date-time" },
-        "provenance": { "const": "postgres" }
+        "source": { "const": "twenty" },
+        "sourceId": { "type": "string", "minLength": 1 },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "synthetic": { "const": false }
       }
     },
-    {
-      "type": "object", "additionalProperties": false,
-      "required": ["status", "connector", "outbox", "inboxCount", "entityLinkCount", "cursorCount", "lastSuccessfulSyncAt", "provenance"],
-      "properties": {
-        "status": { "const": "disabled" },
-        "connector": { "const": "twenty" },
-        "outbox": { "type": "null" },
-        "inboxCount": { "type": "null" },
-        "entityLinkCount": { "type": "null" },
-        "cursorCount": { "type": "null" },
-        "lastSuccessfulSyncAt": { "type": "null" },
-        "provenance": { "const": "simulation-disabled" }
-      }
-    }
-  ],
-  "$defs": { "count": { "type": "integer", "minimum": 0 } }
+    "message": { "type": "string" }
+  }
 }

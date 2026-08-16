@@ -24,6 +24,7 @@ integration('PostgreSQL 17 versioned migration runner', () => {
           '003_dispatch_queue',
           '004_crm_integration',
           '005_portfolio_read_models',
+          '006_sales_read_models',
         ].map(async (version) => ({
           version,
           sql: await readFile(
@@ -40,7 +41,32 @@ integration('PostgreSQL 17 versioned migration runner', () => {
             `SELECT count(*)::int AS count FROM control.schema_migrations`,
           )
         ).rows[0].count,
-        5,
+        6,
+      )
+      const rollback006 = await readFile(
+        new URL('../migrations/006_sales_read_models.rollback.sql', import.meta.url),
+        'utf8',
+      )
+      await pool.query(rollback006)
+      assert.equal(
+        (await pool.query(
+          `SELECT count(*)::int AS count FROM control.schema_migrations
+           WHERE version='006_sales_read_models'`,
+        )).rows[0].count,
+        0,
+      )
+      assert.equal(
+        (await pool.query(
+          `SELECT has_function_privilege('commercial_runtime','control.get_portfolio_read_model()','EXECUTE') AS allowed`,
+        )).rows[0].allowed,
+        false,
+      )
+      await runVersionedMigrations(pool, sources)
+      assert.equal(
+        Array.isArray((await pool.query(
+          `SELECT control.get_portfolio_read_model() AS model`,
+        )).rows[0].model.portfolio),
+        true,
       )
       const rollback005 = await readFile(
         new URL('../migrations/005_portfolio_read_models.rollback.sql', import.meta.url),
@@ -50,7 +76,7 @@ integration('PostgreSQL 17 versioned migration runner', () => {
       assert.equal(
         (await pool.query(
           `SELECT count(*)::int AS count FROM control.schema_migrations
-           WHERE version='005_portfolio_read_models'`,
+           WHERE version IN('005_portfolio_read_models','006_sales_read_models')`,
         )).rows[0].count,
         0,
       )
@@ -70,6 +96,12 @@ integration('PostgreSQL 17 versioned migration runner', () => {
         (await pool.query(
           `SELECT has_function_privilege('commercial_runtime','control.get_portfolio_read_model()','EXECUTE') AS allowed`,
         )).rows[0].allowed,
+        true,
+      )
+      assert.equal(
+        Array.isArray((await pool.query(
+          `SELECT control.get_portfolio_read_model() AS model`,
+        )).rows[0].model.portfolio),
         true,
       )
       await pool.query(

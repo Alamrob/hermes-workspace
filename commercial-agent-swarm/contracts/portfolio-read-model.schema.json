@@ -1,87 +1,135 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://alam.cl/contracts/portfolio-read-model.schema.json",
-  "title": "Sales Portfolio Read Model v1",
+  "title": "Sales Control Broker Read Model v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["portfolio", "projects", "missions", "missionDrafts", "approvals", "qa", "agents", "experiments", "costs", "audit", "control"],
   "properties": {
-    "portfolio": {
-      "type": "object", "additionalProperties": false,
-      "required": ["status", "projectCount", "provenance"],
-      "properties": {
-        "status": { "const": "known" },
-        "projectCount": { "const": 26 },
-        "provenance": { "const": "user-approved-inventory-2026-08-16" }
-      }
-    },
-    "projects": {
-      "type": "array", "minItems": 26, "maxItems": 26,
-      "items": {
-        "type": "object", "additionalProperties": false,
-        "required": ["projectId", "displayName", "operatingState", "activatable", "maturityStatus", "offerEvidence", "icpEvidence", "policyEvidence", "provenance"],
-        "properties": {
-          "projectId": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "displayName": { "type": "string", "minLength": 1, "maxLength": 256 },
-          "operatingState": { "enum": ["inactive", "read_only"] },
-          "activatable": { "type": "boolean" },
-          "maturityStatus": { "const": "unknown" },
-          "offerEvidence": { "type": ["string", "null"], "enum": ["versioned-catalog", null] },
-          "icpEvidence": { "type": ["string", "null"], "enum": ["versioned-catalog", null] },
-          "policyEvidence": { "type": ["string", "null"], "enum": ["versioned-catalog", null] },
-          "provenance": { "const": "user-approved-inventory-2026-08-16" }
-        }
-      }
-    },
-    "missions": { "$ref": "#/$defs/knownCount" },
-    "missionDrafts": { "$ref": "#/$defs/unknownCount" },
-    "approvals": { "$ref": "#/$defs/knownCount" },
-    "qa": { "$ref": "#/$defs/unknownCount" },
-    "agents": { "$ref": "#/$defs/unknownCount" },
-    "experiments": { "$ref": "#/$defs/unknownCount" },
-    "costs": {
-      "type": "object", "additionalProperties": false,
-      "required": ["status", "usageValueMicroCents", "cashCostMicroCents", "provenance"],
-      "properties": {
-        "status": { "const": "unknown" },
-        "usageValueMicroCents": { "type": "null" },
-        "cashCostMicroCents": { "type": "null" },
-        "provenance": { "const": "not-aggregated" }
-      }
-    },
-    "audit": { "$ref": "#/$defs/knownCount" },
+    "portfolio": { "type": "array", "minItems": 26, "maxItems": 26, "uniqueItems": true, "items": { "$ref": "#/$defs/portfolioItem" } },
+    "projects": { "type": "array", "items": { "$ref": "#/$defs/project" } },
+    "missions": { "type": "array", "items": { "$ref": "#/$defs/mission" } },
+    "missionDrafts": { "type": "array", "items": { "$ref": "#/$defs/missionDraft" } },
+    "approvals": { "type": "array", "items": { "$ref": "#/$defs/approval" } },
+    "qa": { "type": "array", "items": { "$ref": "#/$defs/qa" } },
+    "agents": { "type": "array", "items": { "$ref": "#/$defs/agent" } },
+    "experiments": { "type": "array", "items": { "$ref": "#/$defs/experiment" } },
+    "costs": { "type": "array", "items": { "$ref": "#/$defs/cost" } },
+    "audit": { "type": "array", "items": { "$ref": "#/$defs/audit" } },
     "control": {
-      "type": "object", "additionalProperties": false, "required": ["killSwitch"],
-      "properties": {
-        "killSwitch": {
-          "type": "object", "additionalProperties": false,
-          "required": ["status", "active", "provenance"],
-          "properties": {
-            "status": { "const": "known" },
-            "active": { "type": "boolean" },
-            "provenance": { "enum": ["postgres", "runtime-memory"] }
-          }
-        }
-      }
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["killSwitch"],
+      "properties": { "killSwitch": { "type": "boolean" } }
     }
   },
   "$defs": {
-    "knownCount": {
-      "type": "object", "additionalProperties": false,
-      "required": ["status", "count", "provenance"],
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "sourceId", "observedAt", "synthetic"],
       "properties": {
-        "status": { "const": "known" },
-        "count": { "type": "integer", "minimum": 0 },
-        "provenance": { "enum": ["postgres", "runtime-memory"] }
+        "source": { "enum": ["control-broker", "twenty", "bff"] },
+        "sourceId": { "type": "string", "minLength": 1 },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "synthetic": { "const": false }
       }
     },
-    "unknownCount": {
+    "portfolioItem": {
       "type": "object", "additionalProperties": false,
-      "required": ["status", "count", "provenance"],
+      "required": ["id", "name", "stage", "activatable", "health", "metric", "metricStatus", "provenance"],
       "properties": {
-        "status": { "const": "unknown" },
-        "count": { "type": "null" },
-        "provenance": { "const": "not-modeled" }
+        "id": { "type": "string" }, "name": { "type": "string" },
+        "stage": { "enum": ["active", "incubating", "paused"] },
+        "activatable": { "type": "boolean" },
+        "health": { "enum": ["healthy", "watch", "risk", "unknown"] },
+        "metric": { "type": ["number", "null"] },
+        "metricStatus": { "enum": ["known", "unknown"] },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "project": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "portfolioId", "name", "offer", "icp", "priceClpFrom", "stage", "provenance"],
+      "properties": {
+        "id": { "type": "string" }, "portfolioId": { "type": "string" }, "name": { "type": "string" },
+        "offer": { "type": "string" }, "icp": { "type": "string" }, "priceClpFrom": { "type": "number" },
+        "stage": { "enum": ["discovery", "validation", "scale"] }, "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "mission": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "portfolioId", "title", "status", "ownerAgentId", "progress", "provenance"],
+      "properties": {
+        "id": { "type": "string" }, "portfolioId": { "type": "string" }, "title": { "type": "string" },
+        "status": { "enum": ["queued", "running", "blocked", "completed"] }, "ownerAgentId": { "type": "string" },
+        "progress": { "type": ["number", "null"] }, "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "missionDraft": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "projectId", "portfolioId", "title", "status", "provenance"],
+      "properties": {
+        "id": { "type": "string" }, "projectId": { "type": "string" }, "portfolioId": { "type": "string" },
+        "title": { "type": "string" }, "status": { "enum": ["draft", "submitted"] },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "approval": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "missionId", "title", "risk", "status", "mode", "provenance"],
+      "properties": {
+        "id": { "type": "string" }, "missionId": { "type": "string" }, "title": { "type": "string" },
+        "risk": { "enum": ["low", "medium", "high"] }, "status": { "enum": ["pending", "approved", "rejected"] },
+        "mode": { "enum": ["sales_only", "telegram_only", "either", "dual_channel"] },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "qa": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "missionId", "check", "score", "evidenceCount", "status", "provenance"],
+      "properties": {
+        "id": { "type": "string" }, "missionId": { "type": "string" }, "check": { "type": "string" },
+        "score": { "type": ["number", "null"] }, "evidenceCount": { "type": ["number", "null"] },
+        "status": { "enum": ["pass", "review"] }, "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "agent": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "code", "name", "role", "status", "currentMissionId", "provenance"],
+      "properties": {
+        "id": { "type": "string" }, "code": { "enum": ["A1", "A2", "A3", "A4", "A5", "A6"] },
+        "name": { "type": "string" }, "role": { "type": "string" },
+        "status": { "enum": ["ready", "running", "blocked", "offline"] },
+        "currentMissionId": { "type": ["string", "null"] }, "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "experiment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "portfolioId", "name", "hypothesis", "status", "primaryMetric", "lift", "provenance"],
+      "properties": {
+        "id": { "type": "string" }, "portfolioId": { "type": "string" }, "name": { "type": "string" },
+        "hypothesis": { "type": "string" }, "status": { "enum": ["draft", "running", "won", "lost"] },
+        "primaryMetric": { "type": "string" }, "lift": { "type": ["number", "null"] },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "cost": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "agentId", "amount", "currency", "status", "period", "provenance"],
+      "properties": {
+        "id": { "type": "string" }, "agentId": { "type": "string" }, "amount": { "type": ["number", "null"] },
+        "currency": { "const": "USD" }, "status": { "enum": ["known", "unknown"] }, "period": { "type": "string" },
+        "provenance": { "$ref": "#/$defs/provenance" }
+      }
+    },
+    "audit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "portfolioId", "actorId", "action", "targetId", "at", "provenance"],
+      "properties": {
+        "id": { "type": "string" }, "portfolioId": { "type": "string" }, "actorId": { "type": "string" },
+        "action": { "type": "string" }, "targetId": { "type": "string" }, "at": { "type": "string" },
+        "reason": { "type": "string" }, "provenance": { "$ref": "#/$defs/provenance" }
       }
     }
   }
