@@ -11,9 +11,9 @@ import {
 import type { TrustedUsage } from '../src/executor-contract.js'
 
 const HEADER =
-  'id,user_email,service_account_name,app,provider,model,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_5m_tokens,cache_write_1h_tokens,reasoning_effort,billing_source,cost_micro_cents,created_at'
-const BASELINE = `${HEADER}\nusage-1,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,10,5,0,1,0,0,,go,100000,2026-08-16T11:59:00.000Z\n`
-const AFTER = `${BASELINE}usage-2,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,100,50,0,5,0,0,,go,1234567,2026-08-16T12:00:01.000Z\n`
+  'id,user_email,service_account_name,app,provider,model,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_5m_tokens,cache_write_1h_tokens,reasoning_effort,reasoning_mode,reasoning_budget_tokens,reasoning_source,billing_source,cost_micro_cents,created_at'
+const BASELINE = `${HEADER}\nusage-1,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,10,5,0,1,0,0,none,disabled,0,none,go,100000,2026-08-16T11:59:00.000Z\n`
+const AFTER = `${BASELINE}usage-2,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,100,50,0,5,0,0,none,disabled,0,none,go,1234567,2026-08-16T12:00:01.000Z\n`
 
 const localUsage: TrustedUsage = {
   tokens: {
@@ -53,9 +53,8 @@ describe('read-only OpenCode Usage Export gate', () => {
     assert.equal(
       (await client.export({
         scope: 'service_account',
-        scopeId: 'svc-12345678',
-        from: '2026-08-16T11:55:00.000Z',
-        to: '2026-08-16T12:05:00.000Z',
+        range: '24h',
+        serviceAccountId: 'svc-12345678',
       })).length,
       1,
     )
@@ -64,15 +63,35 @@ describe('read-only OpenCode Usage Export gate', () => {
         url: 'https://console.opencode.ai/api/v1/usage/export',
         bearerToken: 'read-only-token',
         scope: 'service_account',
-        scopeId: 'svc-12345678',
-        from: '2026-08-16T11:55:00.000Z',
-        to: '2026-08-16T12:05:00.000Z',
+        range: '24h',
+        serviceAccountId: 'svc-12345678',
       },
     ])
   })
 
   it('parses the closed bounded CSV and rejects headers, formulas, or oversized input', () => {
     assert.equal(parseOpenCodeUsageCsv(AFTER).length, 2)
+    assert.deepEqual(parseOpenCodeUsageCsv(AFTER)[1], {
+      id: 'usage-2',
+      userEmail: '',
+      serviceAccountName: 'svc-proptimiza',
+      app: 'hermes',
+      provider: 'opencode',
+      model: 'deepseek-v4-flash',
+      inputTokens: 100,
+      outputTokens: 50,
+      reasoningTokens: 0,
+      cacheReadTokens: 5,
+      cacheWrite5mTokens: 0,
+      cacheWrite1hTokens: 0,
+      reasoningEffort: 'none',
+      reasoningMode: 'disabled',
+      reasoningBudgetTokens: 0,
+      reasoningSource: 'none',
+      billingSource: 'go',
+      usageValueMicroCents: 1_234_567,
+      createdAt: '2026-08-16T12:00:01.000Z',
+    })
     assert.throws(
       () => parseOpenCodeUsageCsv(AFTER.replace('id,user_email', 'run_id,user_email')),
       /OPENCODE_USAGE_CSV_INVALID/,
@@ -91,6 +110,7 @@ describe('read-only OpenCode Usage Export gate', () => {
     let exports = 0
     let probes = 0
     const gate = new OpenCodeUsageProbe({
+      now: () => new Date('2026-08-16T12:05:00.000Z'),
       client: new OpenCodeUsageExportClient({
         readToken: async () => 'read-only-token',
         reader: {
@@ -99,9 +119,7 @@ describe('read-only OpenCode Usage Export gate', () => {
       }),
     })
     const result = await gate.measure({
-      scopeId: 'svc-12345678',
-      from: '2026-08-16T11:55:00.000Z',
-      to: '2026-08-16T12:05:00.000Z',
+      serviceAccountId: 'svc-12345678',
       missionCommittedUsageValueMicroCents: 10_000_000,
       totalCommittedUsageValueMicroCents: 20_000_000,
       probe: async () => {
@@ -121,9 +139,10 @@ describe('read-only OpenCode Usage Export gate', () => {
   })
 
   it('fails closed when the post-export diff has zero or multiple records', async () => {
-    for (const after of [BASELINE, `${AFTER}usage-3,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,100,50,0,5,0,0,,go,1,2026-08-16T12:00:02.000Z\n`]) {
+    for (const after of [BASELINE, `${AFTER}usage-3,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,100,50,0,5,0,0,none,disabled,0,none,go,1,2026-08-16T12:00:02.000Z\n`]) {
       let exports = 0
       const gate = new OpenCodeUsageProbe({
+        now: () => new Date('2026-08-16T12:05:00.000Z'),
         client: new OpenCodeUsageExportClient({
           readToken: async () => 'read-only-token',
           reader: {
@@ -133,14 +152,39 @@ describe('read-only OpenCode Usage Export gate', () => {
       })
       await assert.rejects(
         gate.measure({
-          scopeId: 'svc-12345678',
-          from: '2026-08-16T11:55:00.000Z',
-          to: '2026-08-16T12:05:00.000Z',
+          serviceAccountId: 'svc-12345678',
           missionCommittedUsageValueMicroCents: 0,
           totalCommittedUsageValueMicroCents: 0,
           probe: async () => localUsage,
         }),
         /OPENCODE_USAGE_DIFF_AMBIGUOUS/,
+      )
+    }
+  })
+
+  it('fails closed outside the UTC-day 24h window or without dedicated service-account rows', async () => {
+    for (const after of [
+      AFTER.replace('2026-08-16T12:00:01.000Z', '2026-08-15T23:59:59.999Z'),
+      AFTER.replace('usage-2,,svc-proptimiza', 'usage-2,user@example.com,'),
+    ]) {
+      let exports = 0
+      const gate = new OpenCodeUsageProbe({
+        now: () => new Date('2026-08-16T12:05:00.000Z'),
+        client: new OpenCodeUsageExportClient({
+          readToken: async () => 'read-only-token',
+          reader: {
+            getCsvExport: async () => (++exports === 1 ? BASELINE : after),
+          },
+        }),
+      })
+      await assert.rejects(
+        gate.measure({
+          serviceAccountId: 'svc-12345678',
+          missionCommittedUsageValueMicroCents: 0,
+          totalCommittedUsageValueMicroCents: 0,
+          probe: async () => localUsage,
+        }),
+        /OPENCODE_USAGE_(?:WINDOW|SERVICE_ACCOUNT)_INVALID/,
       )
     }
   })

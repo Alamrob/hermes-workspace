@@ -25,6 +25,9 @@ const CSV_COLUMNS = [
   'cache_write_5m_tokens',
   'cache_write_1h_tokens',
   'reasoning_effort',
+  'reasoning_mode',
+  'reasoning_budget_tokens',
+  'reasoning_source',
   'billing_source',
   'cost_micro_cents',
   'created_at',
@@ -44,6 +47,9 @@ export interface OpenCodeUsageRow {
   cacheWrite5mTokens: number
   cacheWrite1hTokens: number
   reasoningEffort: string
+  reasoningMode: string
+  reasoningBudgetTokens: number
+  reasoningSource: string
   billingSource: string
   usageValueMicroCents: number
   createdAt: string
@@ -54,17 +60,15 @@ export interface OpenCodeUsageExportReadPort {
     url: typeof OPENCODE_USAGE_EXPORT_URL
     bearerToken: string
     scope: 'service_account'
-    scopeId: string
-    from: string
-    to: string
+    range: '24h' | '7d' | '30d'
+    serviceAccountId: string
   }): Promise<string>
 }
 
 interface ExportQuery {
   scope: 'service_account'
-  scopeId: string
-  from: string
-  to: string
+  range: '24h' | '7d' | '30d'
+  serviceAccountId: string
 }
 
 export class OpenCodeUsageExportClient {
@@ -91,13 +95,19 @@ export class OpenCodeUsageExportClient {
 
 export class OpenCodeUsageProbe {
   private busy = false
+  private readonly now: () => Date
 
-  constructor(private readonly options: { client: OpenCodeUsageExportClient }) {}
+  constructor(
+    private readonly options: {
+      client: OpenCodeUsageExportClient
+      now?: () => Date
+    },
+  ) {
+    this.now = options.now ?? (() => new Date())
+  }
 
   async measure(input: {
-    scopeId: string
-    from: string
-    to: string
+    serviceAccountId: string
     missionCommittedUsageValueMicroCents: number
     totalCommittedUsageValueMicroCents: number
     probe: () => Promise<TrustedUsage>
@@ -118,9 +128,8 @@ export class OpenCodeUsageProbe {
     try {
       const query: ExportQuery = {
         scope: 'service_account',
-        scopeId: input.scopeId,
-        from: input.from,
-        to: input.to,
+        range: '24h',
+        serviceAccountId: input.serviceAccountId,
       }
       const before = await this.options.client.export(query)
       const usage = await input.probe()
@@ -134,6 +143,9 @@ export class OpenCodeUsageProbe {
       const added = after.filter((row) => !beforeIds.has(row.id))
       if (added.length !== 1) throw new Error('OPENCODE_USAGE_DIFF_AMBIGUOUS')
       const row = added[0]
+      validateDedicatedServiceAccountRow(row)
+      if (row.createdAt.slice(0, 10) !== this.now().toISOString().slice(0, 10))
+        throw new Error('OPENCODE_USAGE_WINDOW_INVALID')
       reconcileTelemetry(usage, row)
       const run = row.usageValueMicroCents
       if (
@@ -181,10 +193,10 @@ export function parseOpenCodeUsageCsv(csv: string): OpenCodeUsageRow[] {
 function parseRow(cells: string[]): OpenCodeUsageRow {
   if (cells.length !== CSV_COLUMNS.length || cells.some((cell) => cell.length > 4_096))
     throw new Error('OPENCODE_USAGE_CSV_INVALID')
-  for (const index of [0, 1, 2, 3, 4, 5, 12, 13, 15])
+  for (const index of [0, 1, 2, 3, 4, 5, 12, 13, 15, 16, 18])
     if (/^[\t ]*[=+\-@]/.test(cells[index]))
       throw new Error('OPENCODE_USAGE_CSV_UNSAFE_CELL')
-  const numbers = [6, 7, 8, 9, 10, 11, 14].map((index) => {
+  const numbers = [6, 7, 8, 9, 10, 11, 14, 17].map((index) => {
     if (!/^[0-9]+$/.test(cells[index]))
       throw new Error('OPENCODE_USAGE_CSV_INVALID')
     const value = Number(cells[index])
@@ -197,8 +209,11 @@ function parseRow(cells: string[]): OpenCodeUsageRow {
     !bounded(cells[3], 256) ||
     !bounded(cells[4], 128) ||
     !bounded(cells[5], 256) ||
+    !bounded(cells[12], 128) ||
     !bounded(cells[13], 128) ||
-    !Number.isFinite(Date.parse(cells[15]))
+    !bounded(cells[15], 128) ||
+    !bounded(cells[16], 128) ||
+    !Number.isFinite(Date.parse(cells[18]))
   )
     throw new Error('OPENCODE_USAGE_CSV_INVALID')
   return {
@@ -215,9 +230,12 @@ function parseRow(cells: string[]): OpenCodeUsageRow {
     cacheWrite5mTokens: numbers[4],
     cacheWrite1hTokens: numbers[5],
     reasoningEffort: cells[12],
-    billingSource: cells[13],
-    usageValueMicroCents: numbers[6],
-    createdAt: new Date(cells[15]).toISOString(),
+    reasoningMode: cells[13],
+    reasoningBudgetTokens: numbers[6],
+    reasoningSource: cells[15],
+    billingSource: cells[16],
+    usageValueMicroCents: numbers[7],
+    createdAt: new Date(cells[18]).toISOString(),
   }
 }
 
@@ -304,17 +322,17 @@ function assertBudgetAvailable(mission: number, total: number): void {
 }
 
 function validateQuery(query: ExportQuery): void {
-  const from = Date.parse(query.from)
-  const to = Date.parse(query.to)
   if (
     query.scope !== 'service_account' ||
-    !/^[A-Za-z0-9._:-]{8,256}$/.test(query.scopeId) ||
-    !Number.isFinite(from) ||
-    !Number.isFinite(to) ||
-    from >= to ||
-    to - from > 60 * 60_000
+    !['24h', '7d', '30d'].includes(query.range) ||
+    !/^[A-Za-z0-9._:-]{8,256}$/.test(query.serviceAccountId)
   )
     throw new Error('OPENCODE_USAGE_EXPORT_QUERY_INVALID')
+}
+
+function validateDedicatedServiceAccountRow(row: OpenCodeUsageRow): void {
+  if (row.userEmail !== '' || !bounded(row.serviceAccountName, 256))
+    throw new Error('OPENCODE_USAGE_SERVICE_ACCOUNT_INVALID')
 }
 
 function bounded(value: string, maximum: number): boolean {
