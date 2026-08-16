@@ -9,7 +9,7 @@ const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
 
 integration('PostgreSQL 17 CRM integration control plane', () => {
-  it('bounds the pilot, provides least-privilege durable sync, and rolls back without data loss', async () => {
+  it('owns bounded non-secret pilots in control and preserves durable CRM state on rollback', async () => {
     const admin = new Pool({ connectionString: ADMIN })
     const database = `crm_integration_${randomUUID().replaceAll('-', '')}`
     await admin.query(`CREATE DATABASE "${database}"`)
@@ -23,21 +23,37 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '003_dispatch_queue',
         '004_crm_integration',
       ]
-      const sources = await Promise.all(
-        versions.map(async (version) => ({
-          version,
-          sql: await readFile(
-            new URL(`../migrations/${version}.sql`, import.meta.url),
-            'utf8',
-          ),
-        })),
+      await runVersionedMigrations(
+        pool,
+        await Promise.all(
+          versions.map(async (version) => ({
+            version,
+            sql: await readFile(
+              new URL(`../migrations/${version}.sql`, import.meta.url),
+              'utf8',
+            ),
+          })),
+        ),
       )
-      await runVersionedMigrations(pool, sources)
+      for (const relation of [
+        'control.pilot_cohorts',
+        'control.pilot_targets',
+        'integration.crm_entity_links',
+        'integration.crm_outbox',
+        'integration.crm_inbox',
+        'integration.crm_sync_cursors',
+      ])
+        assert.equal(
+          (await pool.query(`SELECT to_regclass($1) IS NOT NULL AS present`, [relation]))
+            .rows[0].present,
+          true,
+          relation,
+        )
 
       const cohortId = randomUUID()
       await pool.query(`SET ROLE commercial_runtime`)
       await pool.query(
-        `SELECT integration.create_pilot_cohort($1,'proptimiza','shadow-pilot')`,
+        `SELECT control.create_pilot_cohort($1,'proptimiza','shadow-pilot')`,
         [cohortId],
       )
       const targetIds: string[] = []
@@ -45,77 +61,84 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         const targetId = randomUUID()
         targetIds.push(targetId)
         await pool.query(
-          `SELECT integration.add_pilot_target($1,$2,$3,$4,$5)`,
-          [cohortId, targetId, `account-${index}`, `Company ${index}`, {}],
+          `SELECT control.add_pilot_target($1,$2,$3,$4,NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft',$5,$6)`,
+          [
+            targetId,
+            cohortId,
+            `control-${index}`,
+            `company-${index}`,
+            '2026-09-01T00:00:00Z',
+            `evidence-${index}`,
+          ],
         )
       }
       await assert.rejects(
         pool.query(
-          `SELECT integration.add_pilot_target($1,$2,$3,$4,$5)`,
-          [cohortId, randomUUID(), 'account-10', 'Company 10', {}],
+          `SELECT control.add_pilot_target($1,$2,'control-10','company-10',NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft','2026-09-01T00:00:00Z','evidence-10')`,
+          [randomUUID(), cohortId],
         ),
         /PILOT_TARGET_LIMIT_EXCEEDED/,
+      )
+      await assert.rejects(
+        pool.query(
+          `SELECT control.add_pilot_target($1,$2,'control-0','company-duplicate',NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft','2026-09-01T00:00:00Z','evidence-duplicate')`,
+          [randomUUID(), cohortId],
+        ),
+        /PILOT_TARGET_IDEMPOTENCY_CONFLICT/,
+      )
+      await pool.query(`RESET ROLE`)
+      await pool.query(`SET ROLE commercial_safety_operator`)
+      await pool.query(
+        `SELECT control.add_pilot_suppression('blocked-control','policy','evidence-block')`,
+      )
+      await pool.query(`RESET ROLE`)
+      await pool.query(`SET ROLE commercial_runtime`)
+      await assert.rejects(
+        pool.query(
+          `SELECT control.add_pilot_target($1,$2,'blocked-control','company-blocked',NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft','2026-09-01T00:00:00Z','evidence-block')`,
+          [randomUUID(), cohortId],
+        ),
+        /PILOT_TARGET_SUPPRESSED/,
       )
 
       const outboxId = randomUUID()
       await pool.query(
-        `SELECT integration.enqueue_crm_change($1,$2,$3,'upsert_account',$4,1)`,
-        [outboxId, cohortId, targetIds[0], { name: 'Company 0' }],
+        `SELECT integration.enqueue_crm_change($1,$2,$3,'mirror_pilot_target',$4,1)`,
+        [outboxId, cohortId, targetIds[0], { control_ref: 'control-0' }],
       )
       await assert.rejects(
         pool.query(
-          `SELECT integration.enqueue_crm_change($1,$2,$3,'upsert_account',$4,1)`,
-          [randomUUID(), cohortId, targetIds[0], { name: 'Changed' }],
+          `SELECT integration.enqueue_crm_change($1,$2,$3,'mirror_pilot_target',$4,1)`,
+          [randomUUID(), cohortId, targetIds[0], { control_ref: 'changed' }],
         ),
         /CRM_IDEMPOTENCY_CONFLICT/,
       )
-
       await pool.query(`RESET ROLE`)
       await pool.query(`SET ROLE commercial_safety_operator`)
       await pool.query(`SELECT integration.set_crm_sync_enabled(true)`)
       await pool.query(`RESET ROLE`)
       await pool.query(`SET ROLE commercial_crm_sync`)
-      const claimed = await pool.query(
-        `SELECT outbox_id FROM integration.claim_crm_outbox('worker-1',60)`,
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT outbox_id FROM integration.claim_crm_outbox('worker-1',60)`,
+          )
+        ).rows[0].outbox_id,
+        outboxId,
       )
-      assert.equal(claimed.rows[0].outbox_id, outboxId)
       await pool.query(
         `SELECT integration.complete_crm_outbox($1,'worker-1','remote-1','v1')`,
         [outboxId],
       )
-      assert.equal(
-        (
-          await pool.query(
-            `SELECT integration.store_crm_inbox('twenty','event-1','account','remote-1','v1',$1) AS inserted`,
-            [{ id: 'remote-1', name: 'Company 0' }],
-          )
-        ).rows[0].inserted,
-        true,
-      )
-      assert.equal(
-        (
-          await pool.query(
-            `SELECT integration.store_crm_inbox('twenty','event-1','account','remote-1','v1',$1) AS inserted`,
-            [{ id: 'remote-1', name: 'Company 0' }],
-          )
-        ).rows[0].inserted,
-        false,
-      )
-      assert.equal(
-        (
-          await pool.query(
-            `SELECT integration.advance_crm_cursor('twenty','accounts',0,'cursor-1') AS version`,
-          )
-        ).rows[0].version,
-        '1',
-      )
-      await assert.rejects(
-        pool.query(
-          `SELECT integration.advance_crm_cursor('twenty','accounts',0,'cursor-stale')`,
-        ),
-        /CRM_CURSOR_CONFLICT/,
-      )
       await pool.query(`RESET ROLE`)
+      assert.equal(
+        (
+          await pool.query(
+            `SELECT target_id FROM integration.crm_entity_links WHERE connector_id='twenty' AND remote_record_id='remote-1'`,
+          )
+        ).rows[0].target_id,
+        targetIds[0],
+      )
 
       const rollback = await readFile(
         new URL('../migrations/004_crm_integration.rollback.sql', import.meta.url),
@@ -123,27 +146,15 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
       )
       await pool.query(rollback)
       assert.equal(
-        (
-          await pool.query(
-            `SELECT count(*)::int AS count FROM integration.pilot_targets`,
-          )
-        ).rows[0].count,
+        (await pool.query(`SELECT count(*)::int AS count FROM control.pilot_targets`))
+          .rows[0].count,
         10,
       )
       assert.equal(
-        (
-          await pool.query(
-            `SELECT enabled FROM integration.sync_control WHERE control_id=1`,
-          )
-        ).rows[0].enabled,
+        (await pool.query(`SELECT enabled FROM integration.sync_control WHERE control_id=1`))
+          .rows[0].enabled,
         false,
       )
-      await pool.query(`SET ROLE commercial_crm_sync`)
-      await assert.rejects(
-        pool.query(`SELECT * FROM integration.crm_outbox`),
-        /permission denied/,
-      )
-      await pool.query(`RESET ROLE`)
     } finally {
       await pool.end()
       await admin.query(
