@@ -70,6 +70,16 @@ export const HERMES_TOOLSET_KEYS = [
   'cronjob',
   'computer_use',
   'messaging',
+  'video',
+  'video_gen',
+  'bfl',
+  'x_search',
+  'tts',
+  'stt',
+  'context_engine',
+  'homeassistant',
+  'spotify',
+  'yuanbao',
 ] as const
 
 const NATIVE_CONFIG_FIELDS = [
@@ -233,6 +243,89 @@ function profileToolsets(profileId: string): Array<string> {
   return Object.hasOwn(PROFILE_TOOLSETS, profileId)
     ? PROFILE_TOOLSETS[profileId as ActiveProfileId]
     : []
+}
+
+export function validateHermesEffectiveToolSummary(
+  text: string,
+  expectedEnabled: ReadonlyArray<string>,
+  profileId: string,
+): Array<string> {
+  const errors: Array<string> = []
+  const builtIns = new Map<string, boolean>()
+  const plugins = new Map<string, boolean>()
+  let section: 'built-in' | 'plugin' | null = null
+  let sawBuiltInSection = false
+  let sawPluginSection = false
+
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (trimmed === 'Built-in toolsets (cli):') {
+      section = 'built-in'
+      sawBuiltInSection = true
+      continue
+    }
+    if (trimmed === 'Plugin toolsets (cli):') {
+      section = 'plugin'
+      sawPluginSection = true
+      continue
+    }
+    const row = trimmed.match(/^[✓✗]\s+(enabled|disabled)\s+([a-z0-9_]+)\b/u)
+    if (!row || !section) continue
+    const target = section === 'built-in' ? builtIns : plugins
+    target.set(row[2], row[1] === 'enabled')
+  }
+
+  if (!sawBuiltInSection || !sawPluginSection) {
+    errors.push(`${profileId}: Hermes tool summary is incomplete`)
+    return errors
+  }
+
+  const knownBuiltIns = new Set<string>(HERMES_TOOLSET_KEYS)
+  const unknownBuiltIns = [...builtIns.keys()].filter(
+    (toolset) => !knownBuiltIns.has(toolset),
+  )
+  if (unknownBuiltIns.length > 0) {
+    errors.push(
+      `${profileId}: Hermes tool summary has unknown built-ins: ${unknownBuiltIns.join(',')}`,
+    )
+  }
+  const missingBuiltIns = HERMES_TOOLSET_KEYS.filter(
+    (toolset) => !builtIns.has(toolset),
+  )
+  if (missingBuiltIns.length > 0) {
+    errors.push(
+      `${profileId}: Hermes tool summary is missing built-ins: ${missingBuiltIns.join(',')}`,
+    )
+  }
+
+  const expectedEnabledSet = new Set(expectedEnabled)
+  const unexpectedEnabled = [...builtIns]
+    .filter(([toolset, enabled]) => enabled && !expectedEnabledSet.has(toolset))
+    .map(([toolset]) => toolset)
+  if (unexpectedEnabled.length > 0) {
+    errors.push(
+      `${profileId}: effective built-in toolsets exceed allowlist: ${unexpectedEnabled.join(',')}`,
+    )
+  }
+  const missingEnabled = expectedEnabled.filter(
+    (toolset) => builtIns.get(toolset) !== true,
+  )
+  if (missingEnabled.length > 0) {
+    errors.push(
+      `${profileId}: effective built-in toolsets are missing: ${missingEnabled.join(',')}`,
+    )
+  }
+
+  const enabledPlugins = [...plugins]
+    .filter(([, enabled]) => enabled)
+    .map(([toolset]) => toolset)
+  if (enabledPlugins.length > 0) {
+    errors.push(
+      `${profileId}: plugin toolsets must all be disabled: ${enabledPlugins.join(',')}`,
+    )
+  }
+
+  return errors
 }
 
 export function validateNativeProfileConfig(

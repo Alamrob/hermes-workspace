@@ -28,6 +28,16 @@ agent:
     - cronjob
     - computer_use
     - messaging
+    - video
+    - video_gen
+    - bfl
+    - x_search
+    - tts
+    - stt
+    - context_engine
+    - homeassistant
+    - spotify
+    - yuanbao
 toolsets:
   - web
   - file

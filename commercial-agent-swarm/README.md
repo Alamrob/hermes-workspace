@@ -91,6 +91,8 @@ commercial-agent-swarm/
 
 The host repository adds `npm run audit:commercial-swarm` and `.github/workflows/commercial-swarm-audit.yml`. The check parses every JSON/YAML document, resolves local schema references, verifies all prompt sections and examples, validates the proposed roster through Hermes Workspace's real `SwarmRosterSchema`, checks the complete agent artifact set and enforces T01–T16. It performs no commercial network action and has read-only GitHub permissions.
 
+After installing the six profiles and before any deployment or mode promotion, run `npm run preflight:commercial-hermes-tools` on the Hermes host. It executes `hermes -p <profile> tools --summary list` for every active profile and fails closed unless enabled built-ins equal that profile's allowlist exactly, the complete Hermes 0.20.1 built-in inventory is present, and every line under `Plugin toolsets (cli)` is disabled. Profiles distribute no plugin configuration; a globally installed or dynamically enabled plugin such as `a2a` blocks the preflight rather than becoming an implicit capability.
+
 ## 14. Gradual activation
 
 [activation-plan.md](deployment/activation-plan.md) defines Simulation, Shadow Mode, Approved Pilot and Controlled Production, with numeric promotion and regression gates.

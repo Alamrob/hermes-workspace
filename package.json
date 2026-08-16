@@ -17,6 +17,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "audit:commercial-swarm": "tsx scripts/validate-commercial-swarm.ts",
+    "preflight:commercial-hermes-tools": "tsx scripts/preflight-commercial-hermes-tools.ts",
     "smoke:managed": "node scripts/managed-companion-smoke.mjs",
     "playground:ws": "node scripts/playground-ws.mjs",
     "lint": "eslint",

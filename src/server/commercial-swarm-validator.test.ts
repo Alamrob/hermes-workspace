@@ -12,6 +12,7 @@ import * as yaml from 'yaml'
 import {
   REQUIRED_PROMPT_SECTIONS,
   validateCommercialSwarm,
+  validateHermesEffectiveToolSummary,
   validateNativeProfileConfig,
   validateNativeProfileSoul,
   validateSystemPrompt,
@@ -45,6 +46,16 @@ const hermes0201Toolsets = [
   'cronjob',
   'computer_use',
   'messaging',
+  'video',
+  'video_gen',
+  'bfl',
+  'x_search',
+  'tts',
+  'stt',
+  'context_engine',
+  'homeassistant',
+  'spotify',
+  'yuanbao',
 ]
 
 const expectedProfileToolsets: Record<string, Array<string>> = {
@@ -136,7 +147,42 @@ describe('commercial swarm package validator', () => {
       expect(config.toolsets, profileId).toEqual(expectedConfigured)
       expect(platformToolsets.cli, profileId).toEqual(expectedConfigured)
       expect(agent.disabled_toolsets, profileId).toEqual(expectedDisabled)
+      expect(agent.disabled_toolsets, profileId).toContain('bfl')
     }
+  })
+
+  it('fails closed when an effective built-in or plugin toolset exceeds the profile', () => {
+    const golden = readFileSync(
+      join(
+        packageRoot,
+        'tests',
+        'fixtures',
+        'hermes-0.20.1-sales-tools-summary.golden.txt',
+      ),
+      'utf8',
+    )
+
+    expect(
+      validateHermesEffectiveToolSummary(
+        golden,
+        expectedProfileToolsets['sales-orchestrator'],
+        'sales-orchestrator',
+      ),
+    ).toEqual([])
+
+    const unsafe = golden
+      .replace('✗ disabled  bfl', '✓ enabled  bfl')
+      .replace('✗ disabled  a2a', '✓ enabled  a2a')
+    expect(
+      validateHermesEffectiveToolSummary(
+        unsafe,
+        expectedProfileToolsets['sales-orchestrator'],
+        'sales-orchestrator',
+      ),
+    ).toEqual([
+      'sales-orchestrator: effective built-in toolsets exceed allowlist: bfl',
+      'sales-orchestrator: plugin toolsets must all be disabled: a2a',
+    ])
   })
 
   it('routes separate profiles through the broker without native delegation', () => {

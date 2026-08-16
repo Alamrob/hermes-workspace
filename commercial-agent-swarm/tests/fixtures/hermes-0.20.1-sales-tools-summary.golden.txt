@@ -1,0 +1,29 @@
+Built-in toolsets (cli):
+  ✗ disabled  web  🌐 Web
+  ✗ disabled  browser  🌍 Browser
+  ✗ disabled  terminal  💻 Terminal
+  ✓ enabled  file  📁 File
+  ✗ disabled  code_execution  🧪 Code Execution
+  ✗ disabled  vision  👁 Vision
+  ✗ disabled  image_gen  🎨 Image Generation
+  ✗ disabled  skills  🧰 Skills
+  ✓ enabled  todo  ✅ Todo
+  ✗ disabled  memory  🧠 Memory
+  ✓ enabled  session_search  🔎 Session Search
+  ✗ disabled  clarify  ❓ Clarify
+  ✗ disabled  delegation  👥 Delegation
+  ✗ disabled  cronjob  ⏰ Cronjob
+  ✗ disabled  computer_use  🖱️ Computer Use
+  ✗ disabled  messaging  💬 Messaging
+  ✗ disabled  video  🎬 Video Analysis
+  ✗ disabled  video_gen  🎬 Video Generation
+  ✗ disabled  bfl  🎬 BFL FLUX 3 Video
+  ✗ disabled  x_search  🐦 X (Twitter) Search
+  ✗ disabled  tts  🔊 Text to Speech
+  ✗ disabled  stt  🎤 Speech to Text
+  ✗ disabled  context_engine  🧩 Context Engine
+  ✗ disabled  homeassistant  🏠 Home Assistant
+  ✗ disabled  spotify  🎵 Spotify
+  ✗ disabled  yuanbao  🤖 Yuanbao
+Plugin toolsets (cli):
+  ✗ disabled  a2a  🔌 A2A
