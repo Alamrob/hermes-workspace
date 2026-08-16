@@ -56,7 +56,7 @@
 ### Task 4: Data Model, Director Migration and Infra Repository
 
 - [ ] Add idempotent migrations for `catalog`, `control` and `mail` schemas plus versioned Proptimiza seed data.
-- [ ] Preserve empty legacy approval/run tables under explicit legacy names and provide compatibility views only if required.
+- [ ] Preserve the now non-empty legacy approval/run tables and their existing rows; rename or expose compatibility views only after dependency analysis proves the change safe.
 - [ ] Export and redact the old Director Sales evidence, classifying decisions, assumptions, evidence, obsolete configuration and pending work.
 - [ ] Prepare a sanitized private `sales-platform-infra` repository with pinned Compose, Caddy, migrations and runbooks.
 
