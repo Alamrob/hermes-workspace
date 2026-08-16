@@ -229,6 +229,28 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION integration.mark_crm_outbox_outcome_unknown(uuid,text,text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+BEGIN
+  IF $3 <> 'TWENTY_OUTCOME_UNKNOWN' THEN
+    RAISE EXCEPTION 'INVALID_CRM_OUTCOME_ERROR';
+  END IF;
+  UPDATE integration.crm_outbox
+  SET status = 'outcome_unknown', lease_owner = NULL, lease_until = NULL,
+      error_code = $3, updated_at = clock_timestamp()
+  WHERE outbox_id = $1 AND status = 'leased' AND lease_owner = $2;
+  IF FOUND THEN RETURN true; END IF;
+  RETURN EXISTS(
+    SELECT 1 FROM integration.crm_outbox
+    WHERE outbox_id = $1 AND status = 'outcome_unknown' AND error_code = $3
+  );
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION integration.store_crm_inbox(text,text,text,text,text,jsonb)
 RETURNS boolean
 LANGUAGE plpgsql
@@ -326,6 +348,7 @@ TO commercial_runtime;
 GRANT EXECUTE ON FUNCTION
   integration.claim_crm_outbox(text,integer),
   integration.complete_crm_outbox(uuid,text,text,text),
+  integration.mark_crm_outbox_outcome_unknown(uuid,text,text),
   integration.store_crm_inbox(text,text,text,text,text,jsonb),
   integration.advance_crm_cursor(text,text,bigint,text)
 TO commercial_crm_sync;
