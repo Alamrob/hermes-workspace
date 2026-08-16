@@ -133,6 +133,8 @@ async function setup(options: { productionPricing?: boolean } = {}) {
     childUid: 10000,
     childGid: 10000,
     customApiKeyFile: keyFile,
+    expectedSecretGid: 10000,
+    readCustomApiKey: async (path) => (await readFile(path, 'utf8')).trim(),
     safePath: '/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin',
     timeoutMs: 1_000,
     pricingClock: () => new Date('2026-08-16T12:00:00Z'),

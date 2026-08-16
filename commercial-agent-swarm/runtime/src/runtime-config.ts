@@ -12,6 +12,8 @@ const CREDENTIAL_NAME =
 export const EXECUTOR_SOCKET_DIRECTORY = '/run/commercial-swarm'
 export const EXECUTOR_SOCKET_PATH = `${EXECUTOR_SOCKET_DIRECTORY}/executor.sock`
 export const HERMES_TEMPORARY_ROOT = '/run/commercial-swarm/hermes-executor'
+export const EXECUTOR_UID = 10000
+export const EXECUTOR_GID = 10000
 
 export interface BrokerRuntimeConfig {
   socketPath: string
@@ -24,6 +26,8 @@ export interface ExecutorRuntimeConfig {
   socketPath: string
   socketDirectory: string
   ipcGid: number
+  executorUid: 10000
+  executorGid: 10000
   profileSeed: string
   seedSha256: string
   temporaryRoot: string
@@ -80,6 +84,8 @@ export function loadExecutorRuntimeConfig(
     socketPath,
     socketDirectory,
     ipcGid: integer(env, 'EXECUTOR_IPC_GID', 1, 65535),
+    executorUid: EXECUTOR_UID,
+    executorGid: EXECUTOR_GID,
     profileSeed: required(env, 'HERMES_PROFILE_SEED'),
     seedSha256: required(env, 'HERMES_PROFILE_SEED_SHA256'),
     temporaryRoot,

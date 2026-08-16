@@ -2,6 +2,7 @@ import { constants as fsConstants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { parseApprovalMode, type ApprovalMode } from './approval-mode.js'
+import { readGroupSecretFile } from './secret-file.js'
 
 type Environment = Record<string, string | undefined>
 
@@ -173,7 +174,7 @@ export async function expandDatabaseSecretFiles(
 ): Promise<Environment> {
   const expanded: Environment = { ...environment }
   for (const secret of config.databaseSecretFiles)
-    expanded[secret.name] = await readOwnerSecretFile(secret.path)
+    expanded[secret.name] = await readGroupSecretFile(secret.path)
   return expanded
 }
 
@@ -182,17 +183,17 @@ export async function readApplicationSecrets(
 ): Promise<ApplicationSecrets> {
   const files = config.applicationSecretFiles
   const secrets = {
-    workOrderHmac: await readOwnerSecretFile(files.WORK_ORDER_HMAC_SECRET_FILE),
-    controlPlane: await readOwnerSecretFile(files.CONTROL_PLANE_BEARER_FILE),
-    approvalSalesGateway: await readOwnerSecretFile(
+    workOrderHmac: await readGroupSecretFile(files.WORK_ORDER_HMAC_SECRET_FILE),
+    controlPlane: await readGroupSecretFile(files.CONTROL_PLANE_BEARER_FILE),
+    approvalSalesGateway: await readGroupSecretFile(
       files.APPROVAL_SALES_GATEWAY_BEARER_FILE,
     ),
-    approvalTelegramGateway: await readOwnerSecretFile(
+    approvalTelegramGateway: await readGroupSecretFile(
       files.APPROVAL_TELEGRAM_GATEWAY_BEARER_FILE,
     ),
-    connector: await readOwnerSecretFile(files.CONNECTOR_BEARER_FILE),
-    internal: await readOwnerSecretFile(files.INTERNAL_BEARER_FILE),
-    approvalHmac: await readOwnerSecretFile(files.APPROVAL_HMAC_SECRET_FILE),
+    connector: await readGroupSecretFile(files.CONNECTOR_BEARER_FILE),
+    internal: await readGroupSecretFile(files.INTERNAL_BEARER_FILE),
+    approvalHmac: await readGroupSecretFile(files.APPROVAL_HMAC_SECRET_FILE),
   }
   assertDistinctApplicationSecrets(secrets)
   return secrets

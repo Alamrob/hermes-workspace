@@ -44,11 +44,12 @@ export function createExecutorServer(
     expectedSeedSha256: config.seedSha256,
     temporaryRoot: config.temporaryRoot,
     expectedTemporaryRoot: '/run/commercial-swarm/hermes-executor',
-    expectedOwnerUid: 0,
-    expectedUsageUid: 10000,
-    childUid: 10000,
-    childGid: 10000,
+    expectedOwnerUid: config.executorUid,
+    expectedUsageUid: config.executorUid,
+    childUid: config.executorUid,
+    childGid: config.executorGid,
     customApiKeyFile: config.customApiKeyFile,
+    expectedSecretGid: config.executorGid,
     safePath: '/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin',
     timeoutMs: config.hermesTimeoutMs,
   })
@@ -56,6 +57,11 @@ export function createExecutorServer(
     socketPath: config.socketPath,
     executor,
     frameTimeoutMs: 30_000,
-    security: new PosixSocketSecurity(config.socketDirectory, config.ipcGid),
+    security: new PosixSocketSecurity(
+      config.socketDirectory,
+      config.ipcGid,
+      config.executorUid,
+      config.executorGid,
+    ),
   })
 }

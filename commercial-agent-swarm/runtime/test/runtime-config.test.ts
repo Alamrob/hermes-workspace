@@ -53,6 +53,13 @@ describe('split runtime trust-zone configuration', () => {
       loadExecutorRuntimeConfig(good).customApiKeyFile,
       '/run/secrets/key',
     )
+    assert.deepEqual(
+      {
+        uid: loadExecutorRuntimeConfig(good).executorUid,
+        gid: loadExecutorRuntimeConfig(good).executorGid,
+      },
+      { uid: 10000, gid: 10000 },
+    )
     for (const name of [
       'DATABASE_URL',
       'DATABASE_URL_FILE',

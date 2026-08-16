@@ -5,6 +5,7 @@ import {
   loadSimulationBrokerConfig,
   validateSecretFileMetadata,
 } from '../src/simulation-entrypoint.js'
+import { validateGroupSecretFileMetadata } from '../src/secret-file.js'
 import { DisabledExternalMailTransport } from '../src/disabled-transports.js'
 
 const environment = {
@@ -81,25 +82,37 @@ describe('Simulation broker entrypoint', () => {
     )
   })
 
-  it('accepts only an owner-readable regular secret file with no group/world access', () => {
+  it('accepts only root:10000 0440 secrets for a process in the dedicated group', () => {
     assert.doesNotThrow(() =>
-      validateSecretFileMetadata(
-        { isFile: true, isSymbolicLink: false, uid: 10001, mode: 0o100400, size: 64 },
-        10001,
+      validateGroupSecretFileMetadata(
+        { isFile: true, isSymbolicLink: false, uid: 0, gid: 10000, mode: 0o100440, size: 64, nlink: 1 },
+        10000,
+        { uid: 10000, gid: 10000, groups: [10000] },
       ),
     )
     for (const metadata of [
-      { isFile: false, isSymbolicLink: false, uid: 10001, mode: 0o100400, size: 64 },
-      { isFile: true, isSymbolicLink: true, uid: 10001, mode: 0o100400, size: 64 },
-      { isFile: true, isSymbolicLink: false, uid: 0, mode: 0o100400, size: 64 },
-      { isFile: true, isSymbolicLink: false, uid: 10001, mode: 0o100440, size: 64 },
-      { isFile: true, isSymbolicLink: false, uid: 10001, mode: 0o100400, size: 0 },
+      { isFile: false, isSymbolicLink: false, uid: 0, gid: 10000, mode: 0o100440, size: 64, nlink: 1 },
+      { isFile: true, isSymbolicLink: true, uid: 0, gid: 10000, mode: 0o100440, size: 64, nlink: 1 },
+      { isFile: true, isSymbolicLink: false, uid: 10000, gid: 10000, mode: 0o100440, size: 64, nlink: 1 },
+      { isFile: true, isSymbolicLink: false, uid: 0, gid: 10001, mode: 0o100440, size: 64, nlink: 1 },
+      { isFile: true, isSymbolicLink: false, uid: 0, gid: 10000, mode: 0o100400, size: 64, nlink: 1 },
+      { isFile: true, isSymbolicLink: false, uid: 0, gid: 10000, mode: 0o100444, size: 64, nlink: 1 },
+      { isFile: true, isSymbolicLink: false, uid: 0, gid: 10000, mode: 0o100440, size: 0, nlink: 1 },
+      { isFile: true, isSymbolicLink: false, uid: 0, gid: 10000, mode: 0o100440, size: 64, nlink: 2 },
     ]) {
       assert.throws(
-        () => validateSecretFileMetadata(metadata, 10001),
+        () => validateGroupSecretFileMetadata(metadata, 10000, { uid: 10000, gid: 10000, groups: [10000] }),
         /UNSAFE_SECRET_FILE/,
       )
     }
+    assert.throws(
+      () => validateGroupSecretFileMetadata(
+        { isFile: true, isSymbolicLink: false, uid: 0, gid: 10000, mode: 0o100440, size: 64, nlink: 1 },
+        10000,
+        { uid: 10000, gid: 10001, groups: [10001] },
+      ),
+      /SECRET_GROUP_MEMBERSHIP_REQUIRED/,
+    )
   })
 
   it('denies mail before any external transport can exist', async () => {

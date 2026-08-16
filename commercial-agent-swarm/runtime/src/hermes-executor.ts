@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
-  chown,
   cp,
   lstat,
   mkdir,
@@ -15,6 +14,7 @@ import {
 import { constants as fsConstants } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { parse as parseYaml } from 'yaml'
+import { readGroupSecretFile } from './secret-file.js'
 import {
   ACTIVE_PROFILES,
   buildHermesPrompt,
@@ -91,6 +91,8 @@ export interface HermesExecutorOptions {
   childUid: number
   childGid: number
   customApiKeyFile: string
+  expectedSecretGid?: number
+  readCustomApiKey?: (path: string, expectedGid: number) => Promise<string>
   safePath: string
   timeoutMs: number
   stdoutLimitBytes?: number
@@ -185,9 +187,9 @@ export class HermesExecutor implements ExecutorPort {
       input.profile_id,
       input.reservation,
     )
-    const customApiKey = await readRootOnlySecret(
+    const customApiKey = await (this.options.readCustomApiKey ?? readGroupSecretFile)(
       this.options.customApiKeyFile,
-      ownerUid,
+      this.options.expectedSecretGid ?? 10000,
     )
     const home = await mkdtemp(join(this.options.temporaryRoot, 'hermes-home-'))
     const cwd = await mkdtemp(join(this.options.temporaryRoot, 'hermes-run-'))
@@ -380,7 +382,11 @@ export class PosixHomeOwnershipPreparer implements HomeOwnershipPreparer {
     if (metadata.isDirectory())
       for (const entry of await readdir(path))
         await this.prepareEntry(join(path, entry), uid, gid)
-    await chown(path, uid, gid)
+    if (
+      process.platform !== 'win32' &&
+      (metadata.uid !== uid || metadata.gid !== gid || (metadata.mode & 0o022) !== 0)
+    )
+      throw new Error('UNSAFE_EPHEMERAL_HOME_OWNERSHIP')
   }
 }
 
@@ -491,30 +497,6 @@ async function validateSeedTree(path: string, ownerUid: number): Promise<void> {
   if (metadata.isDirectory())
     for (const entry of await readdir(path))
       await validateSeedTree(join(path, entry), ownerUid)
-}
-async function readRootOnlySecret(
-  path: string,
-  ownerUid: number,
-): Promise<string> {
-  if (!isAbsolute(path) || resolve(await realpath(path)) !== resolve(path))
-    throw new Error('UNSAFE_CUSTOM_API_KEY_FILE')
-  const metadata = await lstat(path)
-  if (
-    metadata.isSymbolicLink() ||
-    !metadata.isFile() ||
-    metadata.nlink !== 1 ||
-    metadata.size <= 0 ||
-    metadata.size > 16_384
-  )
-    throw new Error('UNSAFE_CUSTOM_API_KEY_FILE')
-  if (
-    process.platform !== 'win32' &&
-    (metadata.uid !== ownerUid || (metadata.mode & 0o077) !== 0)
-  )
-    throw new Error('UNSAFE_CUSTOM_API_KEY_FILE')
-  const secret = (await readFile(path, 'utf8')).trim()
-  if (!secret) throw new Error('CUSTOM_API_KEY_REQUIRED')
-  return secret
 }
 async function readSecureUsageFile(
   path: string,
