@@ -30,7 +30,7 @@ class FakeMail implements MailTransport {
   }
 }
 
-function setup(mode: ApprovalMode = 'either') {
+function setup(mode: ApprovalMode = 'either', ambiguousGateways = false) {
   const repository = new InMemoryRuntimeRepository()
   const telegram = new FakeTelegram()
   const approvals = new ApprovalBroker({
@@ -89,7 +89,7 @@ function setup(mode: ApprovalMode = 'either') {
         controlPlane: 'control-plane-token', connector: 'connector-token', internal: 'internal-token',
         approvalGateways: {
           sales: { bearer: 'sales-approval-token', actors: ['sales-director'] },
-          telegram: { bearer: 'telegram-approval-token', actors: ['telegram-user-1'] },
+          telegram: { bearer: ambiguousGateways ? 'sales-approval-token' : 'telegram-approval-token', actors: ['telegram-user-1'] },
         },
       },
     }),
@@ -197,8 +197,8 @@ describe('broker application routes', () => {
     const requested = await state.app.handle({ method: 'POST', path: '/v1/approvals/requests', headers: headers('control-plane-token'), body: mailAction() })
     const id = (requested.body as any).approval_id
     const decision = { decision: 'approved', actor_id: 'unapproved', decided_at: NOW.toISOString(), expires_at: '2026-08-15T20:15:00.000Z' }
-    assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decisions/sales`, body: decision })).status, 401)
-    assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decisions/sales`, headers: headers('sales-approval-token'), body: decision })).status, 403)
+    assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decision`, body: decision })).status, 401)
+    assert.equal((await state.app.handle({ method: 'POST', path: `/v1/approvals/${id}/decision`, headers: headers('sales-approval-token'), body: decision })).status, 403)
   })
 
   it('derives the evidence channel from separate authenticated routes and dual mode grants only after both', async () => {
@@ -209,7 +209,7 @@ describe('broker application routes', () => {
     const expiry = '2026-08-15T20:15:00.000Z'
     const sales = await state.app.handle({
       method: 'POST',
-      path: `/v1/approvals/${id}/decisions/sales`,
+      path: `/v1/approvals/${id}/decision`,
       headers: headers('sales-approval-token'),
       body: {
         decision: 'approved',
@@ -221,8 +221,8 @@ describe('broker application routes', () => {
     assert.deepEqual(sales, { status: 200, body: { status: 'pending' } })
     const spoofed = await state.app.handle({
       method: 'POST',
-      path: `/v1/approvals/${id}/decisions/telegram`,
-      headers: headers('sales-approval-token'),
+      path: `/v1/approvals/${id}/decision`,
+      headers: headers('telegram-approval-token'),
       body: {
         decision: 'approved',
         actor_id: 'sales-director',
@@ -231,10 +231,10 @@ describe('broker application routes', () => {
         expires_at: expiry,
       },
     })
-    assert.equal(spoofed.status, 401)
+    assert.equal(spoofed.status, 400)
     const telegram = await state.app.handle({
       method: 'POST',
-      path: `/v1/approvals/${id}/decisions/telegram`,
+      path: `/v1/approvals/${id}/decision`,
       headers: headers('telegram-approval-token'),
       body: {
         decision: 'approved',
@@ -246,14 +246,25 @@ describe('broker application routes', () => {
     assert.equal(telegram.status, 200)
     assert.equal((telegram.body as { status: string }).status, 'approved')
     assert.match((telegram.body as { token: string }).token, /^APPROVAL::/)
+    assert.equal((telegram.body as { token: string }).token.split('::').length, 6)
     assert.equal(
       (await state.app.handle({
         method: 'POST',
         path: `/v1/approvals/${id}/decision`,
-        headers: headers('approval-gateway-token'),
-        body: { approved: true, approved_by: 'human-director', expires_at: expiry },
+        headers: headers('wrong-approval-token'),
+        body: {
+          decision: 'approved', actor_id: 'telegram-user-1',
+          decided_at: NOW.toISOString(), expires_at: expiry,
+        },
       })).status,
-      404,
+      401,
+    )
+  })
+
+  it('rejects an ambiguous approval gateway token configuration at startup', () => {
+    assert.throws(
+      () => setup('either', true),
+      /APPROVAL_GATEWAY_CONFIGURATION_INVALID/,
     )
   })
 
@@ -346,7 +357,7 @@ describe('broker application routes', () => {
     const approvalId = (requested.body as any).approval_id
     const decided = await state.app.handle({
       method: 'POST',
-      path: `/v1/approvals/${approvalId}/decisions/sales`,
+      path: `/v1/approvals/${approvalId}/decision`,
       headers: headers('sales-approval-token'),
       body: { decision: 'approved', actor_id: 'sales-director', decided_at: NOW.toISOString(), expires_at: '2026-08-15T20:15:00.000Z' },
     })
@@ -370,7 +381,7 @@ describe('broker application routes', () => {
     const approvalId = (requested.body as { approval_id: string }).approval_id
     const decided = await state.app.handle({
       method: 'POST',
-      path: `/v1/approvals/${approvalId}/decisions/sales`,
+      path: `/v1/approvals/${approvalId}/decision`,
       headers: headers('sales-approval-token'),
       body: { decision: 'approved', actor_id: 'sales-director', decided_at: NOW.toISOString(), expires_at: '2026-08-15T20:15:00.000Z' },
     })

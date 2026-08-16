@@ -8,7 +8,13 @@ import { MailPolicyError, type MailService } from './mail.js'
 import type { AuditSink } from './observability.js'
 import type { RuntimeRepository } from './repository.js'
 import { WebhookError, type WebhookService } from './webhook.js'
-import { AuthenticationError, requireBearer, type WorkOrderAuthConfig, verifyWorkOrder } from './security.js'
+import {
+  AuthenticationError,
+  constantTimeSecretEqual,
+  requireBearer,
+  type WorkOrderAuthConfig,
+  verifyWorkOrder,
+} from './security.js'
 import { ValidationError, validateWorkOrder } from './work-orders.js'
 
 export interface ApplicationRequest {
@@ -50,6 +56,13 @@ export class BrokerApplication {
 
   constructor(private readonly options: ApplicationOptions) {
     this.now = options.now ?? (() => new Date())
+    if (
+      constantTimeSecretEqual(
+        options.authentication.approvalGateways.sales.bearer,
+        options.authentication.approvalGateways.telegram.bearer,
+      )
+    )
+      throw new Error('APPROVAL_GATEWAY_CONFIGURATION_INVALID')
   }
 
   async handle(request: ApplicationRequest): Promise<ApplicationResponse> {
@@ -115,9 +128,11 @@ export class BrokerApplication {
       return { status: 201, body: await this.options.approvals.request(request.body) }
     }
     if (route.action === 'decideApproval') {
-      const channel = route.channel!
+      const channel = resolveApprovalChannel(
+        request.headers?.authorization,
+        this.options.authentication.approvalGateways,
+      )
       const gateway = this.options.authentication.approvalGateways[channel]
-      requireBearer(request.headers?.authorization, gateway.bearer)
       const decision = validateEvidenceDecision(request.body)
       if (!gateway.actors.includes(decision.actorId))
         throw new AuthenticationError('FORBIDDEN')
@@ -187,9 +202,7 @@ export class BrokerApplication {
 function approvalReference(request: ApplicationRequest, response: ApplicationResponse | null): string | null {
   return responseReference(response, 'approval_reference') ??
     responseReference(response, 'approval_id') ??
-    /^\/v1\/approvals\/([^/]+)\/decisions\/(?:sales|telegram)$/.exec(
-      request.path,
-    )?.[1] ??
+    /^\/v1\/approvals\/([^/]+)\/decision$/.exec(request.path)?.[1] ??
     null
 }
 
@@ -214,14 +227,12 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'POST' && path === '/v1/mail/send') return { action: 'sendMail', auditAction: 'mail.send' }
   const mission = /^\/v1\/missions\/([^/]+)$/.exec(path)
   if (method === 'GET' && mission) return { action: 'getMission', auditAction: 'mission.get', id: mission[1] }
-  const decision =
-    /^\/v1\/approvals\/([^/]+)\/decisions\/(sales|telegram)$/.exec(path)
+  const decision = /^\/v1\/approvals\/([^/]+)\/decision$/.exec(path)
   if (method === 'POST' && decision)
     return {
       action: 'decideApproval',
       auditAction: 'approval.decision',
       id: decision[1],
-      channel: decision[2] as ApprovalChannel,
     }
   const webhook = /^\/webhooks\/hostinger-mail\/([^/]+)$/.exec(path)
   if (method === 'POST' && webhook) return { action: 'webhook', auditAction: 'webhook.ingest', id: webhook[1] }
@@ -273,6 +284,17 @@ function validateEvidenceDecision(value: unknown): {
     decidedAt: new Date(record.decided_at).toISOString(),
     expiresAt: new Date(record.expires_at).toISOString(),
   }
+}
+
+function resolveApprovalChannel(
+  authorization: string | undefined,
+  gateways: Record<ApprovalChannel, { bearer: string; actors: string[] }>,
+): ApprovalChannel {
+  const provided = authorization?.match(/^Bearer ([^\s]+)$/)?.[1] ?? ''
+  const sales = constantTimeSecretEqual(provided, gateways.sales.bearer)
+  const telegram = constantTimeSecretEqual(provided, gateways.telegram.bearer)
+  if (sales === telegram) throw new AuthenticationError('UNAUTHORIZED')
+  return sales ? 'sales' : 'telegram'
 }
 
 function publicFailure(error: unknown): {
