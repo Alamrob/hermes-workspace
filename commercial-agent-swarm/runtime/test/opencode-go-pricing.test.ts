@@ -1,0 +1,64 @@
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+import {
+  OPENCODE_GO_PRICING_SNAPSHOT,
+  priceOpenCodeGoUsage,
+} from '../src/opencode-go-pricing.js'
+import type { TrustedUsage } from '../src/executor-contract.js'
+
+function usage(overrides: Partial<TrustedUsage['tokens']> = {}): TrustedUsage {
+  const tokens = {
+    input: 1_000_000,
+    output: 1_000_000,
+    cache_read: 1_000_000,
+    cache_write: 0,
+    reasoning: 0,
+    total: 3_000_000,
+    ...overrides,
+  }
+  tokens.total =
+    tokens.input + tokens.output + tokens.cache_read + tokens.cache_write
+  return {
+    tokens,
+    api_calls: 1,
+    model: 'deepseek-v4-flash',
+    provider: 'custom:deepseek-v4-flash',
+    completed: true,
+    failed: false,
+    cost: { status: 'unknown', amount_usd: null, source: 'none' },
+  }
+}
+
+describe('versioned OpenCode Go pricing', () => {
+  it('prices trusted token telemetry exactly in integer picodollars', () => {
+    const priced = priceOpenCodeGoUsage(
+      usage(),
+      new Date('2026-08-16T12:00:00Z'),
+    )
+
+    assert.equal(OPENCODE_GO_PRICING_SNAPSHOT.id, 'opencode-go-2026-08-16-v1')
+    assert.deepEqual(priced.cost, {
+      status: 'known',
+      amount_usd: 0.4228,
+      source: 'official_docs_snapshot',
+    })
+  })
+
+  it('fails closed when the official table has no cached-write price', () => {
+    assert.throws(
+      () =>
+        priceOpenCodeGoUsage(
+          usage({ cache_write: 1 }),
+          new Date('2026-08-16T12:00:00Z'),
+        ),
+      /OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN/,
+    )
+  })
+
+  it('requires revalidation after the dated pricing and privacy snapshot', () => {
+    assert.throws(
+      () => priceOpenCodeGoUsage(usage(), new Date('2026-09-01T00:00:00Z')),
+      /OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED/,
+    )
+  })
+})
