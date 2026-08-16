@@ -7,7 +7,7 @@ This package converts the approved commercial operating model into a control-pla
 ## 1. Architecture summary
 
 - **Control plane:** User → Codex Auditor → signed work order and approvals.
-- **Execution plane:** Hermes Orchestrator → specialist agents → independent Commercial QA → evidence-bearing result.
+- **Execution plane:** a deterministic external broker opens one separate Hermes profile session per closed-enum work order; `sales-orchestrator` prepares routes and consolidates evidence but never invokes native child profiles.
 - **Systems of record:** the CRM controls accounts, contacts, opportunities and activities; PostgreSQL/Supabase controls missions, approvals, audit events, consent, suppression, evidence and derived metrics; billing and contract systems control their own records.
 - **Hermes memory:** mission-local cache and continuity only. It is never a competing commercial source of truth.
 - **External actions:** disabled in simulation and shadow mode. A3 is fail-closed and action-specific. A4 is human-only.
@@ -16,7 +16,7 @@ See [system-overview.md](architecture/system-overview.md) and [hermes-compatibil
 
 ## 2. Retained, combined, deferred and human functions
 
-The package retains one orchestrator and ten specialist agents. Twenty candidate roles were consolidated to avoid autonomous role inflation. See [agent-decisions.md](architecture/agent-decisions.md).
+The active deployment contains exactly six native profiles under `profiles/`. The ten packages under `agents/` and the legacy `orchestrator/` package are deferred design documentation only: they are not active workers, are not valid dispatcher targets and are reported separately from active metrics. See [agent-decisions.md](architecture/agent-decisions.md).
 
 ## 3. Swarm organization
 
@@ -42,13 +42,13 @@ The accountable, responsible, consulted and informed assignments are in [respons
 
 [permissions-matrix.md](architecture/permissions-matrix.md) applies least privilege. Confirmed Hermes logical tools are distinguished from proposed connector adapters. Proposed adapters are absent and disabled until installed and approved.
 
-## 9. Hermes orchestrator prompt
+## 9. Deferred orchestrator design
 
-[SYSTEM_PROMPT.md](orchestrator/SYSTEM_PROMPT.md) is the complete control prompt for the execution plane.
+[SYSTEM_PROMPT.md](orchestrator/SYSTEM_PROMPT.md) is retained as deferred design documentation. The active autonomous prompt is `profiles/sales-orchestrator/SOUL.md` and depends on the external broker contract described there.
 
-## 10. Specialist prompts
+## 10. Deferred specialist design documentation
 
-Each directory contains an autonomous system prompt, proposed manifest, input/output contracts, tool policy and tests:
+Each `agents/` directory contains historical design artifacts only. None belongs to the active roster or active prompt/agent metrics:
 
 1. [Market & Account Intelligence](agents/market-account-intelligence/SYSTEM_PROMPT.md)
 2. [Contact Data Steward](agents/contact-data-steward/SYSTEM_PROMPT.md)
@@ -74,7 +74,7 @@ commercial-agent-swarm/
 ├── contracts/
 ├── shared/
 ├── orchestrator/
-├── agents/
+├── agents/ # deferred documentation only
 ├── workflows/
 ├── tests/
 ├── simulations/

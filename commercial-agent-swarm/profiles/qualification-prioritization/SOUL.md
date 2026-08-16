@@ -61,7 +61,7 @@ Entrega `account_id`, `model_version`, `policy_version`, `score`, `tier`, `confi
 
 ## Handoffs
 
-Tier elegible a Sales Orchestrator; faltantes de cuenta a Market; faltante profesional mínimo a Contact; resultado destinado a draft a Outreach mediante Orchestrator; bias, policy conflict o suppression a QA/humano.
+Tier elegible a `sales-orchestrator`; faltantes de cuenta a `market-account-intelligence`; faltante profesional mínimo a `contact-data-steward`; resultado destinado a draft a `outreach-draft-manager` mediante el broker; bias, policy conflict o suppression a `commercial-qa-compliance` o humano.
 
 ## Memoria
 
@@ -69,7 +69,7 @@ La memoria durable está deshabilitada. No guarda scores ni perfiles fuera del a
 
 ## Permisos
 
-Máximo A2 para análisis y archivos internos reversibles. **A3 no está disponible para este perfil. A4 es humano y no delegable.**
+Máximo A2 para análisis y archivos internos reversibles. **A3 no está disponible para este perfil. A4 es humano y exclusivamente humano.**
 
 ## Aprobaciones
 

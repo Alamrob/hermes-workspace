@@ -13,6 +13,7 @@ import {
   REQUIRED_PROMPT_SECTIONS,
   validateCommercialSwarm,
   validateNativeProfileConfig,
+  validateNativeProfileSoul,
   validateSystemPrompt,
 } from './commercial-swarm-validator'
 
@@ -27,14 +28,53 @@ const activeProfileIds = [
   'commercial-qa-compliance',
 ]
 
+const hermes0201Toolsets = [
+  'web',
+  'browser',
+  'terminal',
+  'file',
+  'code_execution',
+  'vision',
+  'image_gen',
+  'skills',
+  'todo',
+  'memory',
+  'session_search',
+  'clarify',
+  'delegation',
+  'cronjob',
+  'computer_use',
+  'messaging',
+]
+
+const expectedProfileToolsets: Record<string, Array<string>> = {
+  'sales-orchestrator': ['file', 'todo', 'session_search'],
+  'market-account-intelligence': ['web', 'file'],
+  'contact-data-steward': ['web', 'file'],
+  'qualification-prioritization': ['file'],
+  'outreach-draft-manager': ['file'],
+  'commercial-qa-compliance': ['file'],
+}
+
+function readProfileConfig(profileId: string): Record<string, unknown> {
+  return yaml.parse(
+    readFileSync(
+      join(packageRoot, 'profiles', profileId, 'config.yaml'),
+      'utf8',
+    ),
+  ) as Record<string, unknown>
+}
+
 describe('commercial swarm package validator', () => {
   it('accepts the committed simulation-only package', () => {
     const result = validateCommercialSwarm(packageRoot)
 
     expect(result.errors).toEqual([])
-    expect(result.counts.agents).toBe(10)
+    expect(result.counts.agents).toBe(6)
     expect(result.counts.profiles).toBe(6)
-    expect(result.counts.prompts).toBe(17)
+    expect(result.counts.prompts).toBe(6)
+    expect(result.counts.deferredAgents).toBe(10)
+    expect(result.counts.deferredPrompts).toBe(11)
     expect(result.counts.testCases).toBe(16)
     expect(result.counts.rosterWorkers).toBe(6)
   })
@@ -63,22 +103,117 @@ describe('commercial swarm package validator', () => {
     expect(result.rosterWorkerIds).toEqual(activeProfileIds)
   })
 
-  it('rejects toolset escalation and inline credentials in a native profile config', () => {
-    const config = yaml.parse(
-      readFileSync(
-        join(
-          packageRoot,
-          'profiles',
-          'market-account-intelligence',
-          'config.yaml',
-        ),
+  it('pins every native profile to the OpenCode Go endpoint', () => {
+    for (const profileId of activeProfileIds) {
+      const config = readProfileConfig(profileId)
+      const providers = config.custom_providers as Array<
+        Record<string, unknown>
+      >
+
+      expect(providers[0].base_url, profileId).toBe(
+        'https://opencode.ai/zen/go/v1',
+      )
+      expect(`${providers[0].base_url}/chat/completions`, profileId).toBe(
+        'https://opencode.ai/zen/go/v1/chat/completions',
+      )
+    }
+  })
+
+  it('grants exact profile toolsets and disables every other Hermes 0.20.1 toolset', () => {
+    for (const profileId of activeProfileIds) {
+      const config = readProfileConfig(profileId)
+      const expected = expectedProfileToolsets[profileId]
+      const expectedConfigured = [...expected, 'no_mcp']
+      const platformToolsets = config.platform_toolsets as Record<
+        string,
+        unknown
+      >
+      const agent = config.agent as Record<string, unknown>
+      const expectedDisabled = hermes0201Toolsets.filter(
+        (toolset) => !expected.includes(toolset),
+      )
+
+      expect(config.toolsets, profileId).toEqual(expectedConfigured)
+      expect(platformToolsets.cli, profileId).toEqual(expectedConfigured)
+      expect(agent.disabled_toolsets, profileId).toEqual(expectedDisabled)
+    }
+  })
+
+  it('routes separate profiles through the broker without native delegation', () => {
+    const soul = readFileSync(
+      join(packageRoot, 'profiles', 'sales-orchestrator', 'SOUL.md'),
+      'utf8',
+    )
+    const roster = readFileSync(
+      join(packageRoot, 'deployment', 'swarm.proposed.yaml'),
+      'utf8',
+    )
+    const matrix = readFileSync(
+      join(packageRoot, 'tests', 'agent-test-matrix.yaml'),
+      'utf8',
+    )
+
+    expect(soul.toLowerCase()).not.toContain('deleg')
+    expect(roster.toLowerCase()).not.toContain('deleg')
+    expect(matrix.toLowerCase()).not.toContain('deleg')
+    expect(soul).toContain('broker')
+  })
+
+  it('keeps hashing in the deterministic broker and never invents profile hashes', () => {
+    const orchestrator = readFileSync(
+      join(packageRoot, 'profiles', 'sales-orchestrator', 'SOUL.md'),
+      'utf8',
+    ).toLowerCase()
+
+    expect(orchestrator).toContain('sha-256')
+    expect(orchestrator).toContain('bytes utf-8 canónicos')
+    expect(orchestrator).toContain('artifact_id')
+    expect(orchestrator).toContain('content_hash')
+
+    for (const profileId of [
+      'outreach-draft-manager',
+      'commercial-qa-compliance',
+    ]) {
+      const soul = readFileSync(
+        join(packageRoot, 'profiles', profileId, 'SOUL.md'),
         'utf8',
-      ),
-    ) as Record<string, unknown>
+      ).toLowerCase()
+
+      expect(soul, profileId).toContain('content_hash recibido')
+      expect(soul, profileId).toContain('nunca calcula')
+      expect(soul, profileId).not.toContain('hash lógico')
+    }
+  })
+
+  it('enforces offer, ICP, autonomy and profile-specific handoff contracts', () => {
+    for (const profileId of activeProfileIds) {
+      const soul = readFileSync(
+        join(packageRoot, 'profiles', profileId, 'SOUL.md'),
+        'utf8',
+      )
+
+      expect(validateNativeProfileSoul(soul, profileId), profileId).toEqual([])
+    }
+
+    const incompleteContract = readFileSync(
+      join(packageRoot, 'profiles', 'outreach-draft-manager', 'SOUL.md'),
+      'utf8',
+    ).replaceAll('commercial-qa-compliance', 'removed-handoff')
+
+    expect(
+      validateNativeProfileSoul(incompleteContract, 'outreach-draft-manager'),
+    ).toContain(
+      'outreach-draft-manager: SOUL.md Handoffs is missing contract term commercial-qa-compliance',
+    )
+  })
+
+  it('rejects toolset escalation and inline credentials in a native profile config', () => {
+    const config = readProfileConfig('market-account-intelligence')
     const toolsets = config.toolsets as Array<string>
     const providers = config.custom_providers as Array<Record<string, unknown>>
     toolsets.push('terminal')
     providers[0].api_key = 'inline-placeholder-is-still-forbidden'
+    providers[0].base_url = 'https://opencode.ai'
 
     const errors = validateNativeProfileConfig(
       config,
@@ -86,10 +221,35 @@ describe('commercial swarm package validator', () => {
     )
 
     expect(errors).toContain(
-      'market-account-intelligence: CLI toolsets must equal web,file',
+      'market-account-intelligence: CLI toolsets must equal web,file plus no_mcp sentinel',
     )
     expect(errors).toContain(
       'market-account-intelligence: custom provider must not contain api_key',
+    )
+    expect(errors).toContain(
+      'market-account-intelligence: custom provider must pin deepseek-v4-flash at https://opencode.ai/zen/go/v1 via CUSTOM_API_KEY',
+    )
+  })
+
+  it('rejects runtime MCP and indirect recovery or plugin extension points', () => {
+    const config = readProfileConfig('commercial-qa-compliance')
+    config.mcp_servers = { indirect: { command: 'forbidden' } }
+    config.plugins = { enabled: ['auto-recovery'] }
+    config.hooks = { on_error: 'recover' }
+    config.auto_recovery = true
+    config.portable_mcp = { enabled: true }
+    config.dynamic_toolsets = ['terminal']
+
+    const errors = validateNativeProfileConfig(
+      config,
+      'commercial-qa-compliance',
+    )
+
+    expect(errors).toContain(
+      'commercial-qa-compliance: mcp_servers must be an empty mapping',
+    )
+    expect(errors).toContain(
+      'commercial-qa-compliance: config.yaml contains unsupported keys auto_recovery,dynamic_toolsets,hooks,plugins,portable_mcp',
     )
   })
 

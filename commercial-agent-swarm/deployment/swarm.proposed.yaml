@@ -2,18 +2,18 @@ version: 1
 workers:
   - id: sales-orchestrator
     name: Sales Orchestrator
-    role: Commercial planning, delegation and fail-closed consolidation
+    role: Commercial planning, broker routing and fail-closed consolidation
     specialty: bounded work orders, least-privilege routing, evidence and human gates
     model: deepseek-v4-flash
     mission: Coordinate internal Simulation and Shadow work without external action.
     profile: sales-orchestrator
     modes: [simulate, shadow]
-    tools: [file, todo, delegation, session_search]
+    tools: [file, todo, session_search]
     skills: []
     plugins: []
     pluginToolsets: []
     mcpServers: []
-    capabilities: [plan, delegate, consolidate, stop]
+    capabilities: [plan, prepare-work-orders, consolidate, stop]
     preferredTaskTypes: [commercial-plan, evidence-consolidation, qa-routing]
     greenlightRequiredFor: []
     maxConcurrentTasks: 1

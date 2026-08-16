@@ -1,6 +1,6 @@
 custom_providers:
   - name: deepseek-v4-flash
-    base_url: https://opencode.ai
+    base_url: https://opencode.ai/zen/go/v1
     key_env: CUSTOM_API_KEY
     api_mode: chat_completions
 model:
@@ -23,22 +23,19 @@ agent:
     - skills
     - memory
     - clarify
+    - delegation
     - cronjob
     - computer_use
     - messaging
 toolsets:
   - file
   - todo
-  - delegation
   - session_search
+  - no_mcp
 platform_toolsets:
   cli:
     - file
     - todo
-    - delegation
     - session_search
-delegation:
-  max_concurrent_children: 1
-  max_spawn_depth: 1
-  orchestrator_enabled: false
+    - no_mcp
 mcp_servers: {}

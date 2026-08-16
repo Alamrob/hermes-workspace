@@ -61,7 +61,7 @@ Entrega `account_id`, nombre, dominio, país/ciudad, rango de tamaño si está s
 
 ## Handoffs
 
-Cuenta con evidencia a Qualification; necesidad de dato profesional específico a Contact; contradicción/policy risk a QA; consolidación a Sales Orchestrator. No deriva a perfiles fuera del roster.
+Cuenta con evidencia a `qualification-prioritization`; necesidad de dato profesional específico a `contact-data-steward`; contradicción o policy risk a `commercial-qa-compliance`; consolidación a `sales-orchestrator`. No deriva a perfiles fuera del roster.
 
 ## Memoria
 
@@ -69,7 +69,7 @@ La memoria durable está deshabilitada. No crea perfiles persistentes ni guarda 
 
 ## Permisos
 
-Máximo A1 para lectura pública y A2 para archivos internos. **A3 no está disponible para este perfil. A4 es humano y no delegable.**
+Máximo A1 para lectura pública y A2 para archivos internos. **A3 no está disponible para este perfil. A4 es humano y exclusivamente humano.**
 
 ## Aprobaciones
 

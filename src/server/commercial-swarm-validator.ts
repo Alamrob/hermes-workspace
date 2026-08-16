@@ -45,7 +45,7 @@ export const ACTIVE_PROFILE_IDS = [
 type ActiveProfileId = (typeof ACTIVE_PROFILE_IDS)[number]
 
 export const PROFILE_TOOLSETS: Record<ActiveProfileId, Array<string>> = {
-  'sales-orchestrator': ['file', 'todo', 'delegation', 'session_search'],
+  'sales-orchestrator': ['file', 'todo', 'session_search'],
   'market-account-intelligence': ['web', 'file'],
   'contact-data-steward': ['web', 'file'],
   'qualification-prioritization': ['file'],
@@ -53,7 +53,7 @@ export const PROFILE_TOOLSETS: Record<ActiveProfileId, Array<string>> = {
   'commercial-qa-compliance': ['file'],
 }
 
-const HERMES_TOOLSET_KEYS = [
+export const HERMES_TOOLSET_KEYS = [
   'web',
   'browser',
   'terminal',
@@ -71,6 +71,63 @@ const HERMES_TOOLSET_KEYS = [
   'computer_use',
   'messaging',
 ] as const
+
+const NATIVE_CONFIG_FIELDS = [
+  'custom_providers',
+  'model',
+  'memory',
+  'max_concurrent_sessions',
+  'agent',
+  'toolsets',
+  'platform_toolsets',
+  'mcp_servers',
+] as const
+
+const NATIVE_PROVIDER_FIELDS = [
+  'name',
+  'base_url',
+  'key_env',
+  'api_mode',
+] as const
+
+const PROFILE_PROMPT_CONTRACTS: Record<
+  ActiveProfileId,
+  { outputTerms: Array<string>; handoffTerms: Array<string> }
+> = {
+  'sales-orchestrator': {
+    outputTerms: ['artifact_id', 'content_hash'],
+    handoffTerms: [
+      'dispatcher determinista externo',
+      'sesión separada',
+      'sin overrides',
+      'market-account-intelligence',
+      'contact-data-steward',
+      'qualification-prioritization',
+      'outreach-draft-manager',
+      'commercial-qa-compliance',
+    ],
+  },
+  'market-account-intelligence': {
+    outputTerms: ['account_id', 'fuentes'],
+    handoffTerms: ['qualification-prioritization'],
+  },
+  'contact-data-steward': {
+    outputTerms: ['contact_record_id', 'provenance', 'suppression'],
+    handoffTerms: ['qualification-prioritization'],
+  },
+  'qualification-prioritization': {
+    outputTerms: ['model_version', 'score', 'tier'],
+    handoffTerms: ['outreach-draft-manager'],
+  },
+  'outreach-draft-manager': {
+    outputTerms: ['draft_id', 'draft_only', 'content_hash recibido'],
+    handoffTerms: ['commercial-qa-compliance'],
+  },
+  'commercial-qa-compliance': {
+    outputTerms: ['qa_verdict_id', 'verdict', 'content_hash recibido'],
+    handoffTerms: ['sales-orchestrator'],
+  },
+}
 
 const REQUIRED_NATIVE_PROFILE_FILES = [
   'distribution.yaml',
@@ -125,6 +182,8 @@ export interface CommercialSwarmValidationResult {
     agents: number
     profiles: number
     prompts: number
+    deferredAgents: number
+    deferredPrompts: number
     jsonSchemas: number
     yamlDocuments: number
     testCases: number
@@ -153,6 +212,23 @@ function sortedKeys(value: JsonRecord): Array<string> {
   return Object.keys(value).sort()
 }
 
+function unsupportedKeys(
+  value: JsonRecord,
+  allowed: ReadonlyArray<string>,
+): Array<string> {
+  const allowlist = new Set(allowed)
+  return sortedKeys(value).filter((key) => !allowlist.has(key))
+}
+
+function sectionBody(text: string, section: string): string {
+  const marker = `## ${section}`
+  const start = text.indexOf(marker)
+  if (start < 0) return ''
+  const bodyStart = start + marker.length
+  const nextSection = text.indexOf('\n## ', bodyStart)
+  return text.slice(bodyStart, nextSection < 0 ? undefined : nextSection)
+}
+
 function profileToolsets(profileId: string): Array<string> {
   return Object.hasOwn(PROFILE_TOOLSETS, profileId)
     ? PROFILE_TOOLSETS[profileId as ActiveProfileId]
@@ -166,10 +242,20 @@ export function validateNativeProfileConfig(
   const errors: Array<string> = []
   if (!isRecord(value)) return [`${profileId}: config.yaml must be a mapping`]
 
+  const unsupportedConfigKeys = unsupportedKeys(value, NATIVE_CONFIG_FIELDS)
+  if (unsupportedConfigKeys.length > 0) {
+    errors.push(
+      `${profileId}: config.yaml contains unsupported keys ${unsupportedConfigKeys.join(',')}`,
+    )
+  }
+
   const expectedToolsets = profileToolsets(profileId)
   const expectedLabel = expectedToolsets.join(',')
-  if (!sameStrings(value.toolsets, expectedToolsets)) {
-    errors.push(`${profileId}: CLI toolsets must equal ${expectedLabel}`)
+  const configuredToolsets = [...expectedToolsets, 'no_mcp']
+  if (!sameStrings(value.toolsets, configuredToolsets)) {
+    errors.push(
+      `${profileId}: CLI toolsets must equal ${expectedLabel} plus no_mcp sentinel`,
+    )
   }
 
   const platformToolsets = isRecord(value.platform_toolsets)
@@ -178,7 +264,7 @@ export function validateNativeProfileConfig(
   if (
     !platformToolsets ||
     JSON.stringify(sortedKeys(platformToolsets)) !== JSON.stringify(['cli']) ||
-    !sameStrings(platformToolsets.cli, expectedToolsets)
+    !sameStrings(platformToolsets.cli, configuredToolsets)
   ) {
     errors.push(
       `${profileId}: platform_toolsets must contain only the exact CLI toolsets`,
@@ -192,12 +278,13 @@ export function validateNativeProfileConfig(
   if (
     !isRecord(provider) ||
     provider.name !== 'deepseek-v4-flash' ||
-    provider.base_url !== 'https://opencode.ai' ||
+    provider.base_url !== 'https://opencode.ai/zen/go/v1' ||
     provider.key_env !== 'CUSTOM_API_KEY' ||
-    provider.api_mode !== 'chat_completions'
+    provider.api_mode !== 'chat_completions' ||
+    unsupportedKeys(provider, NATIVE_PROVIDER_FIELDS).length > 0
   ) {
     errors.push(
-      `${profileId}: custom provider must pin deepseek-v4-flash at https://opencode.ai via CUSTOM_API_KEY`,
+      `${profileId}: custom provider must pin deepseek-v4-flash at https://opencode.ai/zen/go/v1 via CUSTOM_API_KEY`,
     )
   }
   if (isRecord(provider) && Object.hasOwn(provider, 'api_key')) {
@@ -207,6 +294,7 @@ export function validateNativeProfileConfig(
   const model = isRecord(value.model) ? value.model : null
   if (
     !model ||
+    unsupportedKeys(model, ['default', 'provider']).length > 0 ||
     model.default !== 'deepseek-v4-flash' ||
     model.provider !== 'custom:deepseek-v4-flash'
   ) {
@@ -216,8 +304,14 @@ export function validateNativeProfileConfig(
   const memory = isRecord(value.memory) ? value.memory : null
   if (
     !memory ||
+    unsupportedKeys(memory, [
+      'memory_enabled',
+      'user_profile_enabled',
+      'write_approval',
+    ]).length > 0 ||
     memory.memory_enabled !== false ||
-    memory.user_profile_enabled !== false
+    memory.user_profile_enabled !== false ||
+    memory.write_approval !== true
   ) {
     errors.push(`${profileId}: durable model memory must be disabled`)
   }
@@ -226,6 +320,14 @@ export function validateNativeProfileConfig(
   }
 
   const agent = isRecord(value.agent) ? value.agent : null
+  if (
+    agent &&
+    unsupportedKeys(agent, ['max_turns', 'disabled_toolsets']).length > 0
+  ) {
+    errors.push(
+      `${profileId}: agent may contain only max_turns and disabled_toolsets`,
+    )
+  }
   const maxTurns = agent?.max_turns
   if (
     typeof maxTurns !== 'number' ||
@@ -235,14 +337,12 @@ export function validateNativeProfileConfig(
   ) {
     errors.push(`${profileId}: agent.max_turns must be an integer from 1 to 40`)
   }
-  const disabledToolsets = new Set(stringArray(agent?.disabled_toolsets))
-  const missingDisabledToolsets = HERMES_TOOLSET_KEYS.filter(
-    (toolset) =>
-      !expectedToolsets.includes(toolset) && !disabledToolsets.has(toolset),
+  const expectedDisabledToolsets = HERMES_TOOLSET_KEYS.filter(
+    (toolset) => !expectedToolsets.includes(toolset),
   )
-  if (missingDisabledToolsets.length > 0) {
+  if (!sameStrings(agent?.disabled_toolsets, expectedDisabledToolsets)) {
     errors.push(
-      `${profileId}: agent.disabled_toolsets is missing ${missingDisabledToolsets.join(',')}`,
+      `${profileId}: agent.disabled_toolsets must deny every non-permitted Hermes 0.20.1 toolset`,
     )
   }
 
@@ -251,6 +351,59 @@ export function validateNativeProfileConfig(
     sortedKeys(value.mcp_servers).length > 0
   ) {
     errors.push(`${profileId}: mcp_servers must be an empty mapping`)
+  }
+
+  return errors
+}
+
+export function validateNativeProfileSoul(
+  text: string,
+  profileId: string,
+): Array<string> {
+  const errors = validateSystemPrompt(text, `${profileId}: SOUL.md`)
+  if (!Object.hasOwn(PROFILE_PROMPT_CONTRACTS, profileId)) {
+    return [
+      ...errors,
+      `${profileId}: SOUL.md does not belong to an active profile`,
+    ]
+  }
+
+  const normalized = text.toLocaleLowerCase('es')
+  for (const term of [
+    'operación sin planillas',
+    'clp 1.800.000',
+    '10–100 personas',
+  ]) {
+    if (!normalized.includes(term)) {
+      errors.push(`${profileId}: SOUL.md is missing offer/ICP term ${term}`)
+    }
+  }
+
+  const permissions = sectionBody(text, 'Permisos').toLocaleLowerCase('es')
+  for (const term of ['a3 no está disponible', 'a4 es humano']) {
+    if (!permissions.includes(term)) {
+      errors.push(
+        `${profileId}: SOUL.md Permisos is missing autonomy term ${term}`,
+      )
+    }
+  }
+
+  const contract = PROFILE_PROMPT_CONTRACTS[profileId as ActiveProfileId]
+  const outputs = sectionBody(text, 'Salidas').toLocaleLowerCase('es')
+  for (const term of contract.outputTerms) {
+    if (!outputs.includes(term)) {
+      errors.push(
+        `${profileId}: SOUL.md Salidas is missing contract term ${term}`,
+      )
+    }
+  }
+  const handoffs = sectionBody(text, 'Handoffs').toLocaleLowerCase('es')
+  for (const term of contract.handoffTerms) {
+    if (!handoffs.includes(term)) {
+      errors.push(
+        `${profileId}: SOUL.md Handoffs is missing contract term ${term}`,
+      )
+    }
   }
 
   return errors
@@ -383,14 +536,7 @@ function validateNativeProfiles(
     const soulPath = join(profileRoot, 'SOUL.md')
     if (existsSync(soulPath)) {
       const soul = readFileSync(soulPath, 'utf8')
-      errors.push(...validateSystemPrompt(soul, displayPath(root, soulPath)))
-      const normalizedSoul = soul.toLocaleLowerCase('es')
-      if (!normalizedSoul.includes('a3 no está disponible')) {
-        errors.push(`${displayPath(root, soulPath)}: A3 must be unavailable`)
-      }
-      if (!normalizedSoul.includes('a4 es humano')) {
-        errors.push(`${displayPath(root, soulPath)}: A4 must be human-only`)
-      }
+      errors.push(...validateNativeProfileSoul(soul, profileId))
     }
 
     const mcpPath = join(profileRoot, 'mcp.json')
@@ -579,7 +725,11 @@ export function validateCommercialSwarm(
   validateYamlDocuments(root, files, errors)
   validateSecretPatterns(root, files, errors)
 
-  const agentIds = validateAgentArtifacts(root, join(root, 'agents'), errors)
+  const deferredAgentIds = validateAgentArtifacts(
+    root,
+    join(root, 'agents'),
+    errors,
+  )
   const profileIds = validateNativeProfiles(root, errors)
   const orchestratorRoot = join(root, 'orchestrator')
   for (const requiredFile of REQUIRED_AGENT_FILES) {
@@ -592,6 +742,12 @@ export function validateCommercialSwarm(
 
   const promptPaths = files.filter(
     (file) => file.endsWith('SYSTEM_PROMPT.md') || file.endsWith('SOUL.md'),
+  )
+  const activePromptPaths = promptPaths.filter((file) =>
+    file.endsWith('SOUL.md'),
+  )
+  const deferredPromptPaths = promptPaths.filter((file) =>
+    file.endsWith('SYSTEM_PROMPT.md'),
   )
   for (const path of promptPaths) {
     if (path.endsWith('SOUL.md')) continue
@@ -720,9 +876,11 @@ export function validateCommercialSwarm(
     rosterWorkerIds,
     counts: {
       files: files.length,
-      agents: agentIds.length,
+      agents: profileIds.length,
       profiles: profileIds.length,
-      prompts: promptPaths.length,
+      prompts: activePromptPaths.length,
+      deferredAgents: deferredAgentIds.length,
+      deferredPrompts: deferredPromptPaths.length,
       jsonSchemas: files.filter((file) => file.endsWith('.json')).length,
       yamlDocuments: files.filter((file) => /\.ya?ml$/i.test(file)).length,
       testCases,
