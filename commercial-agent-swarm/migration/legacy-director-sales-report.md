@@ -128,3 +128,35 @@ Before declaring the old Director retired:
 The former instance may remain as an administrative assistant only after these
 conditions pass. It has no authority to change offer, ICP, price, policy,
 budget, autonomy or commercial state.
+
+## Retirement execution — 2026-08-16
+
+The active legacy container `hermes-agent-bdkw-hermes-agent-1` was converted to
+an A0 administrative conversation assistant after an isolated dry run against
+the exact Hermes Agent 0.20.1 image. The live container was restarted alone and
+returned to `Up` state. No other container was restarted.
+
+Effective CLI capabilities after restart are limited to `todo`, `memory`,
+`session_search` and `clarify`. Web, browser, terminal, file, code execution,
+vision, image/video generation, BFL, TTS/STT, skills, delegation, cron,
+Home Assistant, Spotify, Yuanbao and computer-use are disabled. The native
+kanban review dispatcher is disabled, tool-loop hard stops are enabled and the
+`no_mcp` sentinel disables MCP discovery. The existing WhatsApp channel remains a
+conversation surface only; it is not a commercial execution authority.
+
+The pre-change configuration was copied to the root-only rollback directory
+`/srv/backups/legacy-director-a0-20260816/` before activation. Its SHA-256 is
+`c97afbd0fa3cb0b8a19dcee0dec4b63a0658abfadcd27925f2f162fa5c36174f`.
+The validated A0 configuration hash at staging time was
+`37ba5625fc1904f72f803d03f79b71698e3f7370fe89b8033fbdae332d068d26`.
+No configuration content or credential is committed here.
+
+The revoked private key `ops_host_ed25519` was removed from the active Hermes
+volume and moved to `/srv/backups/revoked-credentials-20260816/` with mode
+`0600` for forensic recovery. A subsequent read-only scan found no files under
+`.ssh` in either active Hermes volume. The key remains revoked from host
+authorization; moving it did not restore access.
+
+This closes retirement-gate items 1–4. Legacy row provenance and the final
+all-container post-deployment health comparison remain deployment gates; the
+old rows are preserved and are not current opportunities.
