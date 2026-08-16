@@ -34,14 +34,38 @@ export interface ClaimedJob {
     maximum_api_calls: number
     budget_reservation: { currency: 'USD'; amount: number }
   }
+  usageBudget: {
+    reservationMicroCents: number
+    missionCommittedBeforeMicroCents: number
+    totalCommittedBeforeMicroCents: number
+    version: number
+  }
   attempts: number
   max_attempts: number
 }
 
 export interface CompletionCost {
-  usageValueUsd: number
+  usageValueMicroCents: number
+  usageRecordId: string
+  budgetVersion: number
   total_tokens: number
   api_calls: number
+}
+
+export interface UsageProbePort {
+  measure(input: {
+    serviceAccountId: string
+    missionCommittedUsageValueMicroCents: number
+    totalCommittedUsageValueMicroCents: number
+    probe: () => Promise<ExecutorEnvelope['usage']>
+  }): Promise<{
+    usage: ExecutorEnvelope['usage']
+    usageRecordId: string
+    runUsageValueMicroCents: number
+    missionUsageValueMicroCents: number
+    totalUsageValueMicroCents: number
+    incrementalCashCostMicroCents: 0
+  }>
 }
 
 export interface DispatchQueuePort {
@@ -107,6 +131,10 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
       maximum_tokens: number
       maximum_api_calls: number
       usage_value_reservation_usd: string
+      usage_value_reservation_micro_cents: string
+      mission_committed_before_micro_cents: string
+      total_committed_before_micro_cents: string
+      usage_budget_version: string
       attempts: number
       max_attempts: number
     }>('SELECT * FROM control.claim_dispatch($1,$2,$3)', [
@@ -130,6 +158,12 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
               currency: 'USD',
               amount: Number(row.usage_value_reservation_usd),
             },
+          },
+          usageBudget: {
+            reservationMicroCents: integer(row.usage_value_reservation_micro_cents),
+            missionCommittedBeforeMicroCents: integer(row.mission_committed_before_micro_cents),
+            totalCommittedBeforeMicroCents: integer(row.total_committed_before_micro_cents),
+            version: integer(row.usage_budget_version),
           },
           attempts: row.attempts,
           max_attempts: row.max_attempts,
@@ -162,13 +196,15 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
     cost: CompletionCost,
   ): Promise<void> {
     await this.pool.query(
-      'SELECT control.complete_dispatch($1::uuid,$2,$3::jsonb,$4,$5::numeric,$6::bigint,$7)',
+      'SELECT control.complete_dispatch($1::uuid,$2,$3::jsonb,$4,$5::bigint,$6,$7::bigint,$8::bigint,$9)',
       [
         id,
         worker,
         JSON.stringify(envelope),
         artifactHash,
-        cost.usageValueUsd,
+        cost.usageValueMicroCents,
+        cost.usageRecordId,
+        cost.budgetVersion,
         cost.total_tokens,
         cost.api_calls,
       ],
@@ -183,12 +219,17 @@ export interface DispatcherOptions {
   leaseSeconds: number
   childTimeoutSeconds: number
   hermesTimeoutMs: number
+  usageProbe?: UsageProbePort
+  serviceAccountId?: string
 }
 
 export class DeterministicDispatcher {
   private running = false
 
-  constructor(private readonly options: DispatcherOptions) {}
+  constructor(private readonly options: DispatcherOptions) {
+    if ((options.usageProbe === undefined) !== (options.serviceAccountId === undefined))
+      throw new Error('OPENCODE_USAGE_GATE_CONFIGURATION_INVALID')
+  }
 
   async runOnce(): Promise<boolean> {
     if (this.running) return false
@@ -210,16 +251,30 @@ export class DeterministicDispatcher {
     if (!job) return false
 
     try {
-      const envelope: ExecutorEnvelope = await this.options.executor.execute({
-        mission_id: job.mission_id,
-        trace_id: job.trace_id,
-        assignment_id: job.job_id,
-        profile_id: job.profile_id,
-        execution_timeout_ms: this.options.hermesTimeoutMs,
-        instruction: job.instruction,
-        evidence: job.evidence,
-        reservation: job.reservation,
+      if (!this.options.usageProbe || !this.options.serviceAccountId)
+        throw new Error('OPENCODE_USAGE_RECONCILIATION_REQUIRED')
+      let envelope: ExecutorEnvelope | undefined
+      const measured = await this.options.usageProbe.measure({
+        serviceAccountId: this.options.serviceAccountId,
+        missionCommittedUsageValueMicroCents:
+          job.usageBudget.missionCommittedBeforeMicroCents,
+        totalCommittedUsageValueMicroCents:
+          job.usageBudget.totalCommittedBeforeMicroCents,
+        probe: async () => {
+          envelope = await this.options.executor.execute({
+            mission_id: job.mission_id,
+            trace_id: job.trace_id,
+            assignment_id: job.job_id,
+            profile_id: job.profile_id,
+            execution_timeout_ms: this.options.hermesTimeoutMs,
+            instruction: job.instruction,
+            evidence: job.evidence,
+            reservation: job.reservation,
+          })
+          return envelope.usage
+        },
       })
+      if (!envelope) throw new Error('OPENCODE_USAGE_RECONCILIATION_FAILED')
       if (envelope.usage.cost.status !== 'known')
         throw new Error('HERMES_COST_UNKNOWN')
       const hash = hashAction(envelope.agent_result)
@@ -229,7 +284,9 @@ export class DeterministicDispatcher {
         envelope,
         hash,
         {
-          usageValueUsd: envelope.usage.cost.usage_value_usd,
+          usageValueMicroCents: measured.runUsageValueMicroCents,
+          usageRecordId: measured.usageRecordId,
+          budgetVersion: job.usageBudget.version,
           total_tokens: envelope.usage.tokens.total,
           api_calls: envelope.usage.api_calls,
         },
@@ -248,7 +305,7 @@ export class DeterministicDispatcher {
       const notStarted =
         error instanceof ExecutorTransportError
           ? error.executionState === 'not_started'
-          : /^(?:UNKNOWN_PROFILE|PROFILE_|UNSAFE_|CUSTOM_API_KEY_REQUIRED|HERMES_TIMEOUT_HANDSHAKE_MISMATCH|OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED|OPENCODE_GO_RESERVATION_TOO_LOW)/.test(
+          : /^(?:UNKNOWN_PROFILE|PROFILE_|UNSAFE_|CUSTOM_API_KEY_REQUIRED|HERMES_TIMEOUT_HANDSHAKE_MISMATCH|OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED|OPENCODE_GO_RESERVATION_TOO_LOW|OPENCODE_USAGE_RECONCILIATION_REQUIRED)/.test(
               message,
             )
       await this.options.queue.fail(
@@ -261,4 +318,11 @@ export class DeterministicDispatcher {
       return true
     }
   }
+}
+
+function integer(value: string): number {
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < 0)
+    throw new Error('USAGE_BUDGET_RESULT_INVALID')
+  return parsed
 }

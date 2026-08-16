@@ -7,7 +7,9 @@ import {
 import { InMemoryRuntimeRepository } from './repository.js'
 import { InMemoryApprovalEvidenceStore } from './approval-mode.js'
 import { PostgresApprovalEvidenceStore } from './postgres-approval-evidence-store.js'
+import { PostgresDispatchQueue } from './dispatch-queue.js'
 import type { ApprovalEvidenceStorePort } from './approval-mode.js'
+import type { DispatchQueuePort } from './dispatch-queue.js'
 import type { AuditSink } from './observability.js'
 import type { RuntimeRepository } from './repository.js'
 
@@ -17,6 +19,7 @@ export interface RuntimePersistence {
   repository: RuntimeRepository
   audit: AuditSink
   approvalEvidenceStore: ApprovalEvidenceStorePort
+  dispatchQueue: DispatchQueuePort
   close: () => Promise<void>
   ready: () => Promise<void>
 }
@@ -87,6 +90,7 @@ export async function createRuntimePersistence(
       approvalEvidenceStore: new PostgresApprovalEvidenceStore(
         approvalEvidencePool,
       ),
+      dispatchQueue: new PostgresDispatchQueue(pool),
       ready: async () =>
         verifyProductionDatabasePrincipals([
           { pool, expected: principals[0], capability: 'commercial_runtime' },
@@ -137,6 +141,7 @@ export async function createRuntimePersistence(
       repository: new InMemoryRuntimeRepository(),
       audit: new InMemoryAuditSink(),
       approvalEvidenceStore: new InMemoryApprovalEvidenceStore(),
+      dispatchQueue: noDispatchQueue(),
       ready: async () => undefined,
       close: async () => undefined,
     }
@@ -174,7 +179,7 @@ const EXPECTED_FUNCTIONS: Record<
     'control.recover_dispatch_leases()',
     'control.claim_dispatch(text,integer,integer)',
     'control.fail_dispatch(uuid,text,text,boolean,text)',
-    'control.complete_dispatch(uuid,text,jsonb,text,numeric,bigint,integer)',
+    'control.complete_dispatch(uuid,text,jsonb,text,bigint,text,bigint,bigint,integer)',
   ],
   commercial_work_order_ingestor: ['control.save_mission(uuid,text,jsonb)'],
   commercial_approver: [
@@ -187,6 +192,22 @@ const EXPECTED_FUNCTIONS: Record<
     'control.record_approval_channel_evidence(uuid,text,text,text,text,timestamp with time zone)',
     'control.list_approval_channel_evidence(uuid)',
   ],
+}
+
+function noDispatchQueue(): DispatchQueuePort {
+  return {
+    enqueue: async () => {
+      throw new Error('DISPATCH_PERSISTENCE_UNAVAILABLE')
+    },
+    claim: async () => null,
+    recover: async () => undefined,
+    fail: async () => {
+      throw new Error('DISPATCH_PERSISTENCE_UNAVAILABLE')
+    },
+    complete: async () => {
+      throw new Error('DISPATCH_PERSISTENCE_UNAVAILABLE')
+    },
+  }
 }
 export async function verifyProductionDatabasePrincipals(
   entries: Array<{

@@ -24,6 +24,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '004_crm_integration',
         '005_portfolio_read_models',
         '006_sales_read_models',
+        '007_usage_budget_ledger',
       ]
       await runVersionedMigrations(
         pool,

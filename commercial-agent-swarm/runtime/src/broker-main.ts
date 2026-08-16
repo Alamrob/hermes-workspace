@@ -6,6 +6,7 @@ import { MailService } from './mail.js'
 import { createBrokerExternalTransports } from './integration-factories.js'
 import { createRuntimePersistence } from './production.js'
 import { createBrokerHttpServer } from './server.js'
+import { createBrokerDispatcher } from './runtime-entrypoints.js'
 import {
   expandDatabaseSecretFiles,
   loadSimulationBrokerConfig,
@@ -13,6 +14,9 @@ import {
   assertBrokerServiceIdentity,
 } from './simulation-entrypoint.js'
 import { WebhookService } from './webhook.js'
+import type { DeterministicDispatcher } from './dispatch-queue.js'
+
+const DISPATCH_POLL_INTERVAL_MS = 1_000
 
 export async function startSimulationBroker(
   environment: Record<string, string | undefined> = process.env,
@@ -94,19 +98,77 @@ export async function startSimulationBroker(
         resolve()
       })
     })
+    const dispatcher = createBrokerDispatcher(
+      brokerDispatcherEnvironment(environment),
+      undefined,
+      'broker-dispatcher-1',
+      { queue: persistence.dispatchQueue },
+    )
+    let dispatcherLoop: ReturnType<typeof startDispatcherLoop> | undefined
     let closing: Promise<void> | undefined
     const close = () =>
       (closing ??= (async () => {
+        await dispatcherLoop?.close()
         await new Promise<void>((resolve, reject) =>
           server.close((error) => (error ? reject(error) : resolve())),
         )
         await persistence.close()
       })())
+    dispatcherLoop = startDispatcherLoop(dispatcher, () => {
+      void close()
+    })
     return { close }
   } catch (error) {
     await persistence.close()
     throw error
   }
+}
+
+export function startDispatcherLoop(
+  dispatcher: Pick<DeterministicDispatcher, 'runOnce'>,
+  onFatal: () => void,
+  intervalMs = DISPATCH_POLL_INTERVAL_MS,
+): { close: () => Promise<void> } {
+  if (!Number.isSafeInteger(intervalMs) || intervalMs < 100 || intervalMs > 60_000)
+    throw new Error('DISPATCH_POLL_INTERVAL_INVALID')
+  let stopped = false
+  let inFlight: Promise<void> = Promise.resolve()
+  const timer = setInterval(() => {
+    if (stopped) return
+    inFlight = dispatcher.runOnce().then(
+      () => undefined,
+      () => {
+        stopped = true
+        clearInterval(timer)
+        onFatal()
+      },
+    )
+  }, intervalMs)
+  timer.unref()
+  return {
+    close: async () => {
+      stopped = true
+      clearInterval(timer)
+      await inFlight
+    },
+  }
+}
+
+function brokerDispatcherEnvironment(
+  environment: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  return Object.fromEntries(
+    [
+      'NODE_ENV',
+      'EXECUTOR_SOCKET_PATH',
+      'EXECUTOR_CLIENT_TIMEOUT_MS',
+      'HERMES_TIMEOUT_MS',
+      'DISPATCH_LEASE_SECONDS',
+      'OPENCODE_USAGE_RECONCILIATION_ENABLED',
+      'OPENCODE_USAGE_SERVICE_ACCOUNT_ID',
+      'OPENCODE_USAGE_TOKEN_FILE',
+    ].map((name) => [name, environment[name]]),
+  )
 }
 
 async function main(): Promise<void> {

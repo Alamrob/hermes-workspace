@@ -14,7 +14,9 @@ import {
 import { readGroupSecretFile } from './secret-file.js'
 
 type Environment = Record<string, string | undefined>
-export const OPENCODE_USAGE_SERVICE_GID = 10000
+// The Usage export credential belongs to the broker service, never the Hermes
+// executor supervisor or its child.
+export const OPENCODE_USAGE_SERVICE_GID = 10001
 
 interface KillSwitchPort {
   isActive(input: { missionId: string; channel: string }): Promise<boolean>

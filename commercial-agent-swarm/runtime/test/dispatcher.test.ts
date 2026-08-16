@@ -25,6 +25,12 @@ const claimed: ClaimedJob = {
     maximum_api_calls: 2,
     budget_reservation: { currency: 'USD', amount: 0.02 },
   },
+  usageBudget: {
+    reservationMicroCents: 10_000_000,
+    missionCommittedBeforeMicroCents: 0,
+    totalCommittedBeforeMicroCents: 0,
+    version: 1,
+  },
   attempts: 1,
   max_attempts: 3,
 }
@@ -116,6 +122,20 @@ function envelope(status: 'completed' | 'failed'): ExecutorEnvelope {
   }
 }
 
+const usageGate = {
+  serviceAccountId: 'service-account-proptimiza',
+  usageProbe: {
+    measure: async (input: any) => ({
+      usage: await input.probe(),
+      usageRecordId: 'usage-test-record',
+      runUsageValueMicroCents: 1_000_000,
+      missionUsageValueMicroCents: 1_000_000,
+      totalUsageValueMicroCents: 1_000_000,
+      incrementalCashCostMicroCents: 0 as const,
+    }),
+  },
+}
+
 describe('deterministic dispatcher', () => {
   it('allows only one in-process executor assignment at a time', async () => {
     const queue = new FakeQueue()
@@ -137,6 +157,7 @@ describe('deterministic dispatcher', () => {
       leaseSeconds: 60,
       childTimeoutSeconds: 30,
       hermesTimeoutMs: 30_000,
+      ...usageGate,
     })
     const first = dispatcher.runOnce()
     await new Promise((resolve) => setImmediate(resolve))
@@ -156,6 +177,7 @@ describe('deterministic dispatcher', () => {
       leaseSeconds: 60,
       childTimeoutSeconds: 30,
       hermesTimeoutMs: 30_000,
+      ...usageGate,
     })
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(queue.failed.length, 0)
@@ -173,6 +195,7 @@ describe('deterministic dispatcher', () => {
       leaseSeconds: 60,
       childTimeoutSeconds: 30,
       hermesTimeoutMs: 30_000,
+      ...usageGate,
     })
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(queue.completed.length, 1)
@@ -197,6 +220,7 @@ describe('deterministic dispatcher', () => {
       leaseSeconds: 60,
       childTimeoutSeconds: 30,
       hermesTimeoutMs: 30_000,
+      ...usageGate,
     })
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(queue.completed.length, 0)
@@ -218,6 +242,7 @@ describe('deterministic dispatcher', () => {
       leaseSeconds: 60,
       childTimeoutSeconds: 30,
       hermesTimeoutMs: 30_000,
+      ...usageGate,
     })
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(queue.failed[0][4], 'not_started')
@@ -250,6 +275,7 @@ describe('deterministic dispatcher', () => {
         leaseSeconds: 60,
         childTimeoutSeconds: 30,
         hermesTimeoutMs: 30_000,
+        ...usageGate,
       })
       assert.equal(await dispatcher.runOnce(), true)
       assert.equal(queue.failed[0][2], 'OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN')
@@ -277,6 +303,7 @@ describe('deterministic dispatcher', () => {
       leaseSeconds: 60,
       childTimeoutSeconds: 30,
       hermesTimeoutMs: 30_000,
+      ...usageGate,
     })
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(queue.completed.length, 0)

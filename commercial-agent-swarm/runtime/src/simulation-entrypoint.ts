@@ -75,7 +75,8 @@ export function loadSimulationBrokerConfig(
     environment.COMMERCIAL_MODE !== 'simulation' ||
     environment.A3_ENABLED !== 'false' ||
     environment.EXTERNAL_RESEARCH_ENABLED !== 'false' ||
-    environment.EXTERNAL_ACTION_KILL_SWITCH !== 'true'
+    environment.EXTERNAL_ACTION_KILL_SWITCH !== 'true' ||
+    environment.OPENCODE_USAGE_RECONCILIATION_ENABLED === 'true'
   )
     throw new Error('SIMULATION_BOUNDARY_INVALID')
 

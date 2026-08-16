@@ -8,6 +8,7 @@ const EXPECTED_MIGRATIONS = [
   '004_crm_integration',
   '005_portfolio_read_models',
   '006_sales_read_models',
+  '007_usage_budget_ledger',
 ] as const
 
 export interface MigrationSource {

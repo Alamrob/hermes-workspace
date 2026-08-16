@@ -62,6 +62,8 @@ describe('runtime persistence composition', () => {
     const testPersistence = await createRuntimePersistence({ NODE_ENV: 'test' })
     assert.ok(testPersistence.repository instanceof InMemoryRuntimeRepository)
     assert.ok(testPersistence.approvalEvidenceStore satisfies ApprovalEvidenceStorePort)
+    assert.ok(testPersistence.dispatchQueue)
+    assert.equal(await testPersistence.dispatchQueue.claim('test', 60, 30), null)
     await testPersistence.close()
 
     await assert.rejects(

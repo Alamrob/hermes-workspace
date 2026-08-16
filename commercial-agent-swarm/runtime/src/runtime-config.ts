@@ -45,6 +45,9 @@ export function loadBrokerRuntimeConfig(
 ): BrokerRuntimeConfig {
   rejectNames(env, BROKER_FORBIDDEN, 'BROKER_SECRET_BOUNDARY', [
     'HERMES_TIMEOUT_MS',
+    'OPENCODE_USAGE_RECONCILIATION_ENABLED',
+    'OPENCODE_USAGE_SERVICE_ACCOUNT_ID',
+    'OPENCODE_USAGE_TOKEN_FILE',
   ])
   const socketPath = required(env, 'EXECUTOR_SOCKET_PATH')
   const hermesTimeoutMs = integer(env, 'HERMES_TIMEOUT_MS', 1, 3_600_000)

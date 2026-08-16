@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { after, before, describe, it } from 'node:test'
+import { after, before, beforeEach, describe, it } from 'node:test'
 import { Pool } from 'pg'
 import { PostgresDispatchQueue } from '../src/dispatch-queue.js'
 import { validWorkOrder } from '../test/fixtures.js'
@@ -30,6 +30,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       '002_commercial_control_plane.sql',
       '003_dispatch_queue.sql',
       '003_dispatch_queue.sql',
+      '007_usage_budget_ledger.sql',
     ])
       await a.query(
         await readFile(
@@ -66,6 +67,14 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
     )
     await admin.query(`DROP DATABASE IF EXISTS "${db}"`)
     await admin.end()
+  })
+  beforeEach(async () => {
+    await a.query(
+      `UPDATE control.usage_budget_control
+          SET probe_job_id=NULL,probe_worker=NULL,probe_lease_until=NULL,
+              quarantined=false,quarantine_reason=NULL
+        WHERE control_id=1`,
+    )
   })
 
   it('deduplicates exact jobs, rejects unknown profiles, and blocks insufficient pre-budget', async () => {
@@ -162,7 +171,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
     )
     assert.equal(row.rows[0]['?column?'], true)
     assert.equal(row.rows[0].child_timeout_seconds, 30)
-    assert.equal(row.rows[0].usage_value_consumed_usd, '0.020000')
+    assert.equal(row.rows[0].usage_value_consumed_usd, '0.100000')
     await first.fail(
       id,
       claims[0] ? 'worker-a' : 'worker-b',
@@ -202,7 +211,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
     )
     assert.deepEqual(state.rows[0], {
       status: 'usage_unknown',
-      usage_value_consumed_usd: '0.020000',
+      usage_value_consumed_usd: '0.100000',
       error: 'LEASE_EXPIRED_USAGE_UNKNOWN',
     })
   })
@@ -214,10 +223,13 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
         idempotency_key: 'complete',
       }),
     )
-    await first.claim('worker-complete', 60, 30)
+    const claim = await first.claim('worker-complete', 60, 30)
+    assert(claim)
     await assert.rejects(
       first.complete(id, 'wrong-worker', completionEnvelope(), 'a'.repeat(64), {
-        usageValueUsd: 0.004,
+        usageValueMicroCents: 400_000,
+        usageRecordId: 'usage-wrong-worker',
+        budgetVersion: claim.usageBudget.version,
         total_tokens: 15,
         api_calls: 1,
       }),
@@ -228,7 +240,13 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       'worker-complete',
       completionEnvelope(),
       'a'.repeat(64),
-      { usageValueUsd: 0.004, total_tokens: 15, api_calls: 1 },
+      {
+        usageValueMicroCents: 400_000,
+        usageRecordId: 'usage-complete',
+        budgetVersion: claim.usageBudget.version,
+        total_tokens: 15,
+        api_calls: 1,
+      },
     )
     const done = await a.query(
       'SELECT status,usage_value_actual_usd,usage_value_consumed_usd,cash_cost_actual_usd,pricing_snapshot_id,tokens_used,api_calls_used FROM control.dispatch_jobs WHERE job_id=$1',
@@ -275,7 +293,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
     )
   })
 
-  it('serializes concurrent mission reservations against the server-owned ceiling', async () => {
+  it('keeps legacy oversized reservations queued at admission but rejects them before execution', async () => {
     const left = job({
       job_id: '523e4567-e89b-42d3-a456-426614174902',
       idempotency_key: 'reserve-left',
@@ -298,17 +316,19 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
         { status: 'queued', count: 1 },
       ],
     )
-    const claimed = await first.claim('reservation-drain', 60, 30)
-    await first.fail(
-      claimed!.job_id,
-      'reservation-drain',
-      'TEST_DONE',
-      false,
-      'not_started',
+    assert.equal(await first.claim('reservation-drain', 60, 30), null)
+    assert.deepEqual(
+      (
+        await a.query(
+          `SELECT status,count(*)::int count FROM control.dispatch_jobs WHERE job_id=ANY($1::uuid[])GROUP BY status`,
+          [[left.job_id, right.job_id]],
+        )
+      ).rows,
+      [{ status: 'budget_exceeded', count: 2 }],
     )
   })
 
-  it('rollback removes only 003 and preserves 001, 002, and unrelated objects', async () => {
+  it('blocks rollback 003 while durable dispatch and budget history exists', async () => {
     await a.query('CREATE TABLE control.keep_after_003(value text)')
     await assert.rejects(
       a.query(
@@ -330,30 +350,11 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       ).rows[0].count > 0,
       true,
     )
-    await a.query(
-      'TRUNCATE control.dispatch_events,control.dispatch_dependencies,control.dispatch_jobs',
-    )
-    await a.query(
-      await readFile(
-        new URL(
-          '../migrations/003_dispatch_queue.rollback.sql',
-          import.meta.url,
-        ),
-        'utf8',
-      ),
-    )
-    assert.equal(
-      (
-        await a.query(
-          `SELECT to_regclass('control.dispatch_jobs') IS NULL AS gone,to_regclass('control.keep_after_003') IS NOT NULL AS kept,to_regclass('control.missions') IS NOT NULL AS missions,to_regclass('catalog.projects') IS NOT NULL AS catalog`,
-        )
-      ).rows[0].gone,
-      true,
-    )
     const preserved = await a.query(
-      `SELECT to_regclass('control.keep_after_003') IS NOT NULL AS kept,to_regclass('control.missions') IS NOT NULL AS missions,to_regclass('catalog.projects') IS NOT NULL AS catalog`,
+      `SELECT to_regclass('control.dispatch_jobs') IS NOT NULL AS dispatch,to_regclass('control.keep_after_003') IS NOT NULL AS kept,to_regclass('control.missions') IS NOT NULL AS missions,to_regclass('catalog.projects') IS NOT NULL AS catalog`,
     )
     assert.deepEqual(preserved.rows[0], {
+      dispatch: true,
       kept: true,
       missions: true,
       catalog: true,

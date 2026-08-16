@@ -10,25 +10,56 @@ import {
 import { PosixSocketSecurity } from './socket-security.js'
 import { UnixExecutorClient } from './unix-executor-client.js'
 import { UnixExecutorServer } from './unix-executor-server.js'
-import type { HomeOwnershipPreparer, ProcessRunner } from './hermes-executor.js'
+import { createOpenCodeUsageProbeFromEnvironment } from './integration-factories.js'
+import type { DispatchQueuePort } from './dispatch-queue.js'
+import type {
+  ExecutorPort,
+  HomeOwnershipPreparer,
+  ProcessRunner,
+} from './hermes-executor.js'
+import type { OpenCodeUsageExportReadPort } from './opencode-usage-api.js'
 import type { Pool } from 'pg'
+
+export interface BrokerDispatcherDependencies {
+  queue?: DispatchQueuePort
+  executor?: ExecutorPort
+  usage?: {
+    reader?: OpenCodeUsageExportReadPort
+    readToken?: (path: string, expectedGid: number) => Promise<string>
+  }
+}
 
 export function createBrokerDispatcher(
   env: Record<string, string | undefined>,
-  pool: Pool,
+  pool: Pool | undefined,
   workerId: string,
+  dependencies: BrokerDispatcherDependencies = {},
 ) {
   const config = loadBrokerRuntimeConfig(env)
+  const usage = createOpenCodeUsageProbeFromEnvironment(
+    env,
+    dependencies.usage,
+  )
+  const queue = dependencies.queue ?? (pool ? new PostgresDispatchQueue(pool) : undefined)
+  if (!queue) throw new Error('DISPATCH_QUEUE_REQUIRED')
   return new DeterministicDispatcher({
-    queue: new PostgresDispatchQueue(pool),
-    executor: new UnixExecutorClient({
-      socketPath: config.socketPath,
-      timeoutMs: config.clientTimeoutMs,
-    }),
+    queue,
+    executor:
+      dependencies.executor ??
+      new UnixExecutorClient({
+        socketPath: config.socketPath,
+        timeoutMs: config.clientTimeoutMs,
+      }),
     workerId,
     leaseSeconds: config.leaseSeconds,
     childTimeoutSeconds: config.childTimeoutSeconds,
     hermesTimeoutMs: config.hermesTimeoutMs,
+    ...(usage.enabled
+      ? {
+          usageProbe: usage.probe,
+          serviceAccountId: usage.serviceAccountId,
+        }
+      : {}),
   })
 }
 export function createExecutorServer(

@@ -11,6 +11,7 @@ describe('versioned migration runner', () => {
       { version: '004_crm_integration', sql: 'SELECT 4;' },
       { version: '005_portfolio_read_models', sql: 'SELECT 5;' },
       { version: '006_sales_read_models', sql: 'SELECT 6;' },
+      { version: '007_usage_budget_ledger', sql: 'SELECT 7;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -24,6 +25,7 @@ describe('versioned migration runner', () => {
         '004_crm_integration',
         '005_portfolio_read_models',
         '006_sales_read_models',
+        '007_usage_budget_ledger',
       ],
     )
     assert.equal(
@@ -46,6 +48,7 @@ describe('versioned migration runner', () => {
         { version: '004_crm_integration', sql: 'SELECT 4;' },
         { version: '005_portfolio_read_models', sql: 'SELECT 5;' },
         { version: '006_sales_read_models', sql: 'SELECT 6;' },
+        { version: '007_usage_budget_ledger', sql: 'SELECT 7;' },
       ],
       [
         { version: '001_runtime', sql: 'SELECT 1;' },
@@ -54,6 +57,7 @@ describe('versioned migration runner', () => {
         { version: '004_crm_integration', sql: 'SELECT 4;' },
         { version: '005_portfolio_read_models', sql: 'SELECT 5;' },
         { version: '006_sales_read_models', sql: 'SELECT 6;' },
+        { version: '007_usage_budget_ledger', sql: 'SELECT 7;' },
         { version: '005_unapproved', sql: 'SELECT 5;' },
       ],
     ])
