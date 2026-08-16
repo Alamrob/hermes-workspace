@@ -178,7 +178,7 @@ const EXPECTED_FUNCTIONS: Record<
     'control.enqueue_dispatch(uuid,uuid,uuid,text,text,text,text,uuid[],numeric,bigint,integer,integer)',
     'control.recover_dispatch_leases()',
     'control.claim_dispatch(text,integer,integer)',
-    'control.fail_dispatch(uuid,text,text,boolean,text)',
+    'control.fail_dispatch(uuid,text,text,boolean,text,bigint)',
     'control.complete_dispatch(uuid,text,jsonb,text,bigint,text,bigint,bigint,integer)',
   ],
   commercial_work_order_ingestor: ['control.save_mission(uuid,text,jsonb)'],

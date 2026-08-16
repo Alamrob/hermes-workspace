@@ -21,12 +21,31 @@ ALTER TABLE control.dispatch_jobs
 CREATE UNIQUE INDEX IF NOT EXISTS dispatch_jobs_usage_record_idx
   ON control.dispatch_jobs(usage_record_id) WHERE usage_record_id IS NOT NULL;
 
+WITH upgraded_leases AS(
+  UPDATE control.dispatch_jobs
+  SET status='usage_unknown',lease_owner=NULL,lease_until=NULL,
+      child_timeout_seconds=NULL,next_attempt_at=clock_timestamp(),
+      error='PRE_USAGE_LEDGER_LEASE_UNKNOWN',updated_at=clock_timestamp(),
+      usage_budget_state='held_uncertain',
+      usage_value_reservation_micro_cents=10000000,
+      usage_value_consumed_usd=0.1,
+      usage_budget_version=greatest(usage_budget_version,1)
+  WHERE status='leased' AND usage_budget_state='unreserved'
+  RETURNING job_id
+)
+INSERT INTO control.dispatch_events(
+  job_id,from_status,to_status,reason,occurred_at
+)
+SELECT job_id,'leased','usage_unknown','PRE_USAGE_LEDGER_LEASE_UNKNOWN',
+       clock_timestamp()
+FROM upgraded_leases;
+
 UPDATE control.dispatch_jobs
 SET usage_budget_state='held_uncertain',
     usage_value_reservation_micro_cents=10000000,
     usage_value_consumed_usd=0.1,
     usage_budget_version=greatest(usage_budget_version,1)
-WHERE status IN('leased','usage_unknown') AND usage_budget_state='unreserved';
+WHERE status='usage_unknown' AND usage_budget_state='unreserved';
 
 DO $$BEGIN
   IF NOT EXISTS(
@@ -178,18 +197,20 @@ BEGIN
  RETURN QUERY SELECT*FROM control.dispatch_jobs WHERE job_id=selected;
 END$$;
 
-CREATE OR REPLACE FUNCTION control.fail_dispatch(uuid,text,text,boolean,text) RETURNS void
+CREATE OR REPLACE FUNCTION control.fail_dispatch(uuid,text,text,boolean,text,bigint) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,control AS $$
 DECLARE target text;now_at timestamptz:=clock_timestamp();job control.dispatch_jobs%ROWTYPE;
  safe_error text;guard control.usage_budget_control%ROWTYPE;
 BEGIN
  IF $5 NOT IN('not_started','usage_unknown')THEN RAISE EXCEPTION'INVALID_EXECUTION_STATE';END IF;
+ IF $6 IS NULL OR $6<1 THEN RAISE EXCEPTION'INVALID_USAGE_BUDGET_VERSION';END IF;
  safe_error:=CASE WHEN $3~'^[A-Z0-9_:-]{1,128}$'THEN $3 ELSE'EXECUTOR_FAILURE'END;
  SELECT*INTO guard FROM control.usage_budget_control WHERE control_id=1 FOR UPDATE;
  SELECT*INTO job FROM control.dispatch_jobs
    WHERE job_id=$1 AND status='leased'AND lease_owner=$2 AND lease_until>now_at FOR UPDATE;
  IF NOT FOUND THEN RAISE EXCEPTION'DISPATCH_LEASE_CONFLICT';END IF;
- IF job.usage_budget_state<>'reserved' OR guard.probe_job_id IS DISTINCT FROM $1
+ IF job.usage_budget_state<>'reserved' OR job.usage_budget_version<>$6
+    OR guard.probe_job_id IS DISTINCT FROM $1
     OR guard.probe_worker IS DISTINCT FROM $2 THEN RAISE EXCEPTION'USAGE_BUDGET_CAS_CONFLICT';END IF;
  target:=CASE WHEN $5='usage_unknown'THEN'usage_unknown'
               WHEN $4 AND job.attempts<job.max_attempts THEN'queued'ELSE'failed'END;
@@ -254,13 +275,14 @@ REVOKE ALL ON control.usage_budget_control FROM
 REVOKE ALL ON FUNCTION
   control.recover_dispatch_leases(),control.claim_dispatch(text,integer,integer),
   control.fail_dispatch(uuid,text,text,boolean,text),
+  control.fail_dispatch(uuid,text,text,boolean,text,bigint),
   control.complete_dispatch(uuid,text,jsonb,text,numeric,bigint,integer),
   control.complete_dispatch(uuid,text,jsonb,text,bigint,text,bigint,bigint,integer)
 FROM PUBLIC,commercial_runtime,commercial_work_order_ingestor,commercial_approver,
   commercial_safety_operator,commercial_observer;
 GRANT EXECUTE ON FUNCTION
   control.recover_dispatch_leases(),control.claim_dispatch(text,integer,integer),
-  control.fail_dispatch(uuid,text,text,boolean,text),
+  control.fail_dispatch(uuid,text,text,boolean,text,bigint),
   control.complete_dispatch(uuid,text,jsonb,text,bigint,text,bigint,bigint,integer)
 TO commercial_runtime;
 

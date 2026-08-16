@@ -90,7 +90,14 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
     )
     const claim = await first.claim('drain', 60, 30)
     assert.equal(claim?.job_id, id)
-    await first.fail(id, 'drain', 'TEST_DONE', false, 'not_started')
+    await first.fail(
+      id,
+      'drain',
+      'TEST_DONE',
+      false,
+      'not_started',
+      claim!.usageBudget.version,
+    )
     const low = await first.enqueue(
       job({
         job_id: '223e4567-e89b-42d3-a456-426614174902',
@@ -178,6 +185,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       'TEST_DONE',
       false,
       'not_started',
+      claims.find(Boolean)!.usageBudget.version,
     )
   })
 

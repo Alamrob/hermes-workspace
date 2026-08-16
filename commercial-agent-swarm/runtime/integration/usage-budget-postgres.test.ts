@@ -107,7 +107,14 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     const secondClaim = await left.claim('worker-b', 60, 30)
     assert.equal(secondClaim?.usageBudget.missionCommittedBeforeMicroCents, 3_000_000)
     assert.equal(secondClaim?.usageBudget.totalCommittedBeforeMicroCents, 3_000_000)
-    await left.fail(secondJob.job_id, 'worker-b', 'PRE_SPAWN_TEST', false, 'not_started')
+    await left.fail(
+      secondJob.job_id,
+      'worker-b',
+      'PRE_SPAWN_TEST',
+      false,
+      'not_started',
+      secondClaim!.usageBudget.version,
+    )
     assert.equal((await leftPool.query(
       `SELECT usage_budget_state FROM control.dispatch_jobs WHERE job_id=$1`, [secondJob.job_id],
     )).rows[0].usage_budget_state, 'released')
@@ -125,7 +132,14 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     const claimed = claims.find(Boolean)!
     const worker = claims[0] ? 'worker-left' : 'worker-right'
     const queue = claims[0] ? left : right
-    await queue.fail(claimed.job_id, worker, 'OPENCODE_USAGE_DIFF_AMBIGUOUS', false, 'usage_unknown')
+    await queue.fail(
+      claimed.job_id,
+      worker,
+      'OPENCODE_USAGE_DIFF_AMBIGUOUS',
+      false,
+      'usage_unknown',
+      claimed.usageBudget.version,
+    )
     const held = (await leftPool.query(
       `SELECT usage_budget_state,usage_value_reservation_micro_cents,
               usage_value_actual_micro_cents FROM control.dispatch_jobs WHERE job_id=$1`,
@@ -208,6 +222,65 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     assert.equal((await leftPool.query(
       `SELECT status FROM control.dispatch_jobs WHERE job_id=$1`, [over.job_id],
     )).rows[0].status, 'budget_exceeded')
+  })
+
+  it('rejects a stale fail replay after the same worker reclaims a new budget version', async () => {
+    await leftPool.query(`UPDATE control.dispatch_jobs SET usage_budget_state='released',
+      usage_value_actual_micro_cents=NULL,usage_record_id=NULL,usage_value_source=NULL,
+      usage_value_consumed_usd=0 WHERE usage_budget_state='settled'`)
+    const mission = await saveMission(leftPool, 'fail-cas-replay', 0.5)
+    const candidate = job(mission, 'fail-cas-replay')
+    await left.enqueue(candidate)
+    const firstClaim = await left.claim('same-worker', 60, 30)
+    assert(firstClaim)
+    await left.fail(
+      candidate.job_id,
+      'same-worker',
+      'TRANSIENT_PRE_SPAWN',
+      true,
+      'not_started',
+      firstClaim.usageBudget.version,
+    )
+    const secondClaim = await left.claim('same-worker', 60, 30)
+    assert(secondClaim)
+    assert.equal(secondClaim.usageBudget.version, firstClaim.usageBudget.version + 1)
+
+    await assert.rejects(
+      left.fail(
+        candidate.job_id,
+        'same-worker',
+        'STALE_REPLAY',
+        false,
+        'not_started',
+        firstClaim.usageBudget.version,
+      ),
+      /USAGE_BUDGET_CAS_CONFLICT/,
+    )
+    assert.deepEqual(
+      (
+        await leftPool.query(
+          `SELECT status,lease_owner,usage_budget_state,usage_budget_version,
+                  usage_value_reservation_micro_cents
+             FROM control.dispatch_jobs WHERE job_id=$1`,
+          [candidate.job_id],
+        )
+      ).rows[0],
+      {
+        status: 'leased',
+        lease_owner: 'same-worker',
+        usage_budget_state: 'reserved',
+        usage_budget_version: '2',
+        usage_value_reservation_micro_cents: '10000000',
+      },
+    )
+    await left.fail(
+      candidate.job_id,
+      'same-worker',
+      'TEST_DONE',
+      false,
+      'not_started',
+      secondClaim.usageBudget.version,
+    )
   })
 
   it('turns an expired probe lease into a conservative hold and rollback preserves the ledger', async () => {

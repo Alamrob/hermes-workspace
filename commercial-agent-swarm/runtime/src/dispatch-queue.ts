@@ -82,6 +82,7 @@ export interface DispatchQueuePort {
     error: string,
     recoverable: boolean,
     executionState: 'not_started' | 'usage_unknown',
+    budgetVersion: number,
   ) => Promise<void>
   complete: (
     id: string,
@@ -181,10 +182,11 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
     error: string,
     recoverable: boolean,
     executionState: 'not_started' | 'usage_unknown',
+    budgetVersion: number,
   ): Promise<void> {
     await this.pool.query(
-      'SELECT control.fail_dispatch($1::uuid,$2,$3,$4,$5)',
-      [id, worker, error, recoverable, executionState],
+      'SELECT control.fail_dispatch($1::uuid,$2,$3,$4,$5,$6::bigint)',
+      [id, worker, error, recoverable, executionState, budgetVersion],
     )
   }
 
@@ -314,6 +316,7 @@ export class DeterministicDispatcher {
         message,
         recoverable,
         notStarted ? 'not_started' : 'usage_unknown',
+        job.usageBudget.version,
       )
       return true
     }

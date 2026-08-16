@@ -1,7 +1,7 @@
 BEGIN;
 REVOKE EXECUTE ON FUNCTION
   control.recover_dispatch_leases(),control.claim_dispatch(text,integer,integer),
-  control.fail_dispatch(uuid,text,text,boolean,text),
+  control.fail_dispatch(uuid,text,text,boolean,text,bigint),
   control.complete_dispatch(uuid,text,jsonb,text,bigint,text,bigint,bigint,integer)
 FROM commercial_runtime;
 DO $$
