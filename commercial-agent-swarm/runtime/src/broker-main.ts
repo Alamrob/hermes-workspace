@@ -91,18 +91,22 @@ export async function startSimulationBroker(
     server.headersTimeout = 5_000
     server.keepAliveTimeout = 2_000
     server.maxHeadersCount = 64
-    await new Promise<void>((resolve, reject) => {
-      server.once('error', reject)
-      server.listen(config.port, config.host, () => {
-        server.off('error', reject)
-        resolve()
-      })
-    })
-    const dispatcher = createBrokerDispatcher(
-      brokerDispatcherEnvironment(environment),
-      undefined,
-      'broker-dispatcher-1',
-      { queue: persistence.dispatchQueue },
+    const dispatcher = await configureDispatcherBeforeListen(
+      () =>
+        createBrokerDispatcher(
+          brokerDispatcherEnvironment(environment),
+          undefined,
+          'broker-dispatcher-1',
+          { queue: persistence.dispatchQueue },
+        ),
+      () =>
+        new Promise<void>((resolve, reject) => {
+          server.once('error', reject)
+          server.listen(config.port, config.host, () => {
+            server.off('error', reject)
+            resolve()
+          })
+        }),
     )
     let dispatcherLoop: ReturnType<typeof startDispatcherLoop> | undefined
     let closing: Promise<void> | undefined
@@ -122,6 +126,15 @@ export async function startSimulationBroker(
     await persistence.close()
     throw error
   }
+}
+
+export async function configureDispatcherBeforeListen<T>(
+  configureDispatcher: () => T,
+  listen: () => Promise<void>,
+): Promise<T> {
+  const dispatcher = configureDispatcher()
+  await listen()
+  return dispatcher
 }
 
 export function startDispatcherLoop(
