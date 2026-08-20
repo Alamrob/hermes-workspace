@@ -50,9 +50,11 @@ describe('runtime persistence composition', () => {
       createRuntimePersistence({
         NODE_ENV: 'production',
         DATABASE_URL: 'postgresql://runtime:unused@127.0.0.1:1/runtime',
-        APPROVER_DATABASE_URL: 'postgresql://approver:unused@127.0.0.1:1/runtime',
+        APPROVER_DATABASE_URL:
+          'postgresql://approver:unused@127.0.0.1:1/runtime',
         SAFETY_DATABASE_URL: 'postgresql://safety:unused@127.0.0.1:1/runtime',
-        WORK_ORDER_DATABASE_URL: 'postgresql://ingestor:unused@127.0.0.1:1/runtime',
+        WORK_ORDER_DATABASE_URL:
+          'postgresql://ingestor:unused@127.0.0.1:1/runtime',
       }),
       /APPROVAL_EVIDENCE_DATABASE_URL is required/,
     )
@@ -61,9 +63,14 @@ describe('runtime persistence composition', () => {
   it('uses memory only for test or development and verifies PostgreSQL before returning', async () => {
     const testPersistence = await createRuntimePersistence({ NODE_ENV: 'test' })
     assert.ok(testPersistence.repository instanceof InMemoryRuntimeRepository)
-    assert.ok(testPersistence.approvalEvidenceStore satisfies ApprovalEvidenceStorePort)
+    assert.ok(
+      testPersistence.approvalEvidenceStore satisfies ApprovalEvidenceStorePort,
+    )
     assert.ok(testPersistence.dispatchQueue)
-    assert.equal(await testPersistence.dispatchQueue.claim('test', 60, 30), null)
+    assert.equal(
+      await testPersistence.dispatchQueue.claim('test', 60, 30),
+      null,
+    )
     await testPersistence.close()
 
     await assert.rejects(
@@ -93,25 +100,29 @@ describe('runtime persistence composition', () => {
       }),
       /PRINCIPALS_MUST_BE_DISTINCT/,
     )
+    const expectedFunctionSets: Array<Array<string>> = []
     const fake = (
       current_user: string,
       memberships: Array<string>,
       unsafe = false,
       unsafe_effective = false,
     ) => ({
-      query: async () => ({
-        rows: [
-          {
-            current_user,
-            memberships,
-            rolcanlogin: true,
-            unsafe,
-            unsafe_effective,
-            unexpected_functions: [],
-            missing_functions: [],
-          },
-        ],
-      }),
+      query: async (_sql: string, params?: Array<Array<string>>) => {
+        if (params?.[0]) expectedFunctionSets.push(params[0])
+        return {
+          rows: [
+            {
+              current_user,
+              memberships,
+              rolcanlogin: true,
+              unsafe,
+              unsafe_effective,
+              unexpected_functions: [],
+              missing_functions: [],
+            },
+          ],
+        }
+      },
     })
     await verifyProductionDatabasePrincipals([
       {
@@ -120,6 +131,18 @@ describe('runtime persistence composition', () => {
         capability: 'commercial_runtime',
       },
     ])
+    assert.equal(
+      expectedFunctionSets[0].includes(
+        'control.create_pilot_cohort(uuid,text,text)',
+      ),
+      true,
+    )
+    assert.equal(
+      expectedFunctionSets[0].includes(
+        'control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamp with time zone,text)',
+      ),
+      true,
+    )
     await verifyProductionDatabasePrincipals([
       {
         pool: fake('evidence_login', ['commercial_approval_evidence']) as never,

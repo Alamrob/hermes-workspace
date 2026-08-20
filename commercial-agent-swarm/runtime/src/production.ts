@@ -166,6 +166,8 @@ const EXPECTED_FUNCTIONS: Record<
     'mail.delivery_policy_allows(text,text,text,text,integer)',
     'control.runtime_ready()',
     'control.get_portfolio_read_model()',
+    'control.create_pilot_cohort(uuid,text,text)',
+    'control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamp with time zone,text)',
     'control.get_mission(uuid)',
     'control.is_mission_a3(uuid)',
     'mail.store_webhook_event(text,text,timestamptz,text,boolean,jsonb)',
