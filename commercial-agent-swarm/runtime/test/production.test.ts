@@ -152,6 +152,19 @@ describe('runtime persistence composition', () => {
     ])
     await verifyProductionDatabasePrincipals([
       {
+        pool: fake('safety_login', ['commercial_safety_operator']) as never,
+        expected: 'safety_login',
+        capability: 'commercial_safety_operator',
+      },
+    ])
+    assert.equal(
+      expectedFunctionSets.some((functions) =>
+        functions.includes('control.add_pilot_suppression(text,text,text)'),
+      ),
+      true,
+    )
+    await verifyProductionDatabasePrincipals([
+      {
         pool: fake('ingestor_login', [
           'commercial_work_order_ingestor',
         ]) as never,

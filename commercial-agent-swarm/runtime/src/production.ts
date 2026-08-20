@@ -188,7 +188,10 @@ const EXPECTED_FUNCTIONS: Record<
     'control.get_pending_approval(uuid)',
     'control.decide_approval(uuid,text,text,timestamptz,text,text,timestamptz,jsonb,text,timestamptz)',
   ],
-  commercial_safety_operator: ['control.set_kill_switch(text,text,boolean)'],
+  commercial_safety_operator: [
+    'control.set_kill_switch(text,text,boolean)',
+    'control.add_pilot_suppression(text,text,text)',
+  ],
   commercial_observer: [],
   commercial_approval_evidence: [
     'control.record_approval_channel_evidence(uuid,text,text,text,text,timestamp with time zone)',
