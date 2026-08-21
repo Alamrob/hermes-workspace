@@ -62,13 +62,18 @@ describe('Simulation broker entrypoint', () => {
       ['A3_ENABLED', 'true'],
       ['EXTERNAL_RESEARCH_ENABLED', 'true'],
       ['EXTERNAL_ACTION_KILL_SWITCH', 'false'],
-      ['OPENCODE_USAGE_RECONCILIATION_ENABLED', 'true'],
     ]) {
       assert.throws(
         () => loadSimulationBrokerConfig({ ...environment, [name]: value }),
         /SIMULATION_BOUNDARY_INVALID/,
       )
     }
+    assert.doesNotThrow(() =>
+      loadSimulationBrokerConfig({
+        ...environment,
+        OPENCODE_USAGE_RECONCILIATION_ENABLED: 'true',
+      }),
+    )
     assert.throws(
       () => loadSimulationBrokerConfig({ ...environment, APPROVAL_MODE: 'all' }),
       /INVALID_APPROVAL_MODE/,
