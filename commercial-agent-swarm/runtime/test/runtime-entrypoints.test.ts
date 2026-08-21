@@ -37,6 +37,9 @@ class Queue implements DispatchQueuePort {
   completed: CompletionCost[] = []
   failed: Array<{ state: string; error: string }> = []
   async enqueue() { return claimed.job_id }
+  async getMissionExecution(missionId: string) {
+    return { mission_id: missionId, status: 'queued' as const, assignments: [] }
+  }
   async recover() {}
   async claim() { return claimed }
   async complete(

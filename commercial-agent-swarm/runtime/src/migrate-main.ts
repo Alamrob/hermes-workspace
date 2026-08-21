@@ -40,6 +40,7 @@ export async function loadMigrationSources() {
       '006_sales_read_models',
       '007_usage_budget_ledger',
       '008_simulation_safety_seed',
+      '009_internal_automation',
     ].map(async (version) => ({
       version,
       sql: await readFile(

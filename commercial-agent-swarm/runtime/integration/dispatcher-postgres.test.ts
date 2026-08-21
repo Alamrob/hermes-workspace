@@ -31,6 +31,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       '003_dispatch_queue.sql',
       '003_dispatch_queue.sql',
       '007_usage_budget_ledger.sql',
+      '009_internal_automation.sql',
     ])
       await a.query(
         await readFile(
@@ -269,6 +270,58 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       tokens_used: '15',
       api_calls_used: 1,
     })
+  })
+
+  it('hands a completed primary artifact to dependent QA as untrusted evidence', async () => {
+    const primaryId = await first.enqueue(
+      job({
+        job_id: 'b23e4567-e89b-42d3-a456-426614174903',
+        idempotency_key: 'dependency-primary',
+        profile_id: 'qualification-prioritization',
+      }),
+    )
+    const primary = await first.claim('worker-primary', 60, 30)
+    assert(primary)
+    await first.complete(
+      primaryId,
+      'worker-primary',
+      completionEnvelope(),
+      'b'.repeat(64),
+      {
+        usageValueMicroCents: 400_000,
+        usageRecordId: 'usage-dependency-primary',
+        budgetVersion: primary.usageBudget.version,
+        total_tokens: 15,
+        api_calls: 1,
+      },
+    )
+    const qaId = await first.enqueue(
+      job({
+        job_id: 'c23e4567-e89b-42d3-a456-426614174903',
+        idempotency_key: 'dependency-qa',
+        profile_id: 'commercial-qa-compliance',
+        dependencies: [primaryId],
+      }),
+    )
+    const qa = await first.claim('worker-qa', 60, 30)
+    assert(qa)
+    assert.equal(qa.job_id, qaId)
+    const evidence = JSON.parse(qa.evidence.content)
+    assert.equal(evidence.trust, 'untrusted_data')
+    assert.equal(evidence.dependency_results[0].assignment_id, primaryId)
+    assert.equal(evidence.dependency_results[0].artifact_sha256, 'b'.repeat(64))
+    assert.deepEqual(
+      evidence.dependency_results[0].result_envelope,
+      completionEnvelope(),
+    )
+    await first.fail(
+      qaId,
+      'worker-qa',
+      'TEST_DONE',
+      false,
+      'not_started',
+      qa.usageBudget.version,
+    )
   })
 
   it('allows runtime only narrow functions and keeps events append-only', async () => {

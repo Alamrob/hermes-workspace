@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/schemas/commercial-swarm/mission-execution.schema.json",
+  "title": "Commercial Mission Execution Projection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mission_id", "status", "assignments"],
+  "properties": {
+    "mission_id": { "type": "string", "format": "uuid" },
+    "status": {
+      "enum": ["queued", "running", "completed", "failed", "blocked"]
+    },
+    "assignments": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "assignment_id",
+          "profile_id",
+          "status",
+          "attempts",
+          "max_attempts",
+          "artifact_sha256",
+          "result_envelope",
+          "error"
+        ],
+        "properties": {
+          "assignment_id": { "type": "string", "format": "uuid" },
+          "profile_id": {
+            "enum": [
+              "sales-orchestrator",
+              "market-account-intelligence",
+              "contact-data-steward",
+              "qualification-prioritization",
+              "outreach-draft-manager",
+              "commercial-qa-compliance"
+            ]
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "leased",
+              "succeeded",
+              "failed",
+              "budget_exceeded",
+              "usage_unknown"
+            ]
+          },
+          "attempts": { "type": "integer", "minimum": 0 },
+          "max_attempts": { "type": "integer", "minimum": 1, "maximum": 2 },
+          "artifact_sha256": {
+            "oneOf": [
+              { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              { "type": "null" }
+            ]
+          },
+          "result_envelope": {
+            "oneOf": [
+              { "$ref": "agent-result.schema.json" },
+              { "type": "null" }
+            ]
+          },
+          "error": {
+            "oneOf": [
+              { "type": "string", "minLength": 1, "maxLength": 1000 },
+              { "type": "null" }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

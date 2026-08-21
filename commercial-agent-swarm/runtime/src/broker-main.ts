@@ -30,7 +30,10 @@ export async function startSimulationBroker(
   ])
   const persistence = await createRuntimePersistence(databaseEnvironment)
   try {
-    await assertSimulationKillSwitchActive(persistence.repository)
+    await assertSimulationSafetyBoundary(
+      persistence.repository,
+      config.a3AdmissionEnabled,
+    )
 
     const externalTransports = createBrokerExternalTransports(environment)
     const approvals = new ApprovalBroker({
@@ -45,6 +48,7 @@ export async function startSimulationBroker(
     })
     const app = new BrokerApplication({
       repository: persistence.repository,
+      dispatchQueue: persistence.dispatchQueue,
       approvals,
       approvalCoordinator,
       mail: new MailService({
@@ -133,6 +137,15 @@ export async function assertSimulationKillSwitchActive(
     }))
   )
     throw new Error('SIMULATION_KILL_SWITCH_NOT_ACTIVE')
+}
+
+export async function assertSimulationSafetyBoundary(
+  repository: Pick<RuntimeRepository, 'externalActionsBlocked'>,
+  a3AdmissionEnabled: boolean,
+): Promise<void> {
+  if (a3AdmissionEnabled) throw new Error('SIMULATION_A3_MUST_BE_DISABLED')
+  if (!(await repository.externalActionsBlocked()))
+    throw new Error('SIMULATION_EXTERNAL_ACTIONS_NOT_BLOCKED')
 }
 
 export async function configureDispatcherBeforeListen<T>(

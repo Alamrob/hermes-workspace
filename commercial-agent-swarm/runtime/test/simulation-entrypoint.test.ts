@@ -9,7 +9,10 @@ import {
 } from '../src/simulation-entrypoint.js'
 import { validateGroupSecretFileMetadata } from '../src/secret-file.js'
 import { DisabledExternalMailTransport } from '../src/disabled-transports.js'
-import { assertSimulationKillSwitchActive } from '../src/broker-main.js'
+import {
+  assertSimulationKillSwitchActive,
+  assertSimulationSafetyBoundary,
+} from '../src/broker-main.js'
 
 const environment = {
   NODE_ENV: 'production',
@@ -123,6 +126,29 @@ describe('Simulation broker entrypoint', () => {
         isKillSwitchActive: async () => false,
       }),
       /SIMULATION_KILL_SWITCH_NOT_ACTIVE/,
+    )
+  })
+
+  it('allows A0-A2 dispatch only while every external channel remains blocked', async () => {
+    await assert.doesNotReject(
+      assertSimulationSafetyBoundary(
+        { externalActionsBlocked: async () => true },
+        false,
+      ),
+    )
+    await assert.rejects(
+      assertSimulationSafetyBoundary(
+        { externalActionsBlocked: async () => false },
+        false,
+      ),
+      /SIMULATION_EXTERNAL_ACTIONS_NOT_BLOCKED/,
+    )
+    await assert.rejects(
+      assertSimulationSafetyBoundary(
+        { externalActionsBlocked: async () => true },
+        true,
+      ),
+      /SIMULATION_A3_MUST_BE_DISABLED/,
     )
   })
 

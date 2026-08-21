@@ -196,6 +196,13 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     return result.rows[0]?.active === true
   }
 
+  async externalActionsBlocked(): Promise<boolean> {
+    const result = await this.pool.query<{ blocked: boolean }>(
+      'SELECT control.external_actions_blocked() AS blocked',
+    )
+    return result.rows[0]?.blocked === true
+  }
+
   async activateKillSwitch(scope: string, scopeId: string): Promise<void> {
     if (!['global', 'mission', 'channel'].includes(scope)) {
       throw new Error('INVALID_KILL_SWITCH_SCOPE')

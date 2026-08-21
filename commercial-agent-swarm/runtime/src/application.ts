@@ -16,6 +16,8 @@ import {
   verifyWorkOrder,
 } from './security.js'
 import { ValidationError, validateWorkOrder } from './work-orders.js'
+import { AssignmentPlanError, validateAssignmentPlan } from './assignment-plan.js'
+import type { DispatchQueuePort } from './dispatch-queue.js'
 
 export interface ApplicationRequest {
   method: string
@@ -32,6 +34,7 @@ export interface ApplicationResponse {
 
 interface ApplicationOptions {
   repository: RuntimeRepository
+  dispatchQueue: Pick<DispatchQueuePort, 'enqueue' | 'getMissionExecution'>
   approvals: ApprovalBroker
   approvalCoordinator: ApprovalModeCoordinator
   mail: MailService
@@ -125,6 +128,49 @@ export class BrokerApplication {
       requireBearer(request.headers?.authorization, this.options.authentication.internal)
       const mission = await this.options.repository.getMission(route.id!)
       return mission ? { status: 200, body: redactMission(mission) } : { status: 404, body: { error: 'not_found' } }
+    }
+    if (route.action === 'getMissionExecution') {
+      requireBearer(request.headers?.authorization, this.options.authentication.internal)
+      const mission = await this.options.repository.getMission(route.id!)
+      if (!mission) return { status: 404, body: { error: 'not_found' } }
+      return {
+        status: 200,
+        body: await this.options.dispatchQueue.getMissionExecution(route.id!),
+      }
+    }
+    if (route.action === 'createAssignments') {
+      requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
+      const plan = validateAssignmentPlan(request.body)
+      if (plan.mission_id !== route.id)
+        throw new ValidationError(['mission_id does not match route'])
+      const mission = await this.options.repository.getMission(plan.mission_id)
+      if (!mission) return { status: 404, body: { error: 'not_found' } }
+      assertInternalExecutionMission(mission, plan.trace_id)
+      const assignmentIds: string[] = []
+      for (const assignment of plan.assignments) {
+        assignmentIds.push(await this.options.dispatchQueue.enqueue({
+          job_id: assignment.assignment_id,
+          mission_id: plan.mission_id,
+          trace_id: plan.trace_id,
+          idempotency_key: `${plan.plan_version}:${assignment.idempotency_key}`,
+          profile_id: assignment.profile_id,
+          instruction: assignment.instruction,
+          evidence: assignment.evidence,
+          dependencies: assignment.depends_on,
+          usage_value_reservation_usd: assignment.usage_value_reservation_usd,
+          maximum_tokens: assignment.maximum_tokens,
+          maximum_api_calls: assignment.maximum_api_calls,
+          max_attempts: assignment.max_attempts,
+        }))
+      }
+      return {
+        status: 202,
+        body: {
+          mission_id: plan.mission_id,
+          assignment_ids: assignmentIds,
+          status: 'queued',
+        },
+      }
     }
     if (route.action === 'getPortfolioReadModel') {
       requireBearer(request.headers?.authorization, this.options.authentication.internal)
@@ -236,6 +282,20 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'POST' && path === '/v1/mail/send') return { action: 'sendMail', auditAction: 'mail.send' }
   const mission = /^\/v1\/missions\/([^/]+)$/.exec(path)
   if (method === 'GET' && mission) return { action: 'getMission', auditAction: 'mission.get', id: mission[1] }
+  const assignments = /^\/v1\/missions\/([^/]+)\/assignments$/.exec(path)
+  if (method === 'POST' && assignments)
+    return {
+      action: 'createAssignments',
+      auditAction: 'assignment_plan.create',
+      id: assignments[1],
+    }
+  const execution = /^\/internal\/v1\/missions\/([^/]+)\/execution$/.exec(path)
+  if (method === 'GET' && execution)
+    return {
+      action: 'getMissionExecution',
+      auditAction: 'mission.execution.get',
+      id: execution[1],
+    }
   const decision = /^\/v1\/approvals\/([^/]+)\/decision$/.exec(path)
   if (method === 'POST' && decision)
     return {
@@ -255,6 +315,39 @@ function missionIdFrom(request: ApplicationRequest): string | null {
 function redactMission(mission: Record<string, unknown>): Record<string, unknown> {
   const { authority: _authority, approval_token: _approvalToken, business_context: _context, ...safe } = mission
   return safe
+}
+
+function assertInternalExecutionMission(
+  mission: Record<string, unknown>,
+  traceId: string,
+): void {
+  const contact = mission.contact_policy
+  const channels = mission.approved_channels
+  const prohibited = mission.prohibited_actions
+  const requiredProhibitions = [
+    'mail.send',
+    'message.send',
+    'campaign.activate',
+    'crm.write',
+    'price.change',
+    'proposal.send',
+    'contract.commit',
+  ]
+  if (
+    !['A0', 'A1', 'A2'].includes(String(mission.autonomy_level)) ||
+    mission.project_id !== 'proptimiza' ||
+    mission.trace_id !== traceId ||
+    mission.dry_run !== true ||
+    !Array.isArray(channels) ||
+    channels.some((channel) => !['none', 'internal', 'public_web'].includes(String(channel))) ||
+    contact === null ||
+    typeof contact !== 'object' ||
+    Array.isArray(contact) ||
+    (contact as Record<string, unknown>).contact_permitted !== false ||
+    !Array.isArray(prohibited) ||
+    requiredProhibitions.some((action) => !prohibited.includes(action))
+  )
+    throw new AuthenticationError('INTERNAL_EXECUTION_POLICY_REQUIRED')
 }
 
 function validateEvidenceDecision(value: unknown): {
@@ -311,7 +404,7 @@ function publicFailure(error: unknown): {
   error: string
   issues?: string[]
 } {
-  if (error instanceof ValidationError)
+  if (error instanceof ValidationError || error instanceof AssignmentPlanError)
     return { status: 400, error: 'invalid_request', issues: error.issues }
   if (error instanceof AuthenticationError) {
     if (error.code === 'UNAUTHORIZED')
@@ -324,6 +417,7 @@ function publicFailure(error: unknown): {
       'INVALID_SIGNATURE',
       'FORBIDDEN',
       'A3_ADMISSION_DISABLED',
+      'INTERNAL_EXECUTION_POLICY_REQUIRED',
     ])
     return {
       status: 403,

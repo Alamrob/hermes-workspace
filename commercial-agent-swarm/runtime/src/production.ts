@@ -182,6 +182,9 @@ const EXPECTED_FUNCTIONS: Record<
     'control.claim_dispatch(text,integer,integer)',
     'control.fail_dispatch(uuid,text,text,boolean,text,bigint)',
     'control.complete_dispatch(uuid,text,jsonb,text,bigint,text,bigint,bigint,integer)',
+    'control.external_actions_blocked()',
+    'control.get_mission_execution(uuid)',
+    'control.get_dispatch_dependency_evidence(uuid)',
   ],
   commercial_work_order_ingestor: ['control.save_mission(uuid,text,jsonb)'],
   commercial_approver: [
@@ -202,6 +205,9 @@ const EXPECTED_FUNCTIONS: Record<
 function noDispatchQueue(): DispatchQueuePort {
   return {
     enqueue: async () => {
+      throw new Error('DISPATCH_PERSISTENCE_UNAVAILABLE')
+    },
+    getMissionExecution: async () => {
       throw new Error('DISPATCH_PERSISTENCE_UNAVAILABLE')
     },
     claim: async () => null,

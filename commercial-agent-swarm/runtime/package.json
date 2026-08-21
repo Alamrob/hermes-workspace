@@ -11,6 +11,7 @@
     "start:broker": "node dist/broker-main.js",
     "start:executor": "node dist/executor-main.js",
     "start:crm-sync": "node dist/crm-sync-main.js",
+    "start:commercial-automation": "node dist/commercial-automation-main.js",
     "reconcile:crm-sync": "node dist/crm-sync-main.js reconcile",
     "migrate": "node dist/migrate-main.js",
     "test": "tsx --test test/**/*.test.ts",

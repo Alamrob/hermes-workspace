@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/schemas/commercial-swarm/assignment-plan.schema.json",
+  "title": "Commercial Mission Assignment Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mission_id", "trace_id", "plan_version", "assignments"],
+  "properties": {
+    "mission_id": { "type": "string", "format": "uuid" },
+    "trace_id": { "type": "string", "format": "uuid" },
+    "plan_version": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+    },
+    "assignments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "assignment_id",
+          "idempotency_key",
+          "profile_id",
+          "instruction",
+          "evidence",
+          "depends_on",
+          "usage_value_reservation_usd",
+          "maximum_tokens",
+          "maximum_api_calls",
+          "max_attempts"
+        ],
+        "properties": {
+          "assignment_id": { "type": "string", "format": "uuid" },
+          "idempotency_key": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._:-]{8,200}$"
+          },
+          "profile_id": {
+            "enum": [
+              "sales-orchestrator",
+              "market-account-intelligence",
+              "contact-data-steward",
+              "qualification-prioritization",
+              "outreach-draft-manager",
+              "commercial-qa-compliance"
+            ]
+          },
+          "instruction": { "type": "string", "minLength": 1, "maxLength": 16384 },
+          "evidence": { "type": "string", "maxLength": 131072 },
+          "depends_on": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "format": "uuid" }
+          },
+          "usage_value_reservation_usd": { "const": 0.1 },
+          "maximum_tokens": { "type": "integer", "minimum": 24576, "maximum": 1000000 },
+          "maximum_api_calls": { "type": "integer", "minimum": 6, "maximum": 100 },
+          "max_attempts": { "type": "integer", "minimum": 1, "maximum": 2 }
+        }
+      }
+    }
+  }
+}

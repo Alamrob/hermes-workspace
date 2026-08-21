@@ -3,7 +3,10 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { after, before, describe, it } from 'node:test'
 import { Pool } from 'pg'
-import { assertSimulationKillSwitchActive } from '../src/broker-main.js'
+import {
+  assertSimulationKillSwitchActive,
+  assertSimulationSafetyBoundary,
+} from '../src/broker-main.js'
 import { runVersionedMigrations } from '../src/migration-runner.js'
 import { PostgresRuntimeRepository } from '../src/postgres-repository.js'
 
@@ -32,6 +35,7 @@ integration('PostgreSQL simulation safety seed', { concurrency: 1 }, () => {
         '006_sales_read_models',
         '007_usage_budget_ledger',
         '008_simulation_safety_seed',
+        '009_internal_automation',
       ].map(async (version) => ({
         version,
         sql: await readFile(
@@ -52,6 +56,70 @@ integration('PostgreSQL simulation safety seed', { concurrency: 1 }, () => {
     await admin.end()
   })
 
+  it('seeds every external channel fail-closed and exposes closed execution projections', async () => {
+    await runVersionedMigrations(pool, sources)
+    const channels = await pool.query<{ scope_id: string; active: boolean }>(
+      `SELECT scope_id,active
+         FROM control.kill_switches
+        WHERE scope='channel'
+        ORDER BY scope_id`,
+    )
+    assert.deepEqual(channels.rows, [
+      { scope_id: 'calendar', active: true },
+      { scope_id: 'crm', active: true },
+      { scope_id: 'email', active: true },
+      { scope_id: 'public_web', active: true },
+      { scope_id: 'telephone', active: true },
+      { scope_id: 'web_chat', active: true },
+      { scope_id: 'whatsapp', active: true },
+    ])
+    assert.equal(
+      (await pool.query(`SELECT control.external_actions_blocked() AS blocked`))
+        .rows[0].blocked,
+      true,
+    )
+    await assertSimulationSafetyBoundary(
+      new PostgresRuntimeRepository(pool),
+      false,
+    )
+    const missingMission = randomUUID()
+    assert.deepEqual(
+      (
+        await pool.query(`SELECT control.get_mission_execution($1) AS value`, [
+          missingMission,
+        ])
+      ).rows[0].value,
+      { mission_id: missingMission, status: 'completed', assignments: [] },
+    )
+
+    const rollback = await readFile(
+      new URL('../migrations/009_internal_automation.rollback.sql', import.meta.url),
+      'utf8',
+    )
+    await pool.query(rollback)
+    assert.equal(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count
+             FROM control.kill_switches
+            WHERE scope='channel' AND active`,
+        )
+      ).rows[0].count,
+      7,
+    )
+    assert.equal(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count
+             FROM control.schema_migrations
+            WHERE version='009_internal_automation'`,
+        )
+      ).rows[0].count,
+      0,
+    )
+    await runVersionedMigrations(pool, sources)
+  })
+
   it('starts fresh simulation safe, preserves safety on rollback, and never overwrites an existing false', async () => {
     await runVersionedMigrations(pool, sources)
     assert.deepEqual(await globalSwitch(pool), {
@@ -65,7 +133,7 @@ integration('PostgreSQL simulation safety seed', { concurrency: 1 }, () => {
           `SELECT count(*)::int AS count FROM control.schema_migrations`,
         )
       ).rows[0].count,
-      8,
+      9,
     )
 
     const rollback = await readFile(

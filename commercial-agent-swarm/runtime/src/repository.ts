@@ -39,6 +39,7 @@ export interface RuntimeRepository {
     now: string
   }): Promise<ApprovalGrantRecord | null>
   isKillSwitchActive(input: { missionId: string; channel: string }): Promise<boolean>
+  externalActionsBlocked(): Promise<boolean>
   claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string; actionHash: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string; approval_id: string }>
   completeExternalAction(input: { missionId: string; idempotencyKey: string; actionHash: string; receipt_id: string; approval_id: string }): Promise<void>
 }
@@ -174,6 +175,18 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
       this.killSwitches.has(`mission:${input.missionId}`) ||
       this.killSwitches.has(`channel:${input.channel}`)
     )
+  }
+
+  async externalActionsBlocked(): Promise<boolean> {
+    return [
+      'email',
+      'whatsapp',
+      'calendar',
+      'web_chat',
+      'telephone',
+      'crm',
+      'public_web',
+    ].every((channel) => this.killSwitches.has(`channel:${channel}`))
   }
 
   async claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string; actionHash: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string; approval_id: string }> {
