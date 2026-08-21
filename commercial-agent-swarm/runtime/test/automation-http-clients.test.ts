@@ -56,7 +56,7 @@ function environment(): Record<string, string | undefined> {
     WORK_ORDER_HMAC_SECRET_FILE: '/run/secrets/work-order-hmac',
     PAPERCLIP_COMPANY_ID: company, PAPERCLIP_PROJECT_ID: project,
     PAPERCLIP_API_BASE: 'http://paperclip:3100', BROKER_API_BASE: 'http://broker:8080',
-    WORK_ORDER_ISSUER: 'codex', WORK_ORDER_AUDIENCE: 'hermes-commercial-orchestrator',
+    WORK_ORDER_ISSUER: 'proptimiza-commercial-broker', WORK_ORDER_AUDIENCE: 'proptimiza-hermes-executor',
     WORK_ORDER_KEY_ID: 'control-key-1',
   }
 }

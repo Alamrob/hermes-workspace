@@ -33,8 +33,8 @@ export function loadCommercialAutomationConfig(environment: Record<string, strin
   const projectId = requiredUuid(environment.PAPERCLIP_PROJECT_ID, 'PAPERCLIP_PROJECT_ID')
   if (environment.PAPERCLIP_API_BASE !== 'http://paperclip:3100') throw new Error('PAPERCLIP_API_BASE_INVALID')
   if (environment.BROKER_API_BASE !== 'http://broker:8080') throw new Error('BROKER_API_BASE_INVALID')
-  if (environment.WORK_ORDER_ISSUER !== 'codex') throw new Error('WORK_ORDER_ISSUER_INVALID')
-  if (environment.WORK_ORDER_AUDIENCE !== 'hermes-commercial-orchestrator') throw new Error('WORK_ORDER_AUDIENCE_INVALID')
+  if (environment.WORK_ORDER_ISSUER !== 'proptimiza-commercial-broker') throw new Error('WORK_ORDER_ISSUER_INVALID')
+  if (environment.WORK_ORDER_AUDIENCE !== 'proptimiza-hermes-executor') throw new Error('WORK_ORDER_AUDIENCE_INVALID')
   const keyId = environment.WORK_ORDER_KEY_ID
   if (!keyId || !/^[A-Za-z0-9._:-]{1,128}$/.test(keyId)) throw new Error('WORK_ORDER_KEY_ID_INVALID')
   return {
