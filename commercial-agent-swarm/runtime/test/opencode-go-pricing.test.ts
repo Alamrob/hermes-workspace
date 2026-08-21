@@ -43,13 +43,13 @@ describe('versioned OpenCode Go pricing', () => {
       new Date('2026-08-16T12:00:00Z'),
     )
 
-    assert.equal(OPENCODE_GO_PRICING_SNAPSHOT.id, 'opencode-go-2026-08-16-v1')
+    assert.equal(OPENCODE_GO_PRICING_SNAPSHOT.id, 'opencode-go-2026-08-21-v2')
     assert.deepEqual(priced.cost, {
       status: 'known',
-      usage_value_usd: 0.4228,
+      usage_value_usd: 0.887,
       cash_cost_usd: 0,
       source: 'official_docs_snapshot',
-      pricing_snapshot_id: 'opencode-go-2026-08-16-v1',
+      pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
     })
   })
 
@@ -71,28 +71,31 @@ describe('versioned OpenCode Go pricing', () => {
     )
   })
 
-  it('checks the output-token reservation, then blocks while cache-write pricing is unpublished', () => {
-    assert.throws(
-      () =>
-        assertOpenCodeGoExecutionPreflight(
-          {
-            maximum_tokens: 24_576,
-            budget_reservation: { currency: 'USD', amount: 0.006882 },
-          },
-          new Date('2026-08-16T12:00:00Z'),
-        ),
-      /OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN/,
+  it('reserves against peak output pricing while retaining post-run cache-write protection', () => {
+    assert.doesNotThrow(() =>
+      assertOpenCodeGoExecutionPreflight(
+        {
+          maximum_tokens: 24_576,
+          budget_reservation: { currency: 'USD', amount: 0.032441 },
+        },
+        new Date('2026-08-21T12:00:00Z'),
+      ),
     )
     assert.throws(
       () =>
         assertOpenCodeGoExecutionPreflight(
           {
             maximum_tokens: 24_576,
-            budget_reservation: { currency: 'USD', amount: 0.006881 },
+            budget_reservation: { currency: 'USD', amount: 0.03244 },
           },
           new Date('2026-08-16T12:00:00Z'),
         ),
       /OPENCODE_GO_RESERVATION_TOO_LOW/,
     )
+  })
+
+  it('uses the published peak window in UTC', () => {
+    const priced = priceOpenCodeGoUsage(usage(), new Date('2026-08-21T07:00:00Z'))
+    assert.equal(priced.cost.usage_value_usd, 1.774)
   })
 })

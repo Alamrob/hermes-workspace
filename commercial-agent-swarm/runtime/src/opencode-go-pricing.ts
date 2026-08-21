@@ -4,16 +4,23 @@ const PICODOLLARS_PER_USD = 1_000_000_000_000n
 const PICODOLLARS_PER_MICRODOLLAR = 1_000_000n
 
 export const OPENCODE_GO_PRICING_SNAPSHOT = Object.freeze({
-  id: 'opencode-go-2026-08-16-v1',
+  id: 'opencode-go-2026-08-21-v2',
   source: 'https://opencode.ai/docs/go/',
-  captured_at: '2026-08-16T00:00:00Z',
+  captured_at: '2026-08-21T00:00:00Z',
   revalidate_after: '2026-08-31T23:59:59Z',
   model: 'deepseek-v4-flash',
   provider: 'custom:deepseek-v4-flash',
-  picodollars_per_token: Object.freeze({
-    input: 140_000n,
-    output: 280_000n,
-    cache_read: 2_800n,
+  peak_hours_utc: Object.freeze([[1, 4], [6, 10]] as const),
+  off_peak_picodollars_per_token: Object.freeze({
+    input: 220_000n,
+    output: 660_000n,
+    cache_read: 7_000n,
+    cache_write: null,
+  }),
+  peak_picodollars_per_token: Object.freeze({
+    input: 440_000n,
+    output: 1_320_000n,
+    cache_read: 14_000n,
     cache_write: null,
   }),
 })
@@ -36,7 +43,7 @@ export function priceOpenCodeGoUsage(
     throw new Error('OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN')
   }
 
-  const rates = OPENCODE_GO_PRICING_SNAPSHOT.picodollars_per_token
+  const rates = ratesAt(now)
   const totalPicodollars =
     BigInt(usage.tokens.input) * rates.input +
     BigInt(usage.tokens.output) * rates.output +
@@ -71,7 +78,7 @@ export function assertOpenCodeGoExecutionPreflight(
   assertSnapshotCurrent(now)
   const worstCasePicodollars =
     BigInt(reservation.maximum_tokens) *
-    OPENCODE_GO_PRICING_SNAPSHOT.picodollars_per_token.output
+    OPENCODE_GO_PRICING_SNAPSHOT.peak_picodollars_per_token.output
   const requiredMicrodollars =
     (worstCasePicodollars + PICODOLLARS_PER_MICRODOLLAR - 1n) /
     PICODOLLARS_PER_MICRODOLLAR
@@ -81,9 +88,16 @@ export function assertOpenCodeGoExecutionPreflight(
   if (reservedMicrodollars < requiredMicrodollars) {
     throw new Error('OPENCODE_GO_RESERVATION_TOO_LOW')
   }
-  if (OPENCODE_GO_PRICING_SNAPSHOT.picodollars_per_token.cache_write === null) {
-    throw new Error('OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN')
-  }
+}
+
+function ratesAt(now: Date) {
+  const hour = now.getUTCHours()
+  const peak = OPENCODE_GO_PRICING_SNAPSHOT.peak_hours_utc.some(
+    ([start, end]) => hour >= start && hour < end,
+  )
+  return peak
+    ? OPENCODE_GO_PRICING_SNAPSHOT.peak_picodollars_per_token
+    : OPENCODE_GO_PRICING_SNAPSHOT.off_peak_picodollars_per_token
 }
 
 function assertSnapshotCurrent(now: Date): void {

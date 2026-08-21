@@ -152,14 +152,14 @@ describe('isolated Hermes executor', () => {
     assert.equal(envelope.agent_result.cost.total, 0)
     assert.equal(
       envelope.agent_result.metrics.provider_usage_value_usd,
-      0.0000028,
+      0.0000055,
     )
     assert.deepEqual(envelope.usage.cost, {
       status: 'known',
-      usage_value_usd: 0.0000028,
+      usage_value_usd: 0.0000055,
       cash_cost_usd: 0,
       source: 'official_docs_snapshot',
-      pricing_snapshot_id: 'opencode-go-2026-08-16-v1',
+      pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
     })
     const invocation = state.runner.invocations[0]
     assert.equal(invocation.command, '/opt/hermes/.venv/bin/hermes')
@@ -243,12 +243,9 @@ describe('isolated Hermes executor', () => {
     )
     assert.equal(underfunded.runner.invocations.length, 0)
 
-    const unpricedCacheWrite = await setup({ productionPricing: true })
-    await assert.rejects(
-      unpricedCacheWrite.executor.execute(input()),
-      /OPENCODE_GO_CACHE_WRITE_PRICE_UNKNOWN/,
-    )
-    assert.equal(unpricedCacheWrite.runner.invocations.length, 0)
+    const current = await setup({ productionPricing: true })
+    await current.executor.execute(input())
+    assert.equal(current.runner.invocations.length, 1)
   })
 
   it('wraps prompt injection as untrusted data and never enables forbidden flags', async () => {

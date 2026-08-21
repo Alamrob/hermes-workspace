@@ -44,7 +44,7 @@ function envelope(): ExecutorEnvelope {
       actions_taken: [], external_changes: [], evidence: [], artifacts: [],
       metrics: {
         provider_usage_value_usd: 0.01, cash_cost_usd: 0,
-        pricing_snapshot_id: 'opencode-go-2026-08-16-v1',
+        pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
         pricing_source: 'official_docs_snapshot',
       },
       cost: { currency: 'USD', llm: 0, tools: 0, total: 0, input_tokens: 1, output_tokens: 2 },
@@ -57,7 +57,7 @@ function envelope(): ExecutorEnvelope {
       completed: true, failed: false,
       cost: {
         status: 'known', usage_value_usd: 0.01, cash_cost_usd: 0,
-        source: 'official_docs_snapshot', pricing_snapshot_id: 'opencode-go-2026-08-16-v1',
+        source: 'official_docs_snapshot', pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
       },
     },
   }
