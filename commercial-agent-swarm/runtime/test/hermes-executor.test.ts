@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import { access, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { access, chmod, chown, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
   HermesExecutor,
+  PosixHomeOwnershipPreparer,
   classifyHermesExit,
   hashProfileSeed,
 } from '../src/hermes-executor.js'
@@ -19,6 +21,7 @@ const missionId = '123e4567-e89b-42d3-a456-426614174000'
 const traceId = '223e4567-e89b-42d3-a456-426614174000'
 const assignmentId = '323e4567-e89b-42d3-a456-426614174000'
 const profileId = 'market-account-intelligence' as const
+const rootLinux = process.platform === 'linux' && process.getuid?.() === 0
 function input(evidence = 'analyze public facts'): ExecuteInput {
   return {
     mission_id: missionId,
@@ -406,6 +409,33 @@ describe('isolated Hermes executor', () => {
       /HERMES_PROVIDER_ACCESS_REJECTED/,
     )
   })
+  it(
+    'makes only the ephemeral profile copy owner-writable for Hermes runtime state',
+    { skip: !rootLinux },
+    async () => {
+      const root = join(tmpdir(), `hermes-home-permissions-${randomUUID()}`)
+      const home = join(root, 'home')
+      const logs = join(home, 'logs')
+      const log = join(logs, 'agent.log')
+      await mkdir(logs, { recursive: true, mode: 0o700 })
+      await writeFile(log, '', { mode: 0o400 })
+      await chown(root, 0, 0)
+      await chmod(root, 0o700)
+      try {
+        await new PosixHomeOwnershipPreparer(root, 0, 0).prepare(
+          home,
+          10002,
+          10002,
+        )
+        const metadata = await lstat(log)
+        assert.equal(metadata.uid, 10002)
+        assert.equal(metadata.gid, 10002)
+        assert.equal(metadata.mode & 0o777, 0o600)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  )
   it('fails closed when cached-write pricing is unpublished', async () => {
     const state = await setup()
     state.runner.usage = {

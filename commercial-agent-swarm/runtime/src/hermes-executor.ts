@@ -514,7 +514,10 @@ export class PosixHomeOwnershipPreparer implements HomeOwnershipPreparer {
       if (metadata.isDirectory()) {
         await chmod(path, 0o710)
         await chown(path, uid, this.supervisorGid)
-      } else await chown(path, uid, gid)
+      } else {
+        await chown(path, uid, gid)
+        await chmod(path, 0o600)
+      }
     }
   }
 
