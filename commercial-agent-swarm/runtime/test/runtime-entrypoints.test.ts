@@ -122,6 +122,7 @@ function environment(enabled: boolean): Record<string, string> {
     OPENCODE_USAGE_RECONCILIATION_ENABLED: String(enabled),
     OPENCODE_USAGE_SERVICE_ACCOUNT_ID: 'service-account-proptimiza',
     OPENCODE_USAGE_TOKEN_FILE: '/run/secrets/opencode-usage-token',
+    OPENCODE_USAGE_PROXY_URL: 'http://egress-proxy:3128',
   }
 }
 

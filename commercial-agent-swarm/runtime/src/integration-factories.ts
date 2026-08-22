@@ -1,4 +1,5 @@
 import type { TelegramTransport } from './approvals.js'
+import { ProxyAgent, fetch as undiciFetch } from 'undici'
 import { DisabledExternalMailTransport } from './disabled-transports.js'
 import {
   FeatureGatedHostingerMailTransport,
@@ -17,6 +18,7 @@ type Environment = Record<string, string | undefined>
 // The Usage export credential belongs to the broker service, never the Hermes
 // executor supervisor or its child.
 export const OPENCODE_USAGE_SERVICE_GID = 10001
+export const OPENCODE_USAGE_PROXY_URL = 'http://egress-proxy:3128'
 
 interface KillSwitchPort {
   isActive(input: { missionId: string; channel: string }): Promise<boolean>
@@ -95,9 +97,14 @@ export function createOpenCodeUsageProbeFromEnvironment(
   if (!serviceAccountId || !/^[A-Za-z0-9._:-]{8,256}$/.test(serviceAccountId))
     throw new Error('OPENCODE_USAGE_SERVICE_ACCOUNT_INVALID')
   const tokenFile = secretPath(environment.OPENCODE_USAGE_TOKEN_FILE)
+  const proxyUrl = environment.OPENCODE_USAGE_PROXY_URL?.trim()
+  if (proxyUrl !== OPENCODE_USAGE_PROXY_URL)
+    throw new Error('OPENCODE_USAGE_PROXY_INVALID')
   const readToken = dependencies.readToken ?? readGroupSecretFile
   const client = new OpenCodeUsageExportClient({
-    reader: dependencies.reader ?? new FetchOpenCodeUsageExportReader(),
+    reader:
+      dependencies.reader ??
+      new FetchOpenCodeUsageExportReader({ fetch: createProxyFetch(proxyUrl) }),
     readToken: () => readToken(tokenFile, OPENCODE_USAGE_SERVICE_GID),
   })
   return {
@@ -105,6 +112,15 @@ export function createOpenCodeUsageProbeFromEnvironment(
     serviceAccountId,
     probe: new OpenCodeUsageProbe({ client }),
   }
+}
+
+function createProxyFetch(proxyUrl: typeof OPENCODE_USAGE_PROXY_URL): typeof fetch {
+  const dispatcher = new ProxyAgent(proxyUrl)
+  return ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
+    undiciFetch(input as Parameters<typeof undiciFetch>[0], {
+      ...(init as Parameters<typeof undiciFetch>[1]),
+      dispatcher,
+    }) as unknown as Promise<Response>) as typeof fetch
 }
 
 function flag(environment: Environment, name: string): boolean {

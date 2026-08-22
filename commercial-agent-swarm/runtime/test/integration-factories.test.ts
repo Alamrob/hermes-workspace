@@ -48,6 +48,7 @@ describe('disabled-default integration factories', () => {
         NODE_ENV: 'production', OPENCODE_USAGE_RECONCILIATION_ENABLED: 'true',
         OPENCODE_USAGE_SERVICE_ACCOUNT_ID: 'service-account-proptimiza',
         OPENCODE_USAGE_TOKEN_FILE: '/run/secrets/opencode-usage-token',
+        OPENCODE_USAGE_PROXY_URL: 'http://egress-proxy:3128',
       },
       {
         readToken: async (path, expectedGid) => {
@@ -70,6 +71,15 @@ describe('disabled-default integration factories', () => {
         OPENCODE_USAGE_TOKEN: 'raw-secret',
       }),
       /OPENCODE_USAGE_RAW_TOKEN_FORBIDDEN/,
+    )
+    assert.throws(
+      () => createOpenCodeUsageProbeFromEnvironment({
+        NODE_ENV: 'production', OPENCODE_USAGE_RECONCILIATION_ENABLED: 'true',
+        OPENCODE_USAGE_SERVICE_ACCOUNT_ID: 'service-account-proptimiza',
+        OPENCODE_USAGE_TOKEN_FILE: '/run/secrets/opencode-usage-token',
+        OPENCODE_USAGE_PROXY_URL: 'http://attacker.invalid:3128',
+      }),
+      /OPENCODE_USAGE_PROXY_INVALID/,
     )
   })
 })
