@@ -79,8 +79,8 @@ describe('synthetic Usage smoke mission', () => {
       evidence: JSON.stringify({ trust: 'untrusted_data', synthetic: true, external_actions_allowed: 0 }),
       depends_on: [],
       usage_value_reservation_usd: 0.1,
-      maximum_tokens: 4096,
-      maximum_api_calls: 1,
+      maximum_tokens: 24_576,
+      maximum_api_calls: 6,
       max_attempts: 1,
     })
     assert.deepEqual(result, { status: 'completed', mission_id: runId, artifact_sha256: 'a'.repeat(64), external_actions: 0 })

@@ -66,8 +66,11 @@ export class UsageSmoke {
           evidence: JSON.stringify({ trust: 'untrusted_data', synthetic: true, external_actions_allowed: 0 }),
           depends_on: [],
           usage_value_reservation_usd: 0.1,
-          maximum_tokens: 4_096,
-          maximum_api_calls: 1,
+          // The assignment contract budgets one 4,096-token turn across the
+          // profile's six-turn ceiling. The executor still runs only this one
+          // assignment and Usage reconciliation proves the actual request.
+          maximum_tokens: 24_576,
+          maximum_api_calls: 6,
           max_attempts: 1,
         },
       ],
@@ -149,4 +152,3 @@ export class UsageSmoke {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
