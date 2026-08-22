@@ -186,7 +186,10 @@ const EXPECTED_FUNCTIONS: Record<
     'control.get_mission_execution(uuid)',
     'control.get_dispatch_dependency_evidence(uuid)',
   ],
-  commercial_work_order_ingestor: ['control.save_mission(uuid,text,jsonb)'],
+  commercial_work_order_ingestor: [
+    'control.save_mission(uuid,text,jsonb)',
+    'control.create_instruction_request(uuid,text,text,text,text,text,text,text,text,timestamp with time zone,timestamp with time zone,jsonb)',
+  ],
   commercial_approver: [
     'control.get_pending_approval(uuid)',
     'control.decide_approval(uuid,text,text,timestamptz,text,text,timestamptz,jsonb,text,timestamptz)',

@@ -1,4 +1,5 @@
 import { ApprovalError, type ApprovalBroker } from './approvals.js'
+import { createHash } from 'node:crypto'
 import type {
   ApprovalChannel,
   ApprovalModeCoordinator,
@@ -48,6 +49,7 @@ interface ApplicationOptions {
     controlPlane: string
     connector: string
     internal: string
+    instructionInbox: string
     approvalGateways: Record<
       ApprovalChannel,
       { bearer: string; actors: string[] }
@@ -128,6 +130,25 @@ export class BrokerApplication {
       requireBearer(request.headers?.authorization, this.options.authentication.internal)
       const mission = await this.options.repository.getMission(route.id!)
       return mission ? { status: 200, body: redactMission(mission) } : { status: 404, body: { error: 'not_found' } }
+    }
+    if (route.action === 'createInstructionRequest') {
+      requireBearer(
+        request.headers?.authorization,
+        this.options.authentication.instructionInbox,
+      )
+      const instruction = validateInstructionRequest(request.body, this.now())
+      const result = await this.options.repository.createInstructionRequest({
+        ...instruction,
+        instruction_sha256: createHash('sha256')
+          .update(instruction.instruction, 'utf8')
+          .digest('hex'),
+        metadata: {
+          trust_classification: 'authenticated_user_instruction',
+          execution_eligible: false,
+          codex_review_required: true,
+        },
+      })
+      return { status: result.created ? 201 : 200, body: result }
     }
     if (route.action === 'getMissionExecution') {
       requireBearer(request.headers?.authorization, this.options.authentication.internal)
@@ -278,6 +299,8 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/internal/v1/read-model/portfolio')
     return { action: 'getPortfolioReadModel', auditAction: 'read_model.portfolio' }
   if (method === 'POST' && path === '/v1/work-orders') return { action: 'createWorkOrder', auditAction: 'work_order.create' }
+  if (method === 'POST' && path === '/v1/instruction-requests')
+    return { action: 'createInstructionRequest', auditAction: 'instruction_request.create' }
   if (method === 'POST' && path === '/v1/approvals/requests') return { action: 'requestApproval', auditAction: 'approval.request' }
   if (method === 'POST' && path === '/v1/mail/send') return { action: 'sendMail', auditAction: 'mail.send' }
   const mission = /^\/v1\/missions\/([^/]+)$/.exec(path)
@@ -388,6 +411,72 @@ function validateEvidenceDecision(value: unknown): {
   }
 }
 
+function validateInstructionRequest(
+  value: unknown,
+  now: Date,
+): {
+  request_id: string
+  idempotency_key: string
+  project_id: 'proptimiza'
+  title: string
+  instruction: string
+  requested_by: string
+  source: 'workspace' | 'sales'
+  autonomy_ceiling: 'A0' | 'A1' | 'A2'
+  created_at: string
+  expires_at: string
+} {
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw new ValidationError(['instruction request must be an object'])
+  const record = value as Record<string, unknown>
+  const allowed = new Set([
+    'request_id','idempotency_key','project_id','title','instruction',
+    'requested_by','source','autonomy_ceiling','created_at','expires_at',
+    'requires_codex_review','external_actions_allowed',
+  ])
+  const requestId = string(record.request_id)
+  const idempotencyKey = string(record.idempotency_key)
+  const title = string(record.title).trim()
+  const instruction = string(record.instruction).trim()
+  const requestedBy = string(record.requested_by)
+  const created = Date.parse(string(record.created_at))
+  const expires = Date.parse(string(record.expires_at))
+  const secretPattern = /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk|oc_sk)-[A-Za-z0-9_-]{16,}|\bBearer\s+[A-Za-z0-9._~-]{20,}/i
+  if (
+    Object.keys(record).some((field) => !allowed.has(field)) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId) ||
+    !/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey) ||
+    record.project_id !== 'proptimiza' ||
+    title.length < 1 || title.length > 160 || /[\u0000-\u001f\u007f]/.test(title) ||
+    instruction.length < 1 || instruction.length > 8_000 || secretPattern.test(instruction) ||
+    !/^[A-Za-z0-9._:@+-]{3,254}$/.test(requestedBy) ||
+    (record.source !== 'workspace' && record.source !== 'sales') ||
+    !['A0','A1','A2'].includes(string(record.autonomy_ceiling)) ||
+    !Number.isFinite(created) || !Number.isFinite(expires) ||
+    created < now.getTime() - 86_400_000 || created > now.getTime() + 300_000 ||
+    expires <= created || expires > created + 30 * 86_400_000 ||
+    record.requires_codex_review !== true ||
+    record.external_actions_allowed !== false
+  )
+    throw new ValidationError(['instruction request is invalid'])
+  return {
+    request_id: requestId,
+    idempotency_key: idempotencyKey,
+    project_id: 'proptimiza',
+    title,
+    instruction,
+    requested_by: requestedBy,
+    source: record.source,
+    autonomy_ceiling: record.autonomy_ceiling as 'A0' | 'A1' | 'A2',
+    created_at: new Date(created).toISOString(),
+    expires_at: new Date(expires).toISOString(),
+  }
+}
+
+function string(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
 function resolveApprovalChannel(
   authorization: string | undefined,
   gateways: Record<ApprovalChannel, { bearer: string; actors: string[] }>,
@@ -451,7 +540,7 @@ function publicFailure(error: unknown): {
   }
   if (
     error instanceof Error &&
-    ['IDEMPOTENCY_CONFLICT', 'EXECUTION_IN_PROGRESS', 'APPROVAL_GRANT_CONFLICT'].includes(
+    ['IDEMPOTENCY_CONFLICT', 'INSTRUCTION_IDEMPOTENCY_CONFLICT', 'EXECUTION_IN_PROGRESS', 'APPROVAL_GRANT_CONFLICT'].includes(
       error.message,
     )
   )

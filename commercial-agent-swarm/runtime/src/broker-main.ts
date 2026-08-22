@@ -76,6 +76,7 @@ export async function startSimulationBroker(
         controlPlane: secrets.controlPlane,
         connector: secrets.connector,
         internal: secrets.internal,
+        instructionInbox: secrets.instructionInbox,
         approvalGateways: {
           sales: {
             bearer: secrets.approvalSalesGateway,

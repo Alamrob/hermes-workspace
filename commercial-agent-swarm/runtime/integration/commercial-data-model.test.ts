@@ -26,12 +26,24 @@ const CRM_MIGRATION = new URL(
   '../migrations/004_crm_integration.sql',
   import.meta.url,
 )
+const PORTFOLIO_READ_MODELS_MIGRATION = new URL(
+  '../migrations/005_portfolio_read_models.sql',
+  import.meta.url,
+)
+const SALES_READ_MODELS_MIGRATION = new URL(
+  '../migrations/006_sales_read_models.sql',
+  import.meta.url,
+)
 const USAGE_BUDGET_MIGRATION = new URL(
   '../migrations/007_usage_budget_ledger.sql',
   import.meta.url,
 )
 const INTERNAL_AUTOMATION_MIGRATION = new URL(
   '../migrations/009_internal_automation.sql',
+  import.meta.url,
+)
+const INSTRUCTION_INBOX_MIGRATION = new URL(
+  '../migrations/010_instruction_inbox.sql',
   import.meta.url,
 )
 const integration = ADMIN_URL ? describe : describe.skip
@@ -515,8 +527,11 @@ integration('commercial catalog/control/mail data model', () => {
   it('verifies distinct live login principals and rejects inherited or direct cross-capabilities', async () => {
     await pool.query(await readFile(DISPATCH_MIGRATION, 'utf8'))
     await pool.query(await readFile(CRM_MIGRATION, 'utf8'))
+    await pool.query(await readFile(PORTFOLIO_READ_MODELS_MIGRATION, 'utf8'))
+    await pool.query(await readFile(SALES_READ_MODELS_MIGRATION, 'utf8'))
     await pool.query(await readFile(USAGE_BUDGET_MIGRATION, 'utf8'))
     await pool.query(await readFile(INTERNAL_AUTOMATION_MIGRATION, 'utf8'))
+    await pool.query(await readFile(INSTRUCTION_INBOX_MIGRATION, 'utf8'))
     const suffix = randomUUID().replaceAll('-', ''),
       password = `test_${suffix}`,
       names = {

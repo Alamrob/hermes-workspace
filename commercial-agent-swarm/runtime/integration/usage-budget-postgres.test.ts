@@ -32,6 +32,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       '007_usage_budget_ledger',
       '008_simulation_safety_seed',
       '009_internal_automation',
+      '010_instruction_inbox',
     ]
     await runVersionedMigrations(leftPool, await Promise.all(versions.map(async (version) => ({
       version,

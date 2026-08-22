@@ -25,6 +25,7 @@ export interface RuntimeRepository {
   ready(): Promise<boolean>
   getPortfolioReadModel(): Promise<PortfolioReadModel>
   saveMission(record: MissionRecord): Promise<void>
+  createInstructionRequest(record: InstructionRequestRecord): Promise<InstructionRequestResult>
   getMission(id: string): Promise<MissionRecord | null>
   isMissionA3Enabled(id: string): Promise<boolean>
   deliveryPolicyAllows(action: ApprovalAction): Promise<boolean>
@@ -42,6 +43,34 @@ export interface RuntimeRepository {
   externalActionsBlocked(): Promise<boolean>
   claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string; actionHash: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string; approval_id: string }>
   completeExternalAction(input: { missionId: string; idempotencyKey: string; actionHash: string; receipt_id: string; approval_id: string }): Promise<void>
+}
+
+export interface InstructionRequestRecord {
+  request_id: string
+  idempotency_key: string
+  project_id: 'proptimiza'
+  title: string
+  instruction: string
+  instruction_sha256: string
+  requested_by: string
+  source: 'workspace' | 'sales'
+  autonomy_ceiling: 'A0' | 'A1' | 'A2'
+  created_at: string
+  expires_at: string
+  metadata: Record<string, unknown>
+}
+
+export interface InstructionRequestResult {
+  request_id: string
+  project_id: 'proptimiza'
+  title: string
+  status: 'pending_codex_review'
+  autonomy_ceiling: 'A0' | 'A1' | 'A2'
+  requires_codex_review: true
+  external_actions_allowed: false
+  created_at: string
+  expires_at: string
+  created: boolean
 }
 
 export interface WebhookEventRecord {
@@ -64,6 +93,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly approvals = new Map<string, ApprovalRequestRecord | ApprovalGrantRecord>()
   private readonly killSwitches = new Set<string>()
   private readonly missions = new Map<string, MissionRecord>()
+  private readonly instructionRequests = new Map<string, InstructionRequestRecord>()
   private readonly webhookEvents = new Map<string, WebhookEventRecord>()
   private readonly externalActions = new Map<string, { action_hash: string; channel: string; receipt_id?: string; approval_id?: string }>()
 
@@ -177,6 +207,27 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
     )
   }
 
+  async createInstructionRequest(
+    record: InstructionRequestRecord,
+  ): Promise<InstructionRequestResult> {
+    const current = this.instructionRequests.get(record.idempotency_key)
+    if (current) {
+      if (
+        current.request_id !== record.request_id ||
+        current.project_id !== record.project_id ||
+        current.title !== record.title ||
+        current.instruction_sha256 !== record.instruction_sha256 ||
+        current.requested_by !== record.requested_by ||
+        current.source !== record.source ||
+        current.autonomy_ceiling !== record.autonomy_ceiling
+      )
+        throw new Error('INSTRUCTION_IDEMPOTENCY_CONFLICT')
+      return instructionResult(current, false)
+    }
+    this.instructionRequests.set(record.idempotency_key, structuredClone(record))
+    return instructionResult(record, true)
+  }
+
   async externalActionsBlocked(): Promise<boolean> {
     return [
       'email',
@@ -213,5 +264,23 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
     const current = this.externalActions.get(key)
     if (!current || current.action_hash !== input.actionHash) throw new Error('IDEMPOTENCY_CONFLICT')
     this.externalActions.set(key, { ...current, receipt_id: input.receipt_id, approval_id: input.approval_id })
+  }
+}
+
+function instructionResult(
+  record: InstructionRequestRecord,
+  created: boolean,
+): InstructionRequestResult {
+  return {
+    request_id: record.request_id,
+    project_id: record.project_id,
+    title: record.title,
+    status: 'pending_codex_review',
+    autonomy_ceiling: record.autonomy_ceiling,
+    requires_codex_review: true,
+    external_actions_allowed: false,
+    created_at: record.created_at,
+    expires_at: record.expires_at,
+    created,
   }
 }

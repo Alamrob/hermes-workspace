@@ -115,6 +115,7 @@ function setup(mode: ApprovalMode = 'either', ambiguousGateways = false, a3Admis
       authentication: {
         workOrders: { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' } },
         controlPlane: 'control-plane-token', connector: 'connector-token', internal: 'internal-token',
+        instructionInbox: 'instruction-inbox-token',
         approvalGateways: {
           sales: { bearer: 'sales-approval-token', actors: ['sales-director'] },
           telegram: { bearer: ambiguousGateways ? 'sales-approval-token' : 'telegram-approval-token', actors: ['telegram-user-1'] },
@@ -198,6 +199,23 @@ function assignmentPlan() {
 
 const headers = (token: string) => ({ authorization: `Bearer ${token}` })
 
+function instructionRequest() {
+  return {
+    request_id: '523e4567-e89b-42d3-a456-426614174000',
+    idempotency_key: 'workspace-instruction-0001',
+    project_id: 'proptimiza',
+    title: 'Revisar segmento de consultoras B2B',
+    instruction: 'Preparar una recomendación interna sustentada en evidencia pública. No contactar personas ni modificar sistemas.',
+    requested_by: 'proptimizaspa@gmail.com',
+    source: 'workspace',
+    autonomy_ceiling: 'A1',
+    created_at: NOW.toISOString(),
+    expires_at: new Date(NOW.getTime() + 7 * 86_400_000).toISOString(),
+    requires_codex_review: true,
+    external_actions_allowed: false,
+  }
+}
+
 function mailAction(): ApprovalAction {
   return {
     mission_id: validWorkOrder().mission_id,
@@ -218,6 +236,64 @@ function mailAction(): ApprovalAction {
 }
 
 describe('broker application routes', () => {
+  it('records an authenticated instruction as a non-executable Codex review request', async () => {
+    const state = setup()
+    const first = await state.app.handle({
+      method: 'POST',
+      path: '/v1/instruction-requests',
+      headers: headers('instruction-inbox-token'),
+      body: instructionRequest(),
+    })
+    assert.equal(first.status, 201)
+    assert.deepEqual(first.body, {
+      request_id: instructionRequest().request_id,
+      project_id: 'proptimiza',
+      title: instructionRequest().title,
+      status: 'pending_codex_review',
+      autonomy_ceiling: 'A1',
+      requires_codex_review: true,
+      external_actions_allowed: false,
+      created_at: instructionRequest().created_at,
+      expires_at: instructionRequest().expires_at,
+      created: true,
+    })
+    const replay = await state.app.handle({
+      method: 'POST', path: '/v1/instruction-requests',
+      headers: headers('instruction-inbox-token'), body: instructionRequest(),
+    })
+    assert.equal(replay.status, 200)
+    assert.equal((replay.body as any).created, false)
+    assert.equal(state.audit.events.at(-1)?.external_action, false)
+  })
+
+  it('rejects unauthenticated, executable, secret-bearing, and conflicting instructions', async () => {
+    const state = setup()
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/instruction-requests', body: instructionRequest(),
+    })).status, 401)
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/instruction-requests',
+      headers: headers('instruction-inbox-token'),
+      body: { ...instructionRequest(), external_actions_allowed: true },
+    })).status, 400)
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/instruction-requests',
+      headers: headers('instruction-inbox-token'),
+      body: { ...instructionRequest(), instruction: `Usa sk-${'a'.repeat(32)}` },
+    })).status, 400)
+    await state.app.handle({
+      method: 'POST', path: '/v1/instruction-requests',
+      headers: headers('instruction-inbox-token'), body: instructionRequest(),
+    })
+    const conflict = await state.app.handle({
+      method: 'POST', path: '/v1/instruction-requests',
+      headers: headers('instruction-inbox-token'),
+      body: { ...instructionRequest(), title: 'Otro título' },
+    })
+    assert.equal(conflict.status, 409)
+    assert.deepEqual(conflict.body, { error: 'INSTRUCTION_IDEMPOTENCY_CONFLICT' })
+  })
+
   it('rejects an unsigned work order before it can create a mission', async () => {
     const state = setup()
     const response = await state.app.handle({

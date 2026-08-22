@@ -6,6 +6,8 @@ import type {
   ApprovalGrantRecord,
   ApprovalRequestRecord,
   MissionRecord,
+  InstructionRequestRecord,
+  InstructionRequestResult,
   RuntimeRepository,
   WebhookEventRecord,
 } from './repository.js'
@@ -194,6 +196,33 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       [input.missionId, input.channel],
     )
     return result.rows[0]?.active === true
+  }
+
+  async createInstructionRequest(
+    record: InstructionRequestRecord,
+  ): Promise<InstructionRequestResult> {
+    const result = await this.ingestorPool.query<{ result: InstructionRequestResult }>(
+      `SELECT control.create_instruction_request(
+        $1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10::timestamptz,$11::timestamptz,$12::jsonb
+      ) AS result`,
+      [
+        record.request_id,
+        record.idempotency_key,
+        record.project_id,
+        record.title,
+        record.instruction,
+        record.instruction_sha256,
+        record.requested_by,
+        record.source,
+        record.autonomy_ceiling,
+        record.created_at,
+        record.expires_at,
+        JSON.stringify(record.metadata),
+      ],
+    )
+    const created = result.rows[0]?.result
+    if (!created) throw new Error('INSTRUCTION_REQUEST_UNAVAILABLE')
+    return created
   }
 
   async externalActionsBlocked(): Promise<boolean> {

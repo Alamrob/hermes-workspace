@@ -34,6 +34,7 @@ const environment = {
   APPROVAL_TELEGRAM_GATEWAY_BEARER_FILE: '/run/secrets/approval-telegram-gateway-bearer',
   CONNECTOR_BEARER_FILE: '/run/secrets/connector-bearer',
   INTERNAL_BEARER_FILE: '/run/secrets/internal-bearer',
+  INSTRUCTION_INBOX_BEARER_FILE: '/run/secrets/instruction-inbox-bearer',
   APPROVAL_HMAC_SECRET_FILE: '/run/secrets/approval-hmac',
   WORK_ORDER_ISSUER: 'codex-auditor',
   WORK_ORDER_AUDIENCE: 'proptimiza-hermes',
@@ -166,7 +167,8 @@ describe('Simulation broker entrypoint', () => {
         approvalTelegramGateway: 'd'.repeat(32),
         connector: 'e'.repeat(32),
         internal: 'f'.repeat(32),
-        approvalHmac: 'g'.repeat(32),
+        instructionInbox: 'g'.repeat(32),
+        approvalHmac: 'h'.repeat(32),
       }),
     )
     assert.throws(
@@ -178,6 +180,7 @@ describe('Simulation broker entrypoint', () => {
           approvalTelegramGateway: 'd'.repeat(32),
           connector: 'e'.repeat(32),
           internal: 'f'.repeat(32),
+          instructionInbox: 'g'.repeat(32),
           approvalHmac: 'a'.repeat(32),
         }),
       /APPLICATION_SECRETS_NOT_DISTINCT/,
