@@ -4,6 +4,7 @@ import {
   type UsageExecutionPhase,
 } from './opencode-usage-api.js'
 import { ExecutorTransportError } from './unix-executor-client.js'
+import type { ExecutorIpcPhase } from './unix-executor-client.js'
 import type { Pool } from 'pg'
 import type {
   ExecutorEnvelope,
@@ -76,6 +77,7 @@ export interface UsageProbePort {
 export type DispatchPhase =
   | 'claimed'
   | UsageExecutionPhase
+  | ExecutorIpcPhase
   | 'completed'
   | 'failed'
 

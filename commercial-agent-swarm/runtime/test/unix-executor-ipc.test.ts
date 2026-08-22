@@ -115,15 +115,41 @@ describe('Unix executor IPC', () => {
     })
     await server.start()
     try {
+      const phases: string[] = []
       const client = new UnixExecutorClient({
         socketPath: path,
         timeoutMs: 1_000,
+        connectTimeoutMs: 250,
+        onPhase: (phase) => phases.push(phase),
       })
       assert.deepEqual(await client.execute(input), envelope())
       assert.deepEqual(received, input)
+      assert.deepEqual(phases, [
+        'executor_ipc_client_start',
+        'executor_ipc_socket_created',
+        'executor_ipc_connected',
+        'executor_ipc_request_sent',
+        'executor_ipc_response_received',
+      ])
     } finally {
       await server.stop()
     }
+  })
+
+  it('classifies a pre-connect failure as proven not-started', async () => {
+    const path = socketPath()
+    await assert.rejects(
+      new UnixExecutorClient({
+        socketPath: path,
+        timeoutMs: 1_000,
+        connectTimeoutMs: 100,
+      }).execute(input),
+      (error: unknown) =>
+        error instanceof ExecutorTransportError &&
+        error.code === 'EXECUTOR_IPC_CONNECT_FAILED' &&
+        error.recoverable &&
+        error.executionState === 'not_started',
+    )
   })
 
   it('fails a concurrent request fast as transient EXECUTOR_BUSY', async () => {

@@ -21,21 +21,41 @@ export class ExecutorTransportError extends Error {
 export interface UnixExecutorClientOptions {
   socketPath: string
   timeoutMs: number
+  connectTimeoutMs?: number
+  onPhase?: (phase: ExecutorIpcPhase, input: ExecuteInput) => void
 }
+
+export type ExecutorIpcPhase =
+  | 'executor_ipc_client_start'
+  | 'executor_ipc_socket_created'
+  | 'executor_ipc_connected'
+  | 'executor_ipc_request_sent'
+  | 'executor_ipc_response_received'
 
 export class UnixExecutorClient implements ExecutorPort {
   constructor(private readonly options: UnixExecutorClientOptions) {
     if (!options.socketPath) throw new Error('EXECUTOR_SOCKET_PATH_REQUIRED')
     if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)
       throw new Error('EXECUTOR_CLIENT_TIMEOUT_REQUIRED')
+    const connectTimeoutMs = options.connectTimeoutMs ?? Math.min(5_000, options.timeoutMs)
+    if (
+      !Number.isSafeInteger(connectTimeoutMs) ||
+      connectTimeoutMs < 10 ||
+      connectTimeoutMs > options.timeoutMs
+    )
+      throw new Error('EXECUTOR_CONNECT_TIMEOUT_INVALID')
   }
 
   async execute(input: ExecuteInput): Promise<ExecutorEnvelope> {
+    this.emitPhase('executor_ipc_client_start', input)
     const requestId = randomUUID()
+    const frame = encodeFrame({ request_id: requestId, type: 'execute', ...input })
+    let connected = false
     const socket = createConnection({
       path: this.options.socketPath,
       allowHalfOpen: true,
     })
+    this.emitPhase('executor_ipc_socket_created', input)
     const strictEof = process.platform !== 'win32'
     const responsePromise = readSingleFrame(
       socket,
@@ -43,17 +63,21 @@ export class UnixExecutorClient implements ExecutorPort {
       this.options.timeoutMs,
       strictEof,
     )
-    socket.once('connect', () =>
-      strictEof
-        ? socket.end(
-            encodeFrame({ request_id: requestId, type: 'execute', ...input }),
-          )
-        : socket.write(
-            encodeFrame({ request_id: requestId, type: 'execute', ...input }),
-          ),
-    )
+    const connectTimer = setTimeout(() => {
+      socket.destroy(new Error('EXECUTOR_IPC_CONNECT_TIMEOUT'))
+    }, this.options.connectTimeoutMs ?? Math.min(5_000, this.options.timeoutMs))
+    socket.once('connect', () => {
+      connected = true
+      clearTimeout(connectTimer)
+      this.emitPhase('executor_ipc_connected', input)
+      if (strictEof) socket.end(frame)
+      else socket.write(frame)
+      this.emitPhase('executor_ipc_request_sent', input)
+    })
     try {
-      const response = validateResponse(await responsePromise, requestId, input)
+      const value = await responsePromise
+      this.emitPhase('executor_ipc_response_received', input)
+      const response = validateResponse(value, requestId, input)
       socket.end()
       if (!response.ok)
         throw new ExecutorTransportError(
@@ -63,13 +87,30 @@ export class UnixExecutorClient implements ExecutorPort {
         )
       return response.envelope
     } catch (error) {
+      clearTimeout(connectTimer)
       socket.destroy()
       if (error instanceof ExecutorTransportError) throw error
+      if (!connected)
+        throw new ExecutorTransportError(
+          error instanceof Error && error.message === 'EXECUTOR_IPC_CONNECT_TIMEOUT'
+            ? 'EXECUTOR_IPC_CONNECT_TIMEOUT'
+            : 'EXECUTOR_IPC_CONNECT_FAILED',
+          true,
+          'not_started',
+        )
       const code =
         error instanceof Error && error.message === 'IPC_FRAME_TIMEOUT'
           ? 'EXECUTOR_IPC_TIMEOUT'
           : 'EXECUTOR_IPC_LOST'
       throw new ExecutorTransportError(code, true, 'unknown')
+    }
+  }
+
+  private emitPhase(phase: ExecutorIpcPhase, input: ExecuteInput): void {
+    try {
+      this.options.onPhase?.(phase, input)
+    } catch {
+      // Observability must never change the executor transport state.
     }
   }
 }

@@ -51,6 +51,12 @@ export function createBrokerDispatcher(
       new UnixExecutorClient({
         socketPath: config.socketPath,
         timeoutMs: config.clientTimeoutMs,
+        onPhase: (phase, input) => dependencies.onPhase?.({
+          phase,
+          jobId: input.assignment_id,
+          missionId: input.mission_id,
+          profileId: input.profile_id,
+        }),
       }),
     workerId,
     leaseSeconds: config.leaseSeconds,
