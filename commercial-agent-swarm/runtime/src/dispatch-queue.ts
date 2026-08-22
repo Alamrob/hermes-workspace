@@ -178,7 +178,7 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
       profile_id: ProfileId
       instruction: string
       evidence: { trust: 'untrusted_data'; content: string }
-      maximum_tokens: number
+      maximum_tokens: string
       maximum_api_calls: number
       usage_value_reservation_usd: string
       usage_value_reservation_micro_cents: string
@@ -213,7 +213,7 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
           instruction: row.instruction,
           evidence,
           reservation: {
-            maximum_tokens: row.maximum_tokens,
+            maximum_tokens: integer(row.maximum_tokens),
             maximum_api_calls: row.maximum_api_calls,
             budget_reservation: {
               currency: 'USD',

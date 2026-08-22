@@ -152,6 +152,33 @@ describe('Unix executor IPC', () => {
     )
   })
 
+  it('echoes a valid request id when the remaining request contract is invalid', async () => {
+    const path = socketPath()
+    const server = new UnixExecutorServer({
+      socketPath: path,
+      executor: { execute: async () => envelope() },
+      frameTimeoutMs: 500,
+    })
+    await server.start()
+    try {
+      let caught: unknown
+      try {
+        await new UnixExecutorClient({ socketPath: path, timeoutMs: 1_000 }).execute({
+          ...input,
+          reservation: { ...input.reservation, maximum_tokens: 0 },
+        })
+      } catch (error) {
+        caught = error
+      }
+      assert.ok(caught instanceof ExecutorTransportError)
+      assert.equal(caught.code, 'INVALID_EXECUTOR_REQUEST')
+      assert.equal(caught.recoverable, false)
+      assert.equal(caught.executionState, 'not_started')
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('fails a concurrent request fast as transient EXECUTOR_BUSY', async () => {
     const path = socketPath()
     let release!: () => void

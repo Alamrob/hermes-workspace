@@ -65,16 +65,18 @@ export class UnixExecutorServer {
   private async handle(socket: Socket): Promise<void> {
     socket.on('error', () => {})
     let requestId = 'invalid-request'
+    let requestValidated = false
     try {
-      const request = validateExecuteRequest(
-        await readSingleFrame(
-          socket,
-          undefined,
-          this.options.frameTimeoutMs,
-          process.platform !== 'win32',
-        ),
+      const frame = await readSingleFrame(
+        socket,
+        undefined,
+        this.options.frameTimeoutMs,
+        process.platform !== 'win32',
       )
+      requestId = requestIdFromFrame(frame) ?? requestId
+      const request = validateExecuteRequest(frame)
       requestId = request.request_id
+      requestValidated = true
       if (this.busy) {
         socket.end(
           encodeFrame(
@@ -104,7 +106,7 @@ export class UnixExecutorServer {
         const executionState =
           error instanceof ExecutorExecutionError
             ? error.executionState
-            : requestId === 'invalid-request'
+            : !requestValidated
               ? 'not_started'
               : 'unknown'
         socket.end(
@@ -113,6 +115,18 @@ export class UnixExecutorServer {
       }
     }
   }
+}
+
+function requestIdFromFrame(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return undefined
+  const requestId = (value as Record<string, unknown>).request_id
+  return typeof requestId === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      requestId,
+    )
+    ? requestId
+    : undefined
 }
 
 async function removeBoundSocket(path: string): Promise<void> {

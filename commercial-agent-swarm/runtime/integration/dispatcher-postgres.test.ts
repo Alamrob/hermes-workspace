@@ -91,6 +91,8 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
     )
     const claim = await first.claim('drain', 60, 30)
     assert.equal(claim?.job_id, id)
+    assert.equal(claim?.reservation.maximum_tokens, 100)
+    assert.equal(typeof claim?.reservation.maximum_tokens, 'number')
     await first.fail(
       id,
       'drain',
