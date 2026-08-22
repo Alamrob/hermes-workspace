@@ -93,6 +93,33 @@ describe('CRM sync deployable process', () => {
     }
   })
 
+  it('limits shadow ingestion to the exact configured pilot stream', async () => {
+    const config = loadCrmSyncProcessConfig({
+      NODE_ENV: 'production', CRM_SYNC_MODE: 'shadow', CRM_SYNC_STREAMS: 'pilot_targets',
+      CRM_HEALTH_HOST: '0.0.0.0', CRM_HEALTH_PORT: '8081',
+      CRM_DATABASE_URL_FILE: '/run/secrets/crm-db',
+      TWENTY_API_TOKEN_FILE: '/run/secrets/twenty-token',
+      TWENTY_MAPPING_FILE: '/run/secrets/twenty-mapping',
+      TWENTY_API_ALLOWED_HOST: 'twenty-server:3000',
+      TWENTY_API_BASE_URL: 'http://twenty-server:3000',
+    })
+    const calls: string[] = []
+    const daemon = new CrmSyncDaemon({
+      mode: 'shadow', streams: config.streams, workerId: 'crm-worker-1', leaseSeconds: 60,
+      pollIntervalMs: 60_000, store: processStore(), client: client(calls),
+    })
+    assert.deepEqual(await daemon.runCycle(), { status: 'ok' })
+    assert.deepEqual(calls, ['inbound:pilot_targets'])
+    for (const value of ['', 'pilot_targets,pilot_targets', 'companies,unknown', ' companies'])
+      assert.throws(
+        () => loadCrmSyncProcessConfig({
+          NODE_ENV: 'production', CRM_SYNC_MODE: 'simulation', CRM_SYNC_STREAMS: value,
+          CRM_HEALTH_HOST: '127.0.0.1', CRM_HEALTH_PORT: '8081',
+        }),
+        /CRM_SYNC_STREAMS_INVALID/,
+      )
+  })
+
   it('fails configuration closed and applies bounded backoff/readiness after a cycle error', async () => {
     assert.throws(
       () => loadCrmSyncProcessConfig({ NODE_ENV: 'production', CRM_SYNC_MODE: 'pull-only' }),

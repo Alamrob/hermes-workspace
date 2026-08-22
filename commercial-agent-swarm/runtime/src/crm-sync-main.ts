@@ -48,6 +48,7 @@ export interface CrmProcessStorePort extends CrmSyncStorePort {
 
 export interface CrmSyncProcessConfig {
   mode: CrmSyncMode
+  streams: readonly CrmStream[]
   healthHost: '127.0.0.1' | '0.0.0.0'
   healthPort: number
   pollIntervalMs: 60_000
@@ -74,6 +75,7 @@ export function loadCrmSyncProcessConfig(
     throw new Error('CRM_SYNC_HEALTH_INVALID')
   const common = {
     mode: mode as CrmSyncMode,
+    streams: parseStreams(environment.CRM_SYNC_STREAMS),
     healthHost: host as '127.0.0.1' | '0.0.0.0',
     healthPort: port,
     pollIntervalMs: 60_000 as const,
@@ -108,6 +110,7 @@ export class CrmSyncDaemon {
 
   constructor(private readonly options: {
     mode: CrmSyncMode
+    streams?: readonly CrmStream[]
     workerId: string
     leaseSeconds: number
     pollIntervalMs: 60_000
@@ -121,7 +124,7 @@ export class CrmSyncDaemon {
     if (this.options.mode === 'simulation') return { status: 'disabled' }
     try {
       if (!(await this.options.store.ready())) throw new Error('not ready')
-      for (const stream of STREAMS) {
+      for (const stream of this.options.streams ?? STREAMS) {
         const cursor = await this.options.store.getCursor('twenty', stream)
         await syncTwentyInboundOnce({
           mode: this.options.mode,
@@ -184,6 +187,17 @@ export class CrmSyncDaemon {
     if (this.timer) clearTimeout(this.timer)
     await this.options.store.close?.()
   }
+}
+
+function parseStreams(value: string | undefined): readonly CrmStream[] {
+  if (value === undefined) return STREAMS
+  const requested = value.split(',')
+  if (
+    requested.length === 0 ||
+    requested.some((stream) => !STREAMS.includes(stream as CrmStream)) ||
+    new Set(requested).size !== requested.length
+  ) throw new Error('CRM_SYNC_STREAMS_INVALID')
+  return requested as CrmStream[]
 }
 
 interface RuntimeDependencies {
