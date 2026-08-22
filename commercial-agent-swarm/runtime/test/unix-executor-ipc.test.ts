@@ -417,6 +417,10 @@ describe('Unix executor IPC', () => {
       'HERMES_PROFILE_YAML_INVALID',
       'HERMES_PROFILE_CONFIG_INVALID',
       'HERMES_PROFILE_RUNTIME_ERROR',
+      'SIMULATION_EXTERNAL_CHANGE',
+      'SIMULATION_EXTERNAL_ACTION',
+      'APPROVED_EXECUTION_CHARGE_REQUIRED',
+      'HERMES_COST_RESERVATION_EXCEEDED',
     ]
     for (const code of codes) {
       const path = socketPath()

@@ -118,19 +118,25 @@ describe('canonical AgentResult reconciliation', () => {
     assert.equal(result.finished_at, '2026-08-16T08:00:01.000Z')
   })
 
-  it('rejects identity mismatch, unknown fields, external changes, and external actions in simulation', () => {
-    assert.throws(
-      () =>
-        reconcileAgentResult(
-          { ...raw, mission_id: crypto.randomUUID() },
-          identity,
-          usage,
-          { currency: 'USD', amount: 0.02 },
-          '2026-08-16T08:00:00Z',
-          '2026-08-16T08:00:01Z',
-        ),
-      /AGENT_RESULT_IDENTITY_MISMATCH/,
+  it('normalizes identity and rejects unknown fields, external changes, and external actions in simulation', () => {
+    const normalized = reconcileAgentResult(
+      {
+        ...raw,
+        mission_id: crypto.randomUUID(),
+        trace_id: crypto.randomUUID(),
+        assignment_id: crypto.randomUUID(),
+        agent_id: 'commercial-qa-compliance',
+      },
+      identity,
+      usage,
+      { currency: 'USD', amount: 0.02 },
+      '2026-08-16T08:00:00Z',
+      '2026-08-16T08:00:01Z',
     )
+    assert.equal(normalized.mission_id, identity.mission_id)
+    assert.equal(normalized.trace_id, identity.trace_id)
+    assert.equal(normalized.assignment_id, identity.assignment_id)
+    assert.equal(normalized.agent_id, identity.profile_id)
     assert.throws(
       () =>
         reconcileAgentResult(

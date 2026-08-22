@@ -69,17 +69,11 @@ export function reconcileAgentResult(
   finishedAt: string,
 ): AgentResult {
   if (!record(raw) || !exact(raw, [...AGENT_RESULT_TOP_LEVEL_KEYS])) invalid()
+  // Identity is transport-owned. The model is required to return the fields so
+  // malformed envelopes still fail closed, but it is never authoritative for
+  // mission, trace, assignment or profile identity. Always replace those four
+  // values with the signed executor request below.
   if (
-    raw.mission_id !== identity.mission_id ||
-    raw.trace_id !== identity.trace_id ||
-    raw.assignment_id !== identity.assignment_id ||
-    raw.agent_id !== identity.profile_id
-  )
-    throw new Error('AGENT_RESULT_IDENTITY_MISMATCH')
-  if (
-    !UUID.test(String(raw.mission_id)) ||
-    !UUID.test(String(raw.trace_id)) ||
-    !UUID.test(String(raw.assignment_id)) ||
     ![
       'completed',
       'partial',
