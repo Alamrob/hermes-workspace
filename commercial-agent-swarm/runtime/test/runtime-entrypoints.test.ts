@@ -9,7 +9,7 @@ import type {
 import type { ExecutorEnvelope } from '../src/hermes-executor.js'
 
 const HEADER =
-  'id,user_email,service_account_name,app,provider,model,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_5m_tokens,cache_write_1h_tokens,reasoning_effort,reasoning_mode,reasoning_budget_tokens,reasoning_source,billing_source,cost_micro_cents,created_at'
+  'id,user_email,service_account_name,app,provider,model,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_5m_tokens,cache_write_1h_tokens,reasoning_mode,reasoning_effort,reasoning_budget_tokens,reasoning_source,billing_source,cost_micro_cents,created_at'
 
 const claimed: ClaimedJob = {
   job_id: '323e4567-e89b-42d3-a456-426614174000',
@@ -130,8 +130,8 @@ describe('broker dispatcher factory', () => {
     const queue = new Queue()
     const calls: string[] = []
     const today = new Date().toISOString()
-    const baseline = `${HEADER}\nusage-old,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,4,3,0,0,0,0,none,disabled,0,none,go,1000,${today}\n`
-    const after = `${baseline}usage-new,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,1,2,0,0,0,0,none,disabled,0,none,go,1000000,${today}\n`
+    const baseline = `${HEADER}\nusage-old,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,4,3,0,0,0,0,disabled,none,0,none,go,1000,${today}\n`
+    const after = `${baseline}usage-new,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,1,2,0,0,0,0,disabled,none,0,none,go,1000000,${today}\n`
     let exports = 0
     const dispatcher = createBrokerDispatcher(
       environment(true),

@@ -13,9 +13,9 @@ import {
 import type { TrustedUsage } from '../src/executor-contract.js'
 
 const HEADER =
-  'id,user_email,service_account_name,app,provider,model,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_5m_tokens,cache_write_1h_tokens,reasoning_effort,reasoning_mode,reasoning_budget_tokens,reasoning_source,billing_source,cost_micro_cents,created_at'
-const BASELINE = `${HEADER}\nusage-1,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,10,5,0,1,0,0,none,disabled,0,none,go,100000,2026-08-16T11:59:00.000Z\n`
-const AFTER = `${BASELINE}usage-2,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,100,50,0,5,0,0,none,disabled,0,none,go,1234567,2026-08-16T12:00:01.000Z\n`
+  'id,user_email,service_account_name,app,provider,model,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_5m_tokens,cache_write_1h_tokens,reasoning_mode,reasoning_effort,reasoning_budget_tokens,reasoning_source,billing_source,cost_micro_cents,created_at'
+const BASELINE = `${HEADER}\nusage-1,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,10,5,0,1,0,0,disabled,none,0,none,go,100000,2026-08-16T11:59:00.000Z\n`
+const AFTER = `${BASELINE}usage-2,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,100,50,0,5,0,0,disabled,none,0,none,go,1234567,2026-08-16T12:00:01.000Z\n`
 
 const localUsage: TrustedUsage = {
   tokens: {
@@ -235,7 +235,7 @@ describe('read-only OpenCode Usage Export gate', () => {
   })
 
   it('fails closed when the post-export diff has zero or multiple records', async () => {
-    for (const after of [BASELINE, `${AFTER}usage-3,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,100,50,0,5,0,0,none,disabled,0,none,go,1,2026-08-16T12:00:02.000Z\n`]) {
+    for (const after of [BASELINE, `${AFTER}usage-3,,svc-proptimiza,hermes,opencode,deepseek-v4-flash,100,50,0,5,0,0,disabled,none,0,none,go,1,2026-08-16T12:00:02.000Z\n`]) {
       let exports = 0
       const gate = new OpenCodeUsageProbe({
         now: () => new Date('2026-08-16T12:05:00.000Z'),
