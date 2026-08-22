@@ -314,6 +314,11 @@ export class HermesExecutor implements ExecutorPort {
         throw new Error(
           classifyHermesExit(output.exitCode, output.stdout, output.stderr),
         )
+      await this.options.ownership.reclaim?.(
+        cwd,
+        ownerUid,
+        this.options.expectedOwnerGid ?? process.getgid?.() ?? ownerUid,
+      )
       let usagePayload: string
       try {
         usagePayload = await readSecureUsageFile(

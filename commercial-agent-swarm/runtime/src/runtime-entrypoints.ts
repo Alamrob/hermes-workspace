@@ -86,7 +86,7 @@ export function createExecutorServer(
     expectedTemporaryRoot: '/run/hermes-executor',
     expectedOwnerUid: config.executorUid,
     expectedOwnerGid: config.executorGid,
-    expectedUsageUid: config.executorUid,
+    expectedUsageUid: config.childUid,
     childUid: config.childUid,
     childGid: config.childGid,
     customApiKeyFile: config.customApiKeyFile,

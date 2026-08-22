@@ -160,6 +160,14 @@ async function setup(options: { productionPricing?: boolean } = {}) {
 }
 
 describe('isolated Hermes executor', () => {
+  it('binds trusted usage ownership to the isolated child identity', async () => {
+    const entrypoints = await readFile(
+      new URL('../src/runtime-entrypoints.ts', import.meta.url),
+      'utf8',
+    )
+    assert.match(entrypoints, /expectedUsageUid:\s*config\.childUid/)
+    assert.doesNotMatch(entrypoints, /expectedUsageUid:\s*config\.executorUid/)
+  })
   it('uses exact Hermes 0.20.1 argv, controlled cwd, non-root identity, filtered env, and cleanup', async () => {
     const state = await setup()
     const envelope = await state.executor.execute(input())
