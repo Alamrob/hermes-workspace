@@ -66,6 +66,14 @@ export interface OpenCodeUsageExportReadPort {
   }): Promise<string>
 }
 
+export type UsageExecutionPhase =
+  | 'usage_baseline_start'
+  | 'usage_baseline_complete'
+  | 'executor_start'
+  | 'executor_complete'
+  | 'usage_export_start'
+  | 'usage_export_complete'
+
 export class OpenCodeUsageProbeError extends Error {
   constructor(
     message: string,
@@ -183,6 +191,7 @@ export class OpenCodeUsageProbe {
     missionCommittedUsageValueMicroCents: number
     totalCommittedUsageValueMicroCents: number
     probe: () => Promise<TrustedUsage>
+    onPhase?: (phase: UsageExecutionPhase) => void
   }): Promise<{
     usage: TrustedUsage
     usageRecordId: string
@@ -213,13 +222,19 @@ export class OpenCodeUsageProbe {
       }
       let before: OpenCodeUsageRow[]
       try {
+        emitPhase(input.onPhase, 'usage_baseline_start')
         before = await this.options.client.export(query)
+        emitPhase(input.onPhase, 'usage_baseline_complete')
       } catch (error) {
         throw classifyProbeError(error, 'not_started')
       }
+      emitPhase(input.onPhase, 'executor_start')
       const usage = await input.probe()
+      emitPhase(input.onPhase, 'executor_complete')
       try {
+        emitPhase(input.onPhase, 'usage_export_start')
         const after = await this.options.client.export(query)
+        emitPhase(input.onPhase, 'usage_export_complete')
         const beforeIds = new Set(before.map((row) => row.id))
         if (
           beforeIds.size !== before.length ||
@@ -258,6 +273,17 @@ export class OpenCodeUsageProbe {
     } finally {
       this.busy = false
     }
+  }
+}
+
+function emitPhase(
+  observer: ((phase: UsageExecutionPhase) => void) | undefined,
+  phase: UsageExecutionPhase,
+): void {
+  try {
+    observer?.(phase)
+  } catch {
+    // Observability must never change the commercial execution state.
   }
 }
 

@@ -1,5 +1,8 @@
 import { hashAction } from './canonical.js'
-import { OpenCodeUsageProbeError } from './opencode-usage-api.js'
+import {
+  OpenCodeUsageProbeError,
+  type UsageExecutionPhase,
+} from './opencode-usage-api.js'
 import { ExecutorTransportError } from './unix-executor-client.js'
 import type { Pool } from 'pg'
 import type {
@@ -59,6 +62,7 @@ export interface UsageProbePort {
     missionCommittedUsageValueMicroCents: number
     totalCommittedUsageValueMicroCents: number
     probe: () => Promise<ExecutorEnvelope['usage']>
+    onPhase?: (phase: UsageExecutionPhase) => void
   }): Promise<{
     usage: ExecutorEnvelope['usage']
     usageRecordId: string
@@ -67,6 +71,19 @@ export interface UsageProbePort {
     totalUsageValueMicroCents: number
     incrementalCashCostMicroCents: 0
   }>
+}
+
+export type DispatchPhase =
+  | 'claimed'
+  | UsageExecutionPhase
+  | 'completed'
+  | 'failed'
+
+export interface DispatchPhaseEvent {
+  phase: DispatchPhase
+  jobId: string
+  missionId: string
+  profileId: ProfileId
 }
 
 export type MissionExecutionAssignment = {
@@ -271,6 +288,7 @@ export interface DispatcherOptions {
   hermesTimeoutMs: number
   usageProbe?: UsageProbePort
   serviceAccountId?: string
+  onPhase?: (event: DispatchPhaseEvent) => void
 }
 
 export class DeterministicDispatcher {
@@ -300,6 +318,8 @@ export class DeterministicDispatcher {
     )
     if (!job) return false
 
+    this.emitPhase(job, 'claimed')
+
     try {
       if (!this.options.usageProbe || !this.options.serviceAccountId)
         throw new Error('OPENCODE_USAGE_RECONCILIATION_REQUIRED')
@@ -310,6 +330,7 @@ export class DeterministicDispatcher {
           job.usageBudget.missionCommittedBeforeMicroCents,
         totalCommittedUsageValueMicroCents:
           job.usageBudget.totalCommittedBeforeMicroCents,
+        onPhase: (phase) => this.emitPhase(job, phase),
         probe: async () => {
           envelope = await this.options.executor.execute({
             mission_id: job.mission_id,
@@ -341,6 +362,7 @@ export class DeterministicDispatcher {
           api_calls: envelope.usage.api_calls,
         },
       )
+      this.emitPhase(job, 'completed')
       return true
     } catch (error) {
       if (
@@ -368,7 +390,21 @@ export class DeterministicDispatcher {
         notStarted ? 'not_started' : 'usage_unknown',
         job.usageBudget.version,
       )
+      this.emitPhase(job, 'failed')
       return true
+    }
+  }
+
+  private emitPhase(job: ClaimedJob, phase: DispatchPhase): void {
+    try {
+      this.options.onPhase?.({
+        phase,
+        jobId: job.job_id,
+        missionId: job.mission_id,
+        profileId: job.profile_id,
+      })
+    } catch {
+      // Observability must never change the commercial execution state.
     }
   }
 }

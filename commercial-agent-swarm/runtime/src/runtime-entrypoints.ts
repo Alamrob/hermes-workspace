@@ -12,6 +12,7 @@ import { UnixExecutorClient } from './unix-executor-client.js'
 import { UnixExecutorServer } from './unix-executor-server.js'
 import { createOpenCodeUsageProbeFromEnvironment } from './integration-factories.js'
 import type { DispatchQueuePort } from './dispatch-queue.js'
+import type { DispatchPhaseEvent } from './dispatch-queue.js'
 import type {
   ExecutorPort,
   HomeOwnershipPreparer,
@@ -27,6 +28,7 @@ export interface BrokerDispatcherDependencies {
     reader?: OpenCodeUsageExportReadPort
     readToken?: (path: string, expectedGid: number) => Promise<string>
   }
+  onPhase?: (event: DispatchPhaseEvent) => void
 }
 
 export function createBrokerDispatcher(
@@ -54,6 +56,7 @@ export function createBrokerDispatcher(
     leaseSeconds: config.leaseSeconds,
     childTimeoutSeconds: config.childTimeoutSeconds,
     hermesTimeoutMs: config.hermesTimeoutMs,
+    onPhase: dependencies.onPhase,
     ...(usage.enabled
       ? {
           usageProbe: usage.probe,

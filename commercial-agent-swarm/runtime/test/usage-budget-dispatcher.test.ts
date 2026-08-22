@@ -68,14 +68,21 @@ describe('authoritative Usage budget dispatch wiring', () => {
   it('wraps the real executor in baseline/export reconciliation and settles the reserved CAS version', async () => {
     const queue = new Queue()
     const calls: string[] = []
+    const observed: Array<{ phase: string; jobId: string; missionId: string; profileId: string }> = []
     const usageProbe = {
       measure: async (input: any) => {
+        input.onPhase('usage_baseline_start')
         calls.push('baseline')
+        input.onPhase('usage_baseline_complete')
         assert.equal(input.serviceAccountId, 'service-account-proptimiza')
         assert.equal(input.missionCommittedUsageValueMicroCents, 7_000_000)
         assert.equal(input.totalCommittedUsageValueMicroCents, 23_000_000)
+        input.onPhase('executor_start')
         const usage = await input.probe()
+        input.onPhase('executor_complete')
+        input.onPhase('usage_export_start')
         calls.push('export')
+        input.onPhase('usage_export_complete')
         return {
           usage, usageRecordId: 'usage-record-1', runUsageValueMicroCents: 3_000_000,
           missionUsageValueMicroCents: 10_000_000,
@@ -91,9 +98,25 @@ describe('authoritative Usage budget dispatch wiring', () => {
       serviceAccountId: 'service-account-proptimiza',
       workerId: 'worker-1', leaseSeconds: 60, childTimeoutSeconds: 30,
       hermesTimeoutMs: 30_000,
+      onPhase: (event: typeof observed[number]) => observed.push(event),
     } as never)
     assert.equal(await dispatcher.runOnce(), true)
     assert.deepEqual(calls, ['baseline', 'executor', 'export'])
+    assert.deepEqual(observed.map((event) => event.phase), [
+      'claimed',
+      'usage_baseline_start',
+      'usage_baseline_complete',
+      'executor_start',
+      'executor_complete',
+      'usage_export_start',
+      'usage_export_complete',
+      'completed',
+    ])
+    assert.ok(observed.every((event) =>
+      event.jobId === claimed.job_id &&
+      event.missionId === claimed.mission_id &&
+      event.profileId === claimed.profile_id,
+    ))
     assert.equal(queue.failed.length, 0)
     assert.deepEqual(queue.completed[0][4], {
       usageValueMicroCents: 3_000_000,

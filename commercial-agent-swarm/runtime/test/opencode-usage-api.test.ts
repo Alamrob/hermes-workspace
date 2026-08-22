@@ -146,6 +146,7 @@ describe('read-only OpenCode Usage Export gate', () => {
   it('serializes baseline→probe→export and reconciles exactly one new row', async () => {
     let exports = 0
     let probes = 0
+    const phases: string[] = []
     const gate = new OpenCodeUsageProbe({
       now: () => new Date('2026-08-16T12:05:00.000Z'),
       client: new OpenCodeUsageExportClient({
@@ -163,8 +164,17 @@ describe('read-only OpenCode Usage Export gate', () => {
         probes += 1
         return localUsage
       },
+      onPhase: (phase) => phases.push(phase),
     })
     assert.equal(probes, 1)
+    assert.deepEqual(phases, [
+      'usage_baseline_start',
+      'usage_baseline_complete',
+      'executor_start',
+      'executor_complete',
+      'usage_export_start',
+      'usage_export_complete',
+    ])
     assert.deepEqual(result, {
       usage: localUsage,
       usageRecordId: 'usage-2',

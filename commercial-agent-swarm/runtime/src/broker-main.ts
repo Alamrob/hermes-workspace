@@ -14,7 +14,10 @@ import {
   assertBrokerServiceIdentity,
 } from './simulation-entrypoint.js'
 import { WebhookService } from './webhook.js'
-import type { DeterministicDispatcher } from './dispatch-queue.js'
+import type {
+  DeterministicDispatcher,
+  DispatchPhaseEvent,
+} from './dispatch-queue.js'
 import type { RuntimeRepository } from './repository.js'
 
 const DISPATCH_POLL_INTERVAL_MS = 1_000
@@ -96,7 +99,10 @@ export async function startSimulationBroker(
           brokerDispatcherEnvironment(environment),
           undefined,
           'broker-dispatcher-1',
-          { queue: persistence.dispatchQueue },
+          {
+            queue: persistence.dispatchQueue,
+            onPhase: recordDispatchPhase,
+          },
         ),
       () =>
         new Promise<void>((resolve, reject) => {
@@ -137,6 +143,17 @@ export async function assertSimulationKillSwitchActive(
     }))
   )
     throw new Error('SIMULATION_KILL_SWITCH_NOT_ACTIVE')
+}
+
+export function recordDispatchPhase(event: DispatchPhaseEvent): void {
+  console.info(JSON.stringify({
+    event: 'commercial_dispatch_phase',
+    phase: event.phase,
+    job_id: event.jobId,
+    mission_id: event.missionId,
+    profile_id: event.profileId,
+    recorded_at: new Date().toISOString(),
+  }))
 }
 
 export async function assertSimulationSafetyBoundary(
