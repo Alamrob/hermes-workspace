@@ -50,10 +50,10 @@ export const HERMES_SAFE_PATH =
   '/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin'
 export const HERMES_MODEL = 'deepseek-v4-flash'
 export const HERMES_PROVIDER = 'opencode-go'
-// OpenCode's service-account Inference API is distinct from the legacy
-// subscription relay bundled with Hermes 0.20.1. Keep the override explicit
-// and inside the isolated child environment so no other provider can drift.
-export const HERMES_BASE_URL = 'https://opencode.ai/inference/openai/v1'
+// The executor uses the dedicated OpenCode Go workspace key, not a managed
+// Inference service-account key. Keep the subscription endpoint explicit and
+// inside the isolated child environment so no other provider can drift.
+export const HERMES_BASE_URL = 'https://opencode.ai/zen/go/v1'
 export const HERMES_KEY_ENV = 'OPENCODE_GO_API_KEY'
 export const HERMES_BASE_URL_ENV = 'OPENCODE_GO_BASE_URL'
 export const SETPRIV_BINARY = '/usr/bin/setpriv'

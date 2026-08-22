@@ -218,7 +218,7 @@ describe('isolated Hermes executor', () => {
     assert.equal(invocation.env.OPENCODE_GO_API_KEY, 'llm-only-secret')
     assert.equal(
       invocation.env.OPENCODE_GO_BASE_URL,
-      'https://opencode.ai/inference/openai/v1',
+      'https://opencode.ai/zen/go/v1',
     )
     assert.equal(invocation.env.HTTP_PROXY, 'http://egress-proxy:3128')
     assert.equal(invocation.env.HTTPS_PROXY, 'http://egress-proxy:3128')
