@@ -275,6 +275,9 @@ function allowedError(code: string): boolean {
       'EXECUTOR_FAILURE',
     ].includes(code) ||
     /^HERMES_EXIT_[0-9]+$/.test(code) ||
+    /^HERMES_(?:PROVIDER_(?:AUTH_REJECTED|ACCESS_REJECTED|CAPACITY_REJECTED|MODEL_REJECTED|REQUEST_REJECTED|NETWORK_ERROR)|LOCAL_CONFIGURATION_ERROR)$/.test(
+      code,
+    ) ||
     /^(?:PROFILE_|UNSAFE_|SECRET_|EXPECTED_CHILD_|EXECUTOR_EFFECTIVE_|POSIX_|SERVICE_PRIMARY_|HERMES_CWD_)[A-Z0-9_]*$/.test(
       code,
     )

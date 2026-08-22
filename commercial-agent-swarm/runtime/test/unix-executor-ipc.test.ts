@@ -344,6 +344,37 @@ describe('Unix executor IPC', () => {
     }
   })
 
+  it('preserves a closed provider failure code across the IPC boundary', async () => {
+    const path = socketPath()
+    const server = new UnixExecutorServer({
+      socketPath: path,
+      executor: {
+        execute: async () => {
+          throw new ExecutorExecutionError(
+            'HERMES_PROVIDER_AUTH_REJECTED',
+            'finished',
+          )
+        },
+      },
+      frameTimeoutMs: 500,
+    })
+    await server.start()
+    try {
+      await assert.rejects(
+        new UnixExecutorClient({ socketPath: path, timeoutMs: 1_000 }).execute(
+          input,
+        ),
+        (error: unknown) =>
+          error instanceof ExecutorTransportError &&
+          error.code === 'HERMES_PROVIDER_AUTH_REJECTED' &&
+          !error.recoverable &&
+          error.executionState === 'finished',
+      )
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('treats an unclassified post-validation executor failure as unknown, never as proven finished', async () => {
     const path = socketPath()
     const server = new UnixExecutorServer({
