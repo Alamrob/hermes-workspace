@@ -46,7 +46,7 @@ describe('split runtime trust-zone configuration', () => {
       EXECUTOR_IPC_GID: '11000',
       HERMES_PROFILE_SEED: '/opt/profiles',
       HERMES_PROFILE_SEED_SHA256: 'a'.repeat(64),
-      HERMES_TEMPORARY_ROOT: '/run/commercial-swarm/hermes-executor',
+      HERMES_TEMPORARY_ROOT: '/run/hermes-executor',
       CUSTOM_API_KEY_FILE: '/run/secrets/key',
       HTTP_PROXY: 'http://egress-proxy:3128',
       HTTPS_PROXY: 'http://egress-proxy:3128',

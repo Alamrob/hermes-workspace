@@ -423,7 +423,7 @@ describe('isolated Hermes executor', () => {
       classifyHermesExit(
         1,
         '',
-        "Permission denied: '/run/commercial-swarm/hermes-executor/hermes-home-a1/logs/agent.log'",
+        "Permission denied: '/run/hermes-executor/hermes-home-a1/logs/agent.log'",
       ),
       'HERMES_PROFILE_HOME_PERMISSION_DENIED',
     )
@@ -431,7 +431,7 @@ describe('isolated Hermes executor', () => {
       classifyHermesExit(
         1,
         '',
-        "Permission denied: '/run/commercial-swarm/hermes-executor/hermes-run-a1/output.json'",
+        "Permission denied: '/run/hermes-executor/hermes-run-a1/output.json'",
       ),
       'HERMES_WORK_DIRECTORY_PERMISSION_DENIED',
     )

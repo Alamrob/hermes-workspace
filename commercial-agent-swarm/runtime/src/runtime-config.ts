@@ -11,7 +11,7 @@ const CREDENTIAL_NAME =
   /(?:KEY|TOKEN|PASSWORD|PASSWD|SECRET|COOKIE|CREDENTIAL)/i
 export const EXECUTOR_SOCKET_DIRECTORY = '/run/commercial-swarm'
 export const EXECUTOR_SOCKET_PATH = `${EXECUTOR_SOCKET_DIRECTORY}/executor.sock`
-export const HERMES_TEMPORARY_ROOT = '/run/commercial-swarm/hermes-executor'
+export const HERMES_TEMPORARY_ROOT = '/run/hermes-executor'
 export const EXECUTOR_UID = 10000
 export const EXECUTOR_GID = 10000
 export const EXECUTOR_CHILD_UID = 10002

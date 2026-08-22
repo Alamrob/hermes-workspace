@@ -83,7 +83,7 @@ export function createExecutorServer(
     profileSeed: config.profileSeed,
     expectedSeedSha256: config.seedSha256,
     temporaryRoot: config.temporaryRoot,
-    expectedTemporaryRoot: '/run/commercial-swarm/hermes-executor',
+    expectedTemporaryRoot: '/run/hermes-executor',
     expectedOwnerUid: config.executorUid,
     expectedOwnerGid: config.executorGid,
     expectedUsageUid: config.executorUid,
