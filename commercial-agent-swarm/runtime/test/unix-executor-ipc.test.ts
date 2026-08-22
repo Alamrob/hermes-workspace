@@ -406,6 +406,33 @@ describe('Unix executor IPC', () => {
     }
   })
 
+  it('normalizes a local POSIX failure without exposing paths across IPC', async () => {
+    const path = socketPath()
+    const server = new UnixExecutorServer({
+      socketPath: path,
+      executor: {
+        execute: async () => {
+          throw new Error('kill EPERM /sensitive/internal/path')
+        },
+      },
+      frameTimeoutMs: 500,
+    })
+    await server.start()
+    try {
+      await assert.rejects(
+        new UnixExecutorClient({ socketPath: path, timeoutMs: 1_000 }).execute(
+          input,
+        ),
+        (error: unknown) =>
+          error instanceof ExecutorTransportError &&
+          error.code === 'EXECUTOR_LOCAL_EPERM' &&
+          !String(error.message).includes('/sensitive/internal/path'),
+      )
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('treats an unclassified post-validation executor failure as unknown, never as proven finished', async () => {
     const path = socketPath()
     const server = new UnixExecutorServer({

@@ -198,5 +198,9 @@ function mapExecutorError(error: unknown): string {
     )
   )
     return code
+  const localErrno = code.match(
+    /(?:^|[^A-Z0-9])(E(?:ACCES|PERM|NOENT|INVAL|IO|BUSY|AGAIN|MFILE|NFILE|NOMEM|NOSPC|ROFS))(?:[^A-Z0-9]|$)/,
+  )?.[1]
+  if (localErrno) return `EXECUTOR_LOCAL_${localErrno}`
   return 'EXECUTOR_FAILURE'
 }
