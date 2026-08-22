@@ -464,7 +464,14 @@ export class PosixHomeOwnershipPreparer implements HomeOwnershipPreparer {
     await this.assertScopedHome(home)
     if (uid !== 10002 || gid !== 10002)
       throw new Error('EXPECTED_CHILD_IDENTITY_REQUIRED')
-    await this.prepareEntry(home, uid, gid)
+    try {
+      await this.prepareEntry(home, uid, gid)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (typeof code === 'string' && /^E[A-Z0-9]+$/.test(code))
+        throw new Error(`POSIX_EPHEMERAL_HOME_PREPARE_${code}`)
+      throw error
+    }
   }
 
   async reclaim(home: string, uid: number, gid: number): Promise<void> {
@@ -515,8 +522,10 @@ export class PosixHomeOwnershipPreparer implements HomeOwnershipPreparer {
         await chmod(path, 0o710)
         await chown(path, uid, this.supervisorGid)
       } else {
-        await chown(path, uid, gid)
+        // The capability-bounded supervisor owns the copied file but has no
+        // DAC_OVERRIDE. Make it writable before ownership passes to the child.
         await chmod(path, 0o600)
+        await chown(path, uid, gid)
       }
     }
   }
