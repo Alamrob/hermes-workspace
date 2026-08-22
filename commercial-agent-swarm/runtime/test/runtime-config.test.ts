@@ -48,6 +48,9 @@ describe('split runtime trust-zone configuration', () => {
       HERMES_PROFILE_SEED_SHA256: 'a'.repeat(64),
       HERMES_TEMPORARY_ROOT: '/run/commercial-swarm/hermes-executor',
       CUSTOM_API_KEY_FILE: '/run/secrets/key',
+      HTTP_PROXY: 'http://egress-proxy:3128',
+      HTTPS_PROXY: 'http://egress-proxy:3128',
+      NO_PROXY: 'broker,localhost,127.0.0.1',
     }
     assert.equal(
       loadExecutorRuntimeConfig(good).customApiKeyFile,
@@ -103,5 +106,14 @@ describe('split runtime trust-zone configuration', () => {
         loadExecutorRuntimeConfig({ ...good, HERMES_TEMPORARY_ROOT: '/tmp' }),
       /UNSAFE_HERMES_TEMPORARY_ROOT/,
     )
+    for (const [name, value] of [
+      ['HTTP_PROXY', 'http://attacker.invalid:3128'],
+      ['HTTPS_PROXY', 'http://attacker.invalid:3128'],
+      ['NO_PROXY', '*'],
+    ] as const)
+      assert.throws(
+        () => loadExecutorRuntimeConfig({ ...good, [name]: value }),
+        /EXECUTOR_MODEL_PROXY_INVALID/,
+      )
   })
 })

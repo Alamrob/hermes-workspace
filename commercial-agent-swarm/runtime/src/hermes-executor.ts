@@ -28,6 +28,10 @@ import {
   assertOpenCodeGoExecutionPreflight,
   priceOpenCodeGoUsage,
 } from './opencode-go-pricing.js'
+import {
+  EXECUTOR_MODEL_PROXY_URL,
+  EXECUTOR_NO_PROXY,
+} from './runtime-config.js'
 import type {
   ExecuteInput,
   ProfileId,
@@ -100,6 +104,8 @@ export interface HermesExecutorOptions {
   expectedSecretGid?: number
   readCustomApiKey?: (path: string, expectedGid: number) => Promise<string>
   safePath: string
+  modelProxyUrl: string
+  noProxy: string
   timeoutMs: number
   stdoutLimitBytes?: number
   stderrLimitBytes?: number
@@ -130,6 +136,11 @@ export class HermesExecutor implements ExecutorPort {
       throw new Error('EXPECTED_CHILD_IDENTITY_REQUIRED')
     if (options.safePath !== HERMES_SAFE_PATH)
       throw new Error('UNSAFE_CHILD_PATH')
+    if (
+      options.modelProxyUrl !== EXECUTOR_MODEL_PROXY_URL ||
+      options.noProxy !== EXECUTOR_NO_PROXY
+    )
+      throw new Error('EXECUTOR_MODEL_PROXY_INVALID')
     if (!/^[0-9a-f]{64}$/.test(options.expectedSeedSha256))
       throw new Error('PROFILE_SEED_HASH_REQUIRED')
     if (
@@ -235,7 +246,10 @@ export class HermesExecutor implements ExecutorPort {
           CUSTOM_API_KEY: customApiKey,
           HERMES_HOME: home,
           HOME: home,
+          HTTP_PROXY: this.options.modelProxyUrl,
+          HTTPS_PROXY: this.options.modelProxyUrl,
           LANG: 'C.UTF-8',
+          NO_PROXY: this.options.noProxy,
           PATH: HERMES_SAFE_PATH,
         },
         uid: this.options.childUid,

@@ -136,6 +136,8 @@ async function setup(options: { productionPricing?: boolean } = {}) {
     expectedSecretGid: 10000,
     readCustomApiKey: async (path) => (await readFile(path, 'utf8')).trim(),
     safePath: '/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin',
+    modelProxyUrl: 'http://egress-proxy:3128',
+    noProxy: 'broker,localhost,127.0.0.1',
     timeoutMs: 1_000,
     pricingClock: () => new Date('2026-08-16T12:00:00Z'),
     pricingPreflight: options.productionPricing ? undefined : () => undefined,
@@ -184,10 +186,16 @@ describe('isolated Hermes executor', () => {
       'CUSTOM_API_KEY',
       'HERMES_HOME',
       'HOME',
+      'HTTPS_PROXY',
+      'HTTP_PROXY',
       'LANG',
+      'NO_PROXY',
       'PATH',
     ])
     assert.equal(invocation.env.CUSTOM_API_KEY, 'llm-only-secret')
+    assert.equal(invocation.env.HTTP_PROXY, 'http://egress-proxy:3128')
+    assert.equal(invocation.env.HTTPS_PROXY, 'http://egress-proxy:3128')
+    assert.equal(invocation.env.NO_PROXY, 'broker,localhost,127.0.0.1')
     assert.match(state.runner.copiedSeed!, /custom:deepseek-v4-flash/)
     for (const forbidden of [
       'DATABASE_URL',

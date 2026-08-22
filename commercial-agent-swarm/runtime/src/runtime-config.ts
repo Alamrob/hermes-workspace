@@ -17,6 +17,8 @@ export const EXECUTOR_GID = 10000
 export const EXECUTOR_CHILD_UID = 10002
 export const EXECUTOR_CHILD_GID = 10002
 export const EXECUTOR_IPC_GID = 11000
+export const EXECUTOR_MODEL_PROXY_URL = 'http://egress-proxy:3128'
+export const EXECUTOR_NO_PROXY = 'broker,localhost,127.0.0.1'
 
 export interface BrokerRuntimeConfig {
   socketPath: string
@@ -37,6 +39,8 @@ export interface ExecutorRuntimeConfig {
   seedSha256: string
   temporaryRoot: string
   customApiKeyFile: string
+  modelProxyUrl: string
+  noProxy: string
   hermesTimeoutMs: number
 }
 
@@ -91,6 +95,15 @@ export function loadExecutorRuntimeConfig(
   const ipcGid = integer(env, 'EXECUTOR_IPC_GID', 1, 65535)
   if (ipcGid !== EXECUTOR_IPC_GID)
     throw new Error('EXECUTOR_IPC_GID_INVALID')
+  const httpProxy = required(env, 'HTTP_PROXY')
+  const httpsProxy = required(env, 'HTTPS_PROXY')
+  const noProxy = required(env, 'NO_PROXY')
+  if (
+    httpProxy !== EXECUTOR_MODEL_PROXY_URL ||
+    httpsProxy !== EXECUTOR_MODEL_PROXY_URL ||
+    noProxy !== EXECUTOR_NO_PROXY
+  )
+    throw new Error('EXECUTOR_MODEL_PROXY_INVALID')
   return {
     socketPath,
     socketDirectory,
@@ -103,6 +116,8 @@ export function loadExecutorRuntimeConfig(
     seedSha256: required(env, 'HERMES_PROFILE_SEED_SHA256'),
     temporaryRoot,
     customApiKeyFile: required(env, 'CUSTOM_API_KEY_FILE'),
+    modelProxyUrl: httpProxy,
+    noProxy,
     hermesTimeoutMs: integer(env, 'HERMES_TIMEOUT_MS', 1, 3_600_000),
   }
 }
