@@ -73,7 +73,7 @@ export interface TwentyClientPort {
     stream: CrmStream
     cursor: string | null
     limit: 10
-  }): Promise<{ events: CrmInboxEvent[]; nextCursor: string }>
+  }): Promise<{ events: CrmInboxEvent[]; nextCursor: string | null }>
 }
 
 export interface TwentyClientConfig {
@@ -225,12 +225,14 @@ export async function syncTwentyInboundOnce(options: {
   let stored = 0
   for (const event of page.events)
     if (await options.store.storeInbox(event)) stored += 1
-  const cursorVersion = await options.store.advanceCursor(
-    'twenty',
-    options.stream,
-    options.cursor.version,
-    page.nextCursor,
-  )
+  const cursorVersion = page.nextCursor === null
+    ? options.cursor.version
+    : await options.store.advanceCursor(
+        'twenty',
+        options.stream,
+        options.cursor.version,
+        page.nextCursor,
+      )
   return { stored, cursorVersion }
 }
 
@@ -255,7 +257,7 @@ function validateOutboxItem(item: CrmOutboxItem): void {
 
 function validateChangePage(
   stream: CrmStream,
-  page: { events: CrmInboxEvent[]; nextCursor: string },
+  page: { events: CrmInboxEvent[]; nextCursor: string | null },
 ): void {
   const expectedType: Record<CrmStream, CrmRecordType> = {
     pilot_targets: 'pilot_target',
@@ -267,7 +269,7 @@ function validateChangePage(
   if (
     !Array.isArray(page.events) ||
     page.events.length > 10 ||
-    !bounded(page.nextCursor, 2048) ||
+    (page.nextCursor !== null && !bounded(page.nextCursor, 2048)) ||
     new Set(page.events.map((event) => event.remoteEventId)).size !==
       page.events.length ||
     page.events.some(

@@ -180,6 +180,20 @@ describe('deterministic Twenty CRM sync', () => {
     assert.deepEqual(result, { stored: 1, cursorVersion: 4 })
   })
 
+  it('does not create a durable cursor for an empty first page', async () => {
+    let advances = 0
+    const result = await syncTwentyInboundOnce({
+      mode: 'shadow', stream: 'accounts', cursor: { value: null, version: 0 },
+      store: store({ advanceCursor: async () => { advances += 1; return 1 } }),
+      client: {
+        apply: async () => ({ remoteRecordId: 'unused', remoteVersion: 'v0' }),
+        readChanges: async () => ({ events: [], nextCursor: null }),
+      },
+    })
+    assert.equal(advances, 0)
+    assert.deepEqual(result, { stored: 0, cursorVersion: 0 })
+  })
+
   it('fails closed on an oversized or malformed inbound page', async () => {
     const tooMany = Array.from({ length: 11 }, (_, index) => ({
       remoteEventId: `event-${index}`,

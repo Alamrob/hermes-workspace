@@ -22,11 +22,11 @@ const mappingDocument = {
 function object(path: string, fields: Record<string, string>) {
   return {
     path,
-    records_field: 'data',
+    records_field: path.slice('/rest/'.length),
     id_field: 'id',
     updated_at_field: 'updatedAt',
-    initial_cursor: '2026-08-16T00:00:00.000Z',
-    cursor_query_parameter: 'filter[updatedAt][gt]',
+    initial_cursor: null,
+    cursor_query_parameter: 'starting_after',
     limit_query_parameter: 'limit',
     sort_query_parameter: 'orderBy',
     sort_query_value: 'updatedAt',
@@ -103,7 +103,7 @@ describe('versioned Twenty REST client', () => {
     assert.equal(requests[0]?.init.body, JSON.stringify({ name: 'Acme' }))
   })
 
-  it('polls updatedAt only through configured query names and returns a closed page', async () => {
+  it('uses the official opaque cursor, depth zero and closed Twenty page shape', async () => {
     let requested = ''
     const client = new TwentyHttpClient({
       apiBaseUrl: 'https://crm.example',
@@ -112,23 +112,72 @@ describe('versioned Twenty REST client', () => {
       fetch: async (url) => {
         requested = String(url)
         return new Response(
-          JSON.stringify({ data: [{ id: 'company-1', updatedAt: '2026-08-16T12:00:00.000Z', name: 'Acme' }] }),
+          JSON.stringify({
+            data: { companies: [{ id: 'company-1', updatedAt: '2026-08-16T12:00:00.000Z', name: 'Acme', ignoredField: 'not persisted' }] },
+            totalCount: 1,
+            pageInfo: {
+              startCursor: 'opaque-start', endCursor: 'opaque-end',
+              hasNextPage: false, hasPreviousPage: false,
+            },
+          }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         )
       },
     })
     const page = await client.readChanges({
       stream: 'accounts',
-      cursor: '2026-08-16T11:00:00.000Z',
+      cursor: 'opaque-previous',
       limit: 10,
     })
     const url = new URL(requested)
     assert.equal(url.pathname, '/rest/companies')
-    assert.equal(url.searchParams.get('filter[updatedAt][gt]'), '2026-08-16T11:00:00.000Z')
+    assert.equal(url.searchParams.get('starting_after'), 'opaque-previous')
     assert.equal(url.searchParams.get('limit'), '10')
     assert.equal(url.searchParams.get('orderBy'), 'updatedAt')
-    assert.equal(page.nextCursor, '2026-08-16T12:00:00.000Z')
+    assert.equal(url.searchParams.get('depth'), '0')
+    assert.equal(page.nextCursor, 'opaque-end')
     assert.equal(page.events[0]?.recordType, 'account')
+    assert.deepEqual(page.events[0]?.payload, { name: 'Acme' })
+  })
+
+  it('does not advance an empty first page without an opaque cursor', async () => {
+    const client = new TwentyHttpClient({
+      apiBaseUrl: 'https://crm.example', token: 'twenty-token',
+      mapping: parseTwentyRestMapping(JSON.stringify(mappingDocument)),
+      fetch: async () => new Response(JSON.stringify({
+        data: { companies: [] }, totalCount: 0,
+        pageInfo: { startCursor: null, endCursor: null, hasNextPage: false, hasPreviousPage: false },
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    })
+    const page = await client.readChanges({ stream: 'accounts', cursor: null, limit: 10 })
+    assert.deepEqual(page, { events: [], nextCursor: null })
+  })
+
+  it('fails closed on malformed pagination or unknown top-level fields', async () => {
+    const responses = [
+      {
+        data: { companies: [] }, totalCount: 0,
+        pageInfo: { startCursor: null, endCursor: null, hasNextPage: true, hasPreviousPage: false },
+      },
+      {
+        data: { companies: [] }, totalCount: 0,
+        pageInfo: { startCursor: null, endCursor: null, hasNextPage: false, hasPreviousPage: false },
+        unexpected: true,
+      },
+    ]
+    for (const body of responses) {
+      const client = new TwentyHttpClient({
+        apiBaseUrl: 'https://crm.example', token: 'twenty-token',
+        mapping: parseTwentyRestMapping(JSON.stringify(mappingDocument)),
+        fetch: async () => new Response(JSON.stringify(body), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        }),
+      })
+      await assert.rejects(
+        client.readChanges({ stream: 'accounts', cursor: null, limit: 10 }),
+        /TWENTY_RESPONSE_INVALID/,
+      )
+    }
   })
 
   it('fails closed on missing mappings, generic routes, unknown response fields, or oversized bodies', async () => {
@@ -144,7 +193,7 @@ describe('versioned Twenty REST client', () => {
       /TWENTY_MAPPING_INVALID/,
     )
     for (const body of [
-      JSON.stringify({ data: { id: 'x', updatedAt: '2026-08-16T12:00:00Z', secret: true } }),
+      JSON.stringify({ data: { updatedAt: '2026-08-16T12:00:00Z' } }),
       'x'.repeat(1_048_577),
     ]) {
       const client = new TwentyHttpClient({

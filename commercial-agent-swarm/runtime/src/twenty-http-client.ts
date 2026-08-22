@@ -24,7 +24,7 @@ interface ObjectMapping {
   recordsField: string
   idField: string
   updatedAtField: string
-  initialCursor: string
+  initialCursor: null
   cursorQueryParameter: string
   limitQueryParameter: string
   sortQueryParameter: string
@@ -75,9 +75,9 @@ function parseObjectMapping(value: unknown): ObjectMapping {
     !safeName(value.records_field, 64) ||
     !safeName(value.id_field, 64) ||
     !safeName(value.updated_at_field, 64) ||
-    typeof value.initial_cursor !== 'string' ||
-    !Number.isFinite(Date.parse(value.initial_cursor)) ||
+    value.initial_cursor !== null ||
     !safeQueryName(value.cursor_query_parameter) ||
+    value.cursor_query_parameter !== 'starting_after' ||
     !safeQueryName(value.limit_query_parameter) ||
     !safeQueryName(value.sort_query_parameter) ||
     !safeName(value.sort_query_value, 64)
@@ -96,7 +96,7 @@ function parseObjectMapping(value: unknown): ObjectMapping {
     recordsField: value.records_field,
     idField: value.id_field,
     updatedAtField: value.updated_at_field,
-    initialCursor: new Date(value.initial_cursor).toISOString(),
+    initialCursor: null,
     cursorQueryParameter: value.cursor_query_parameter,
     limitQueryParameter: value.limit_query_parameter,
     sortQueryParameter: value.sort_query_parameter,
@@ -170,8 +170,6 @@ export class TwentyHttpClient implements TwentyClientPort {
     if (!isRecord(response) || !exactKeys(response, ['data']) || !isRecord(response.data))
       throw new Error('TWENTY_RESPONSE_INVALID')
     const data = response.data
-    if (!exactKeys(data, [mapping.idField, mapping.updatedAtField]))
-      throw new Error('TWENTY_RESPONSE_INVALID')
     const id = data[mapping.idField]
     const version = data[mapping.updatedAtField]
     if (!safeName(id, 256) || typeof version !== 'string' || !Number.isFinite(Date.parse(version)))
@@ -183,20 +181,30 @@ export class TwentyHttpClient implements TwentyClientPort {
     const { key, recordType } = streamObject(request.stream)
     const mapping = this.options.mapping.objects[key]
     const url = new URL(mapping.path, `${this.origin}/`)
-    url.searchParams.set(mapping.cursorQueryParameter, request.cursor ?? mapping.initialCursor)
+    if (request.cursor !== null)
+      url.searchParams.set(mapping.cursorQueryParameter, request.cursor)
     url.searchParams.set(mapping.limitQueryParameter, '10')
     url.searchParams.set(mapping.sortQueryParameter, mapping.sortQueryValue)
+    url.searchParams.set('depth', '0')
     const response = await this.request(`${url.pathname}${url.search}`, {
       method: 'GET', headers: { authorization: `Bearer ${this.options.token}` },
     })
-    if (!isRecord(response) || !exactKeys(response, [mapping.recordsField]) || !Array.isArray(response[mapping.recordsField]))
+    if (
+      !isRecord(response) ||
+      !exactKeys(response, ['data', 'totalCount', 'pageInfo']) ||
+      !isRecord(response.data) ||
+      !exactKeys(response.data, [mapping.recordsField]) ||
+      !Array.isArray(response.data[mapping.recordsField]) ||
+      !Number.isSafeInteger(response.totalCount) ||
+      (response.totalCount as number) < 0 ||
+      !validPageInfo(response.pageInfo)
+    )
       throw new Error('TWENTY_RESPONSE_INVALID')
-    const records = response[mapping.recordsField] as unknown[]
+    const records = response.data[mapping.recordsField] as unknown[]
     if (records.length > 10) throw new Error('TWENTY_RESPONSE_INVALID')
-    const allowedRemote = new Set([mapping.idField, mapping.updatedAtField, ...Object.values(mapping.fields)])
     const reverse = new Map(Object.entries(mapping.fields).map(([local, remote]) => [remote, local]))
     const events = records.map((candidate) => {
-      if (!isRecord(candidate) || Object.keys(candidate).some((field) => !allowedRemote.has(field)))
+      if (!isRecord(candidate))
         throw new Error('TWENTY_RESPONSE_INVALID')
       const id = candidate[mapping.idField]
       const updatedAt = candidate[mapping.updatedAtField]
@@ -214,10 +222,15 @@ export class TwentyHttpClient implements TwentyClientPort {
         payload,
       }
     })
-    const nextCursor = events.reduce(
-      (latest, event) => event.remoteVersion > latest ? event.remoteVersion : latest,
-      request.cursor ?? mapping.initialCursor,
-    )
+    const pageInfo = response.pageInfo as {
+      startCursor: string | null
+      endCursor: string | null
+      hasNextPage: boolean
+      hasPreviousPage: boolean
+    }
+    if (records.length > 0 && pageInfo.endCursor === null)
+      throw new Error('TWENTY_RESPONSE_INVALID')
+    const nextCursor = pageInfo.endCursor ?? request.cursor ?? mapping.initialCursor
     return { events, nextCursor }
   }
 
@@ -258,6 +271,21 @@ function streamObject(stream: CrmStream): { key: ObjectKey; recordType: CrmRecor
 
 function exactKeys(value: Record<string, unknown>, keys: string[]): boolean {
   return Object.keys(value).sort().join('\0') === [...keys].sort().join('\0')
+}
+function validPageInfo(value: unknown): boolean {
+  if (!isRecord(value) || !exactKeys(value, [
+    'startCursor', 'endCursor', 'hasNextPage', 'hasPreviousPage',
+  ])) return false
+  return (
+    (value.startCursor === null || boundedCursor(value.startCursor)) &&
+    (value.endCursor === null || boundedCursor(value.endCursor)) &&
+    typeof value.hasNextPage === 'boolean' &&
+    typeof value.hasPreviousPage === 'boolean' &&
+    (!value.hasNextPage || value.endCursor !== null)
+  )
+}
+function boundedCursor(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && Buffer.byteLength(value) <= 2048
 }
 function safeName(value: unknown, maximum: number): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9._:@-]+$/.test(value) && Buffer.byteLength(value) <= maximum
