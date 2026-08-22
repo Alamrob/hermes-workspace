@@ -339,10 +339,19 @@ export class HermesExecutor implements ExecutorPort {
         }
         throw error
       }
-      const nativeUsage = validateHermesUsage(
-        JSON.parse(usagePayload) as unknown,
-        input.reservation,
-      )
+      let nativeUsage: TrustedUsage
+      try {
+        nativeUsage = validateHermesUsage(
+          JSON.parse(usagePayload) as unknown,
+          input.reservation,
+        )
+      } catch (error) {
+        if (error instanceof Error && error.message === 'HERMES_USAGE_FAILED') {
+          const classified = classifyHermesExit(1, output.stdout, output.stderr)
+          if (classified !== 'HERMES_EXIT_1') throw new Error(classified)
+        }
+        throw error
+      }
       const usage = priceOpenCodeGoUsage(nativeUsage, pricingNow)
       let rawResult: unknown
       try {

@@ -330,6 +330,25 @@ describe('isolated Hermes executor', () => {
     await assert.rejects(state.executor.execute(input()), /HERMES_USAGE_FAILED/)
     await assert.rejects(access(state.runner.invocations[0].env.HERMES_HOME))
   })
+  it('classifies a provider diagnostic when the failed usage report accompanies exit zero', async () => {
+    const state = await setup()
+    state.runner.usage = {
+      ...state.runner.usage,
+      completed: false,
+      failed: true,
+      input_tokens: null,
+      output_tokens: null,
+      total_tokens: null,
+      model: null,
+      provider: null,
+    }
+    state.runner.stderr = 'HTTP 401: Invalid API key SECRET-VALUE'
+    await assert.rejects(
+      state.executor.execute(input()),
+      /HERMES_PROVIDER_AUTH_REJECTED/,
+    )
+    await assert.rejects(access(state.runner.invocations[0].cwd))
+  })
   it('rejects an oversized child-controlled usage file before reading it', async () => {
     const state = await setup()
     state.runner.usageRaw = 'x'.repeat(65_537)
