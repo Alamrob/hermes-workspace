@@ -66,6 +66,17 @@ export interface OpenCodeUsageExportReadPort {
   }): Promise<string>
 }
 
+export class OpenCodeUsageProbeError extends Error {
+  constructor(
+    message: string,
+    readonly executionState: 'not_started' | 'usage_unknown',
+    options?: { cause?: unknown },
+  ) {
+    super(message, options)
+    this.name = 'OpenCodeUsageProbeError'
+  }
+}
+
 export class FetchOpenCodeUsageExportReader
   implements OpenCodeUsageExportReadPort
 {
@@ -180,11 +191,19 @@ export class OpenCodeUsageProbe {
     totalUsageValueMicroCents: number
     incrementalCashCostMicroCents: 0
   }> {
-    if (this.busy) throw new Error('OPENCODE_USAGE_PROBE_BUSY')
-    assertBudgetAvailable(
-      input.missionCommittedUsageValueMicroCents,
-      input.totalCommittedUsageValueMicroCents,
-    )
+    if (this.busy)
+      throw new OpenCodeUsageProbeError(
+        'OPENCODE_USAGE_PROBE_BUSY',
+        'not_started',
+      )
+    try {
+      assertBudgetAvailable(
+        input.missionCommittedUsageValueMicroCents,
+        input.totalCommittedUsageValueMicroCents,
+      )
+    } catch (error) {
+      throw classifyProbeError(error, 'not_started')
+    }
     this.busy = true
     try {
       const query: ExportQuery = {
@@ -192,45 +211,66 @@ export class OpenCodeUsageProbe {
         range: '24h',
         serviceAccountId: input.serviceAccountId,
       }
-      const before = await this.options.client.export(query)
+      let before: OpenCodeUsageRow[]
+      try {
+        before = await this.options.client.export(query)
+      } catch (error) {
+        throw classifyProbeError(error, 'not_started')
+      }
       const usage = await input.probe()
-      const after = await this.options.client.export(query)
-      const beforeIds = new Set(before.map((row) => row.id))
-      if (
-        beforeIds.size !== before.length ||
-        before.some((row) => !after.some((candidate) => candidate.id === row.id))
-      )
-        throw new Error('OPENCODE_USAGE_DIFF_AMBIGUOUS')
-      const added = after.filter((row) => !beforeIds.has(row.id))
-      if (added.length !== 1) throw new Error('OPENCODE_USAGE_DIFF_AMBIGUOUS')
-      const row = added[0]
-      validateDedicatedServiceAccountRow(row)
-      if (row.createdAt.slice(0, 10) !== this.now().toISOString().slice(0, 10))
-        throw new Error('OPENCODE_USAGE_WINDOW_INVALID')
-      reconcileTelemetry(usage, row)
-      const run = row.usageValueMicroCents
-      if (
-        run > MAX_RUN_USAGE_VALUE_MICRO_CENTS ||
-        input.missionCommittedUsageValueMicroCents + run >
-          MAX_MISSION_USAGE_VALUE_MICRO_CENTS ||
-        input.totalCommittedUsageValueMicroCents + run >
-          MAX_TOTAL_USAGE_VALUE_MICRO_CENTS
-      )
-        throw new Error('OPENCODE_USAGE_VALUE_BUDGET_EXCEEDED')
-      return {
-        usage,
-        usageRecordId: row.id,
-        runUsageValueMicroCents: run,
-        missionUsageValueMicroCents:
-          input.missionCommittedUsageValueMicroCents + run,
-        totalUsageValueMicroCents:
-          input.totalCommittedUsageValueMicroCents + run,
-        incrementalCashCostMicroCents: 0,
+      try {
+        const after = await this.options.client.export(query)
+        const beforeIds = new Set(before.map((row) => row.id))
+        if (
+          beforeIds.size !== before.length ||
+          before.some((row) => !after.some((candidate) => candidate.id === row.id))
+        )
+          throw new Error('OPENCODE_USAGE_DIFF_AMBIGUOUS')
+        const added = after.filter((row) => !beforeIds.has(row.id))
+        if (added.length !== 1) throw new Error('OPENCODE_USAGE_DIFF_AMBIGUOUS')
+        const row = added[0]
+        validateDedicatedServiceAccountRow(row)
+        if (row.createdAt.slice(0, 10) !== this.now().toISOString().slice(0, 10))
+          throw new Error('OPENCODE_USAGE_WINDOW_INVALID')
+        reconcileTelemetry(usage, row)
+        const run = row.usageValueMicroCents
+        if (
+          run > MAX_RUN_USAGE_VALUE_MICRO_CENTS ||
+          input.missionCommittedUsageValueMicroCents + run >
+            MAX_MISSION_USAGE_VALUE_MICRO_CENTS ||
+          input.totalCommittedUsageValueMicroCents + run >
+            MAX_TOTAL_USAGE_VALUE_MICRO_CENTS
+        )
+          throw new Error('OPENCODE_USAGE_VALUE_BUDGET_EXCEEDED')
+        return {
+          usage,
+          usageRecordId: row.id,
+          runUsageValueMicroCents: run,
+          missionUsageValueMicroCents:
+            input.missionCommittedUsageValueMicroCents + run,
+          totalUsageValueMicroCents:
+            input.totalCommittedUsageValueMicroCents + run,
+          incrementalCashCostMicroCents: 0,
+        }
+      } catch (error) {
+        throw classifyProbeError(error, 'usage_unknown')
       }
     } finally {
       this.busy = false
     }
   }
+}
+
+function classifyProbeError(
+  error: unknown,
+  executionState: 'not_started' | 'usage_unknown',
+): OpenCodeUsageProbeError {
+  if (error instanceof OpenCodeUsageProbeError) return error
+  const message =
+    error instanceof Error && /^[A-Z0-9_:-]{1,128}$/.test(error.message)
+      ? error.message
+      : 'OPENCODE_USAGE_PROBE_FAILED'
+  return new OpenCodeUsageProbeError(message, executionState, { cause: error })
 }
 
 export function parseOpenCodeUsageCsv(csv: string): OpenCodeUsageRow[] {

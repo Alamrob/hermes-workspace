@@ -7,6 +7,7 @@ import {
   OpenCodeUsageExportClient,
   FetchOpenCodeUsageExportReader,
   OpenCodeUsageProbe,
+  OpenCodeUsageProbeError,
   parseOpenCodeUsageCsv,
 } from '../src/opencode-usage-api.js'
 import type { TrustedUsage } from '../src/executor-contract.js'
@@ -172,6 +173,65 @@ describe('read-only OpenCode Usage Export gate', () => {
       totalUsageValueMicroCents: 21_234_567,
       incrementalCashCostMicroCents: 0,
     })
+  })
+
+  it('distinguishes a failed baseline from a failure after provider execution', async () => {
+    let probes = 0
+    const baselineFailure = new OpenCodeUsageProbe({
+      client: new OpenCodeUsageExportClient({
+        readToken: async () => 'read-only-token',
+        reader: {
+          getCsvExport: async () => {
+            throw new Error('OPENCODE_USAGE_EXPORT_FAILED')
+          },
+        },
+      }),
+    })
+    await assert.rejects(
+      baselineFailure.measure({
+        serviceAccountId: 'svc-12345678',
+        missionCommittedUsageValueMicroCents: 0,
+        totalCommittedUsageValueMicroCents: 0,
+        probe: async () => {
+          probes += 1
+          return localUsage
+        },
+      }),
+      (error: unknown) =>
+        error instanceof OpenCodeUsageProbeError &&
+        error.executionState === 'not_started' &&
+        error.message === 'OPENCODE_USAGE_EXPORT_FAILED',
+    )
+    assert.equal(probes, 0)
+
+    let exports = 0
+    const postFailure = new OpenCodeUsageProbe({
+      client: new OpenCodeUsageExportClient({
+        readToken: async () => 'read-only-token',
+        reader: {
+          getCsvExport: async () => {
+            exports += 1
+            if (exports === 1) return BASELINE
+            throw new Error('OPENCODE_USAGE_EXPORT_FAILED')
+          },
+        },
+      }),
+    })
+    await assert.rejects(
+      postFailure.measure({
+        serviceAccountId: 'svc-12345678',
+        missionCommittedUsageValueMicroCents: 0,
+        totalCommittedUsageValueMicroCents: 0,
+        probe: async () => {
+          probes += 1
+          return localUsage
+        },
+      }),
+      (error: unknown) =>
+        error instanceof OpenCodeUsageProbeError &&
+        error.executionState === 'usage_unknown',
+    )
+    assert.equal(probes, 1)
   })
 
   it('fails closed when the post-export diff has zero or multiple records', async () => {

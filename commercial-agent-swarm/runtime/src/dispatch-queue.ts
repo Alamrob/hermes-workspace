@@ -1,4 +1,5 @@
 import { hashAction } from './canonical.js'
+import { OpenCodeUsageProbeError } from './opencode-usage-api.js'
 import { ExecutorTransportError } from './unix-executor-client.js'
 import type { Pool } from 'pg'
 import type {
@@ -354,6 +355,8 @@ export class DeterministicDispatcher {
       const notStarted =
         error instanceof ExecutorTransportError
           ? error.executionState === 'not_started'
+          : error instanceof OpenCodeUsageProbeError
+            ? error.executionState === 'not_started'
           : /^(?:UNKNOWN_PROFILE|PROFILE_|UNSAFE_|CUSTOM_API_KEY_REQUIRED|HERMES_TIMEOUT_HANDSHAKE_MISMATCH|OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED|OPENCODE_GO_RESERVATION_TOO_LOW|OPENCODE_USAGE_RECONCILIATION_REQUIRED)/.test(
               message,
             )

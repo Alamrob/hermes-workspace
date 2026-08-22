@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DeterministicDispatcher } from '../src/dispatch-queue.js'
 import type { ExecutorEnvelope } from '../src/hermes-executor.js'
+import { OpenCodeUsageProbeError } from '../src/opencode-usage-api.js'
 
 const claimed = {
   job_id: '323e4567-e89b-42d3-a456-426614174000',
@@ -115,6 +116,36 @@ describe('authoritative Usage budget dispatch wiring', () => {
     assert.equal(await dispatcher.runOnce(), true)
     assert.equal(executorCalls, 0)
     assert.equal(queue.completed.length, 0)
+    assert.equal(queue.failed[0][4], 'not_started')
+  })
+
+  it('releases the reservation when the authoritative baseline fails before executor invocation', async () => {
+    const queue = new Queue()
+    let executorCalls = 0
+    const dispatcher = new DeterministicDispatcher({
+      queue: queue as never,
+      executor: {
+        execute: async () => {
+          executorCalls += 1
+          return envelope()
+        },
+      },
+      usageProbe: {
+        measure: async () => {
+          throw new OpenCodeUsageProbeError(
+            'OPENCODE_USAGE_EXPORT_FAILED',
+            'not_started',
+          )
+        },
+      },
+      serviceAccountId: 'service-account-proptimiza',
+      workerId: 'worker-1', leaseSeconds: 60, childTimeoutSeconds: 30,
+      hermesTimeoutMs: 30_000,
+    } as never)
+    assert.equal(await dispatcher.runOnce(), true)
+    assert.equal(executorCalls, 0)
+    assert.equal(queue.completed.length, 0)
+    assert.equal(queue.failed[0][2], 'OPENCODE_USAGE_EXPORT_FAILED')
     assert.equal(queue.failed[0][4], 'not_started')
   })
 
