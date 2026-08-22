@@ -211,13 +211,13 @@ export class HermesExecutor implements ExecutorPort {
         this.options.childUid,
         this.options.childGid,
       )
+      if ((await readdir(cwd)).length !== 0)
+        throw new Error('HERMES_CWD_NOT_EMPTY')
       await this.options.ownership.prepare(
         cwd,
         this.options.childUid,
         this.options.childGid,
       )
-      if ((await readdir(cwd)).length !== 0)
-        throw new Error('HERMES_CWD_NOT_EMPTY')
       const usageFile = join(cwd, 'usage.json')
       const startedAt = new Date().toISOString()
       setExecutionState('unknown')

@@ -201,6 +201,24 @@ describe('isolated Hermes executor', () => {
     await assert.rejects(access(invocation.env.HERMES_HOME))
   })
 
+  it('verifies the cwd before handing it to the isolated child identity', async () => {
+    const state = await setup()
+    let handoffs = 0
+    ;(
+      state.executor as unknown as {
+        options: { ownership: HomeOwnershipPreparer }
+      }
+    ).options.ownership = {
+      prepare: async (path) => {
+        handoffs += 1
+        if (handoffs === 2) await writeFile(join(path, 'child-handoff-marker'), 'child')
+      },
+    }
+    await state.executor.execute(input())
+    assert.equal(handoffs, 2)
+    assert.equal(state.runner.invocations.length, 1)
+  })
+
   it('rejects unknown profiles and never invokes a child', async () => {
     const state = await setup()
     await assert.rejects(
