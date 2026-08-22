@@ -413,7 +413,7 @@ function parseCsvMatrix(csv: string): string[][] {
 function reconcileTelemetry(usage: TrustedUsage, row: OpenCodeUsageRow): void {
   if (
     usage.model !== OPENCODE_GO_MODEL ||
-    usage.provider !== 'custom:deepseek-v4-flash' ||
+    usage.provider !== 'opencode-go' ||
     usage.completed !== true ||
     usage.failed !== false ||
     usage.api_calls < 1 ||

@@ -23,7 +23,7 @@ function usage(overrides: Partial<TrustedUsage['tokens']> = {}): TrustedUsage {
     tokens,
     api_calls: 1,
     model: 'deepseek-v4-flash',
-    provider: 'custom:deepseek-v4-flash',
+    provider: 'opencode-go',
     completed: true,
     failed: false,
     cost: {

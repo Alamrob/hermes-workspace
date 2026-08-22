@@ -23,7 +23,7 @@ const usage = {
   },
   api_calls: 1,
   model: 'deepseek-v4-flash' as const,
-  provider: 'custom:deepseek-v4-flash' as const,
+  provider: 'opencode-go' as const,
   completed: true as const,
   failed: false as const,
   cost: {

@@ -74,7 +74,7 @@ class FakeRunner implements ProcessRunner {
     total_tokens: 15,
     api_calls: 1,
     model: 'deepseek-v4-flash',
-    provider: 'custom:deepseek-v4-flash',
+    provider: 'opencode-go',
     completed: true,
     failed: false,
     estimated_cost_usd: 0.004,
@@ -110,7 +110,7 @@ async function setup(options: { productionPricing?: boolean } = {}) {
   await mkdir(join(seed, 'profiles', profileId), { recursive: true })
   await writeFile(
     join(seed, 'profiles', profileId, 'config.yaml'),
-    'custom_providers:\n  - name: deepseek-v4-flash\n    base_url: https://opencode.ai/zen/go/v1\n    key_env: CUSTOM_API_KEY\n    api_mode: chat_completions\nmodel:\n  default: deepseek-v4-flash\n  provider: custom:deepseek-v4-flash\n  max_tokens: 50\nagent:\n  max_turns: 2\n',
+    'model:\n  default: deepseek-v4-flash\n  provider: opencode-go\n  max_tokens: 50\nagent:\n  max_turns: 2\n',
   )
   const keyFile = join(root, 'custom-api-key')
   await writeFile(keyFile, 'llm-only-secret\n')
@@ -183,20 +183,20 @@ describe('isolated Hermes executor', () => {
       'missing',
     )
     assert.deepEqual(Object.keys(invocation.env).sort(), [
-      'CUSTOM_API_KEY',
       'HERMES_HOME',
       'HOME',
       'HTTPS_PROXY',
       'HTTP_PROXY',
       'LANG',
       'NO_PROXY',
+      'OPENCODE_GO_API_KEY',
       'PATH',
     ])
-    assert.equal(invocation.env.CUSTOM_API_KEY, 'llm-only-secret')
+    assert.equal(invocation.env.OPENCODE_GO_API_KEY, 'llm-only-secret')
     assert.equal(invocation.env.HTTP_PROXY, 'http://egress-proxy:3128')
     assert.equal(invocation.env.HTTPS_PROXY, 'http://egress-proxy:3128')
     assert.equal(invocation.env.NO_PROXY, 'broker,localhost,127.0.0.1')
-    assert.match(state.runner.copiedSeed!, /custom:deepseek-v4-flash/)
+    assert.match(state.runner.copiedSeed!, /provider: opencode-go/)
     for (const forbidden of [
       'DATABASE_URL',
       'DATABASE_URL_FILE',

@@ -98,6 +98,7 @@ export function loadTwentyClientConfig(
       value?.trim() &&
       (name === 'TWENTY_API_TOKEN' ||
         name === 'CUSTOM_API_KEY' ||
+        name === 'OPENCODE_GO_API_KEY' ||
         /^(?:OPENAI|ANTHROPIC|HERMES|LLM)_/i.test(name)),
   )
   if (forbidden) throw new Error('CRM_SYNC_CREDENTIAL_BOUNDARY_INVALID')

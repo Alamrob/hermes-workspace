@@ -204,7 +204,7 @@ function validateEnvelope(value: unknown, input: ExecuteInput): void {
     usage.completed !== true ||
     usage.failed !== false ||
     usage.model !== 'deepseek-v4-flash' ||
-    usage.provider !== 'custom:deepseek-v4-flash' ||
+    usage.provider !== 'opencode-go' ||
     usage.cost.status !== 'known' ||
     typeof usage.cost.usage_value_usd !== 'number' ||
     !Number.isFinite(usage.cost.usage_value_usd) ||

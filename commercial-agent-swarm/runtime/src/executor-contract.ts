@@ -40,7 +40,7 @@ export interface TrustedUsage {
   }
   api_calls: number
   model: 'deepseek-v4-flash'
-  provider: 'custom:deepseek-v4-flash'
+  provider: 'opencode-go'
   completed: true
   failed: false
   cost:
@@ -210,7 +210,7 @@ export function validateHermesUsage(
     Number(value.total_tokens) > reservation.maximum_tokens ||
     Number(value.api_calls) > reservation.maximum_api_calls ||
     value.model !== 'deepseek-v4-flash' ||
-    value.provider !== 'custom:deepseek-v4-flash' ||
+    value.provider !== 'opencode-go' ||
     !HERMES_COST_SOURCES.includes(value.cost_source as HermesCostSource) ||
     !(
       value.session_id === null ||
@@ -276,7 +276,7 @@ export function validateHermesUsage(
     },
     api_calls: Number(value.api_calls),
     model: 'deepseek-v4-flash',
-    provider: 'custom:deepseek-v4-flash',
+    provider: 'opencode-go',
     completed: true,
     failed: false,
     cost,

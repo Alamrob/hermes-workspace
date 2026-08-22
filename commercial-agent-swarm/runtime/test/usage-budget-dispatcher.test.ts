@@ -54,7 +54,7 @@ function envelope(): ExecutorEnvelope {
     },
     usage: {
       tokens: { input: 1, output: 2, cache_read: 0, cache_write: 0, reasoning: 0, total: 3 },
-      api_calls: 1, model: 'deepseek-v4-flash', provider: 'custom:deepseek-v4-flash',
+      api_calls: 1, model: 'deepseek-v4-flash', provider: 'opencode-go',
       completed: true, failed: false,
       cost: {
         status: 'known', usage_value_usd: 0.01, cash_cost_usd: 0,

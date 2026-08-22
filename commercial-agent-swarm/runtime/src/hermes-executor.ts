@@ -49,8 +49,9 @@ export const HERMES_BINARY = '/opt/hermes/.venv/bin/hermes'
 export const HERMES_SAFE_PATH =
   '/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin'
 export const HERMES_MODEL = 'deepseek-v4-flash'
-export const HERMES_PROVIDER = 'custom:deepseek-v4-flash'
+export const HERMES_PROVIDER = 'opencode-go'
 export const HERMES_BASE_URL = 'https://opencode.ai/zen/go/v1'
+export const HERMES_KEY_ENV = 'OPENCODE_GO_API_KEY'
 export const SETPRIV_BINARY = '/usr/bin/setpriv'
 export const EXECUTOR_CHILD_SUPPLEMENTARY_GROUPS_CLEARED_V1 = true
 
@@ -243,7 +244,7 @@ export class HermesExecutor implements ExecutorPort {
           usageFile,
         ],
         env: {
-          CUSTOM_API_KEY: customApiKey,
+          [HERMES_KEY_ENV]: customApiKey,
           HERMES_HOME: home,
           HOME: home,
           HTTP_PROXY: this.options.modelProxyUrl,
@@ -561,19 +562,11 @@ async function assertSecureSeed(
     await readFile(join(path, 'profiles', profile, 'config.yaml'), 'utf8'),
   ) as unknown
   if (!record(parsed)) throw new Error('PROFILE_MANIFEST_MISMATCH')
-  const providers = Array.isArray(parsed.custom_providers)
-    ? parsed.custom_providers
-    : []
-  const provider =
-    providers.length === 1 && record(providers[0]) ? providers[0] : null
   const model = record(parsed.model) ? parsed.model : null
   const agent = record(parsed.agent) ? parsed.agent : null
   if (
-    !provider ||
-    provider.name !== HERMES_MODEL ||
-    provider.base_url !== HERMES_BASE_URL ||
-    provider.key_env !== 'CUSTOM_API_KEY' ||
-    provider.api_mode !== 'chat_completions' ||
+    parsed.custom_providers !== undefined ||
+    parsed.providers !== undefined ||
     !model ||
     model.default !== HERMES_MODEL ||
     model.provider !== HERMES_PROVIDER ||

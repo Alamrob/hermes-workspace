@@ -28,7 +28,7 @@ const localUsage: TrustedUsage = {
   },
   api_calls: 2,
   model: 'deepseek-v4-flash',
-  provider: 'custom:deepseek-v4-flash',
+  provider: 'opencode-go',
   completed: true,
   failed: false,
   cost: {

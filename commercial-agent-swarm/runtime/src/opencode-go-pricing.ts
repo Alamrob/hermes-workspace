@@ -9,7 +9,7 @@ export const OPENCODE_GO_PRICING_SNAPSHOT = Object.freeze({
   captured_at: '2026-08-21T00:00:00Z',
   revalidate_after: '2026-08-31T23:59:59Z',
   model: 'deepseek-v4-flash',
-  provider: 'custom:deepseek-v4-flash',
+  provider: 'opencode-go',
   peak_hours_utc: Object.freeze([[1, 4], [6, 10]] as const),
   off_peak_picodollars_per_token: Object.freeze({
     input: 220_000n,
