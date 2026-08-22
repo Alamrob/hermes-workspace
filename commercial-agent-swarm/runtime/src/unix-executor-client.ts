@@ -273,7 +273,11 @@ function allowedError(code: string): boolean {
       'OPENCODE_GO_PRICE_OVERFLOW',
       'OPENCODE_GO_RESERVATION_TOO_LOW',
       'EXECUTOR_FAILURE',
-    ].includes(code) || /^HERMES_EXIT_[0-9]+$/.test(code)
+    ].includes(code) ||
+    /^HERMES_EXIT_[0-9]+$/.test(code) ||
+    /^(?:PROFILE_|UNSAFE_|SECRET_|EXPECTED_CHILD_|EXECUTOR_EFFECTIVE_|POSIX_|SERVICE_PRIMARY_|HERMES_CWD_)[A-Z0-9_]*$/.test(
+      code,
+    )
   )
 }
 

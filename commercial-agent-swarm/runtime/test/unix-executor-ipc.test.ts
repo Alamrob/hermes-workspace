@@ -285,6 +285,37 @@ describe('Unix executor IPC', () => {
     }
   })
 
+  it('preserves a bounded pre-spawn profile safety code across IPC', async () => {
+    const path = socketPath()
+    const server = new UnixExecutorServer({
+      socketPath: path,
+      executor: {
+        execute: async () => {
+          throw new ExecutorExecutionError(
+            'PROFILE_SEED_HASH_MISMATCH',
+            'not_started',
+          )
+        },
+      },
+      frameTimeoutMs: 500,
+    })
+    await server.start()
+    try {
+      await assert.rejects(
+        new UnixExecutorClient({ socketPath: path, timeoutMs: 1_000 }).execute(
+          input,
+        ),
+        (error: unknown) =>
+          error instanceof ExecutorTransportError &&
+          error.code === 'PROFILE_SEED_HASH_MISMATCH' &&
+          !error.recoverable &&
+          error.executionState === 'not_started',
+      )
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('marks a completed executor timeout as terminal because provider usage is unknown', async () => {
     const path = socketPath()
     const server = new UnixExecutorServer({

@@ -183,5 +183,11 @@ function mapExecutorError(error: unknown): string {
   )
     return code
   if (/^HERMES_EXIT_[0-9]+$/.test(code)) return code
+  if (
+    /^(?:PROFILE_|UNSAFE_|SECRET_|EXPECTED_CHILD_|EXECUTOR_EFFECTIVE_|POSIX_|SERVICE_PRIMARY_|HERMES_CWD_)[A-Z0-9_]*$/.test(
+      code,
+    )
+  )
+    return code
   return 'EXECUTOR_FAILURE'
 }
