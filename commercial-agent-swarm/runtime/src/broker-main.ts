@@ -187,7 +187,7 @@ export function startDispatcherLoop(
   }
 }
 
-function brokerDispatcherEnvironment(
+export function brokerDispatcherEnvironment(
   environment: Record<string, string | undefined>,
 ): Record<string, string | undefined> {
   return Object.fromEntries(
@@ -200,6 +200,7 @@ function brokerDispatcherEnvironment(
       'OPENCODE_USAGE_RECONCILIATION_ENABLED',
       'OPENCODE_USAGE_SERVICE_ACCOUNT_ID',
       'OPENCODE_USAGE_TOKEN_FILE',
+      'OPENCODE_USAGE_PROXY_URL',
     ].map((name) => [name, environment[name]]),
   )
 }
