@@ -401,6 +401,34 @@ describe('isolated Hermes executor', () => {
       'HERMES_PROVIDER_NETWORK_ERROR',
     )
     assert.equal(
+      classifyHermesExit(
+        1,
+        '',
+        "Permission denied: '/run/commercial-swarm/hermes-executor/hermes-home-a1/logs/agent.log'",
+      ),
+      'HERMES_PROFILE_HOME_PERMISSION_DENIED',
+    )
+    assert.equal(
+      classifyHermesExit(
+        1,
+        '',
+        "Permission denied: '/run/commercial-swarm/hermes-executor/hermes-run-a1/output.json'",
+      ),
+      'HERMES_WORK_DIRECTORY_PERMISSION_DENIED',
+    )
+    assert.equal(
+      classifyHermesExit(1, '', 'Permission denied while opening state'),
+      'HERMES_LOCAL_PERMISSION_DENIED',
+    )
+    assert.equal(
+      classifyHermesExit(1, '', 'OSError: Read-only file system'),
+      'HERMES_LOCAL_READ_ONLY_FILESYSTEM',
+    )
+    assert.equal(
+      classifyHermesExit(1, '', 'invalid YAML in selected profile'),
+      'HERMES_PROFILE_YAML_INVALID',
+    )
+    assert.equal(
       classifyHermesExit(7, 'unclassified SECRET-VALUE', ''),
       'HERMES_EXIT_7',
     )

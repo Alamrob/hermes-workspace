@@ -81,8 +81,23 @@ export function classifyHermesExit(
     )
   )
     return 'HERMES_PROVIDER_NETWORK_ERROR'
-  if (/permission denied|invalid (?:yaml|config)|profile.{0,30}(?:invalid|error)/i.test(diagnostic))
-    return 'HERMES_LOCAL_CONFIGURATION_ERROR'
+  if (/permission denied/i.test(diagnostic)) {
+    if (/\/run\/commercial-swarm\/hermes-executor\/hermes-home-/i.test(diagnostic))
+      return 'HERMES_PROFILE_HOME_PERMISSION_DENIED'
+    if (/\/run\/commercial-swarm\/hermes-executor\/hermes-run-/i.test(diagnostic))
+      return 'HERMES_WORK_DIRECTORY_PERMISSION_DENIED'
+    if (/\/opt\/proptimiza-hermes(?:\/|\b)/i.test(diagnostic))
+      return 'HERMES_IMMUTABLE_SEED_PERMISSION_DENIED'
+    if (/\/tmp(?:\/|\b)/i.test(diagnostic))
+      return 'HERMES_TEMP_DIRECTORY_PERMISSION_DENIED'
+    return 'HERMES_LOCAL_PERMISSION_DENIED'
+  }
+  if (/read-only file system/i.test(diagnostic))
+    return 'HERMES_LOCAL_READ_ONLY_FILESYSTEM'
+  if (/invalid yaml/i.test(diagnostic)) return 'HERMES_PROFILE_YAML_INVALID'
+  if (/invalid config/i.test(diagnostic)) return 'HERMES_PROFILE_CONFIG_INVALID'
+  if (/profile.{0,30}(?:invalid|error)/i.test(diagnostic))
+    return 'HERMES_PROFILE_RUNTIME_ERROR'
   return `HERMES_EXIT_${exitCode}`
 }
 
