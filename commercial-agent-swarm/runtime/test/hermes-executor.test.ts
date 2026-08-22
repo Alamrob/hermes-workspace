@@ -3,7 +3,11 @@ import { access, chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { HermesExecutor, hashProfileSeed } from '../src/hermes-executor.js'
+import {
+  HermesExecutor,
+  classifyHermesExit,
+  hashProfileSeed,
+} from '../src/hermes-executor.js'
 import type {
   HomeOwnershipPreparer,
   ProcessInvocation,
@@ -36,6 +40,8 @@ class FakeRunner implements ProcessRunner {
   invocations: Array<ProcessInvocation> = []
   copiedSeed: string | undefined
   timedOut = false
+  exitCode = 0
+  stderr = ''
   output = JSON.stringify({
     mission_id: missionId,
     trace_id: traceId,
@@ -97,8 +103,8 @@ class FakeRunner implements ProcessRunner {
     )
     return {
       stdout: this.output,
-      stderr: '',
-      exitCode: 0,
+      stderr: this.stderr,
+      exitCode: this.exitCode,
       timedOut: this.timedOut,
     }
   }
@@ -374,6 +380,31 @@ describe('isolated Hermes executor', () => {
     state.runner.timedOut = true
     await assert.rejects(state.executor.execute(input()), /HERMES_TIMEOUT/)
     await assert.rejects(access(state.runner.invocations[0].env.HERMES_HOME))
+  })
+  it('classifies provider exits without persisting child-controlled text', async () => {
+    assert.equal(
+      classifyHermesExit(1, '', 'HTTP 401: Invalid API key SECRET-VALUE'),
+      'HERMES_PROVIDER_AUTH_REJECTED',
+    )
+    assert.equal(
+      classifyHermesExit(1, 'HTTP 400: max_tokens exceeds model limit', ''),
+      'HERMES_PROVIDER_REQUEST_REJECTED',
+    )
+    assert.equal(
+      classifyHermesExit(1, '', 'Connection error through proxy'),
+      'HERMES_PROVIDER_NETWORK_ERROR',
+    )
+    assert.equal(
+      classifyHermesExit(7, 'unclassified SECRET-VALUE', ''),
+      'HERMES_EXIT_7',
+    )
+    const state = await setup()
+    state.runner.exitCode = 1
+    state.runner.stderr = 'HTTP 403 forbidden SECRET-VALUE'
+    await assert.rejects(
+      state.executor.execute(input()),
+      /HERMES_PROVIDER_ACCESS_REJECTED/,
+    )
   })
   it('fails closed when cached-write pricing is unpublished', async () => {
     const state = await setup()

@@ -55,6 +55,37 @@ export const HERMES_KEY_ENV = 'OPENCODE_GO_API_KEY'
 export const SETPRIV_BINARY = '/usr/bin/setpriv'
 export const EXECUTOR_CHILD_SUPPLEMENTARY_GROUPS_CLEARED_V1 = true
 
+export function classifyHermesExit(
+  exitCode: number,
+  stdout: string,
+  stderr: string,
+): string {
+  const diagnostic = `${stdout.slice(0, 262_144)}\n${stderr.slice(0, 262_144)}`
+  if (/HTTP\s*401|invalid api key|unauthori[sz]ed/i.test(diagnostic))
+    return 'HERMES_PROVIDER_AUTH_REJECTED'
+  if (/HTTP\s*403|forbidden|access denied/i.test(diagnostic))
+    return 'HERMES_PROVIDER_ACCESS_REJECTED'
+  if (/HTTP\s*429|rate.?limit|quota|credit|balance/i.test(diagnostic))
+    return 'HERMES_PROVIDER_CAPACITY_REJECTED'
+  if (/model.{0,40}(?:not found|unsupported|unknown)|HTTP\s*404/i.test(diagnostic))
+    return 'HERMES_PROVIDER_MODEL_REJECTED'
+  if (
+    /HTTP\s*400|bad request|invalid_request|max_tokens|reasoning_effort|thinking/i.test(
+      diagnostic,
+    )
+  )
+    return 'HERMES_PROVIDER_REQUEST_REJECTED'
+  if (
+    /connection error|getaddrinfo|proxy error|connect(?:ion)? (?:refused|timeout)|timed? ?out|network (?:error|unreachable)/i.test(
+      diagnostic,
+    )
+  )
+    return 'HERMES_PROVIDER_NETWORK_ERROR'
+  if (/permission denied|invalid (?:yaml|config)|profile.{0,30}(?:invalid|error)/i.test(diagnostic))
+    return 'HERMES_LOCAL_CONFIGURATION_ERROR'
+  return `HERMES_EXIT_${exitCode}`
+}
+
 export interface ProcessInvocation {
   command: string
   args: Array<string>
@@ -265,7 +296,9 @@ export class HermesExecutor implements ExecutorPort {
       if (output.timedOut) throw new Error('HERMES_TIMEOUT')
       setExecutionState('finished')
       if (output.exitCode !== 0)
-        throw new Error(`HERMES_EXIT_${output.exitCode}`)
+        throw new Error(
+          classifyHermesExit(output.exitCode, output.stdout, output.stderr),
+        )
       const nativeUsage = validateHermesUsage(
         JSON.parse(
           await readSecureUsageFile(
