@@ -99,7 +99,7 @@ describe('CRM sync deployable process', () => {
       CRM_HEALTH_HOST: '0.0.0.0', CRM_HEALTH_PORT: '8081',
       CRM_DATABASE_URL_FILE: '/run/secrets/crm-db',
       TWENTY_API_TOKEN_FILE: '/run/secrets/twenty-token',
-      TWENTY_MAPPING_FILE: '/run/secrets/twenty-mapping',
+      TWENTY_MAPPING_FILE: '/run/config/twenty-mapping.json',
       TWENTY_API_ALLOWED_HOST: 'twenty-server:3000',
       TWENTY_API_BASE_URL: 'http://twenty-server:3000',
     })
@@ -192,12 +192,17 @@ describe('CRM sync deployable process', () => {
       CRM_HEALTH_HOST: '0.0.0.0', CRM_HEALTH_PORT: '8081',
       CRM_DATABASE_URL_FILE: '/run/secrets/crm-db',
       TWENTY_API_TOKEN_FILE: '/run/secrets/twenty-token',
-      TWENTY_MAPPING_FILE: '/run/secrets/twenty-mapping',
+      TWENTY_MAPPING_FILE: '/run/config/twenty-mapping.json',
       TWENTY_API_ALLOWED_HOST: 'twenty-server:3000',
     }
     assert.equal(loadCrmSyncProcessConfig({
       ...base, TWENTY_API_BASE_URL: 'http://twenty-server:3000',
     }).allowedHttpHost, 'twenty-server:3000')
+    for (const value of ['/run/secrets/twenty-mapping', '/run/config/../secrets/mapping', 'relative.json'])
+      assert.throws(
+        () => loadCrmSyncProcessConfig({ ...base, TWENTY_API_BASE_URL: 'http://twenty-server:3000', TWENTY_MAPPING_FILE: value }),
+        /TWENTY_MAPPING_FILE_INVALID/,
+      )
     for (const value of ['http://127.0.0.1:3000', 'http://169.254.169.254', 'http://twenty-server:3001'])
       assert.throws(
         () => loadCrmSyncProcessConfig({ ...base, TWENTY_API_BASE_URL: value }),

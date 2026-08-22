@@ -91,7 +91,7 @@ export function loadCrmSyncProcessConfig(
   if (mode === 'simulation') return common
   const twenty = loadTwentyClientConfig(environment)
   const databaseUrlFile = secretPath(environment.CRM_DATABASE_URL_FILE, 'CRM_DATABASE_URL_FILE')
-  const mappingFile = secretPath(environment.TWENTY_MAPPING_FILE, 'TWENTY_MAPPING_FILE')
+  const mappingFile = configPath(environment.TWENTY_MAPPING_FILE, 'TWENTY_MAPPING_FILE')
   return {
     ...common,
     apiBaseUrl: twenty.apiBaseUrl,
@@ -335,6 +335,13 @@ const simulationClient: TwentyClientPort = {
 function secretPath(value: string | undefined, name: string): string {
   const path = value?.trim()
   if (!path || !path.startsWith('/run/secrets/') || path.includes('..'))
+    throw new Error(`${name}_INVALID`)
+  return path
+}
+
+function configPath(value: string | undefined, name: string): string {
+  const path = value?.trim()
+  if (!path || !path.startsWith('/run/config/') || path.includes('..'))
     throw new Error(`${name}_INVALID`)
   return path
 }
