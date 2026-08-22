@@ -46,6 +46,10 @@ const INSTRUCTION_INBOX_MIGRATION = new URL(
   '../migrations/010_instruction_inbox.sql',
   import.meta.url,
 )
+const GO_NATIVE_USAGE_MIGRATION = new URL(
+  '../migrations/011_go_native_usage_ledger.sql',
+  import.meta.url,
+)
 const integration = ADMIN_URL ? describe : describe.skip
 
 integration('commercial catalog/control/mail data model', () => {
@@ -532,6 +536,7 @@ integration('commercial catalog/control/mail data model', () => {
     await pool.query(await readFile(USAGE_BUDGET_MIGRATION, 'utf8'))
     await pool.query(await readFile(INTERNAL_AUTOMATION_MIGRATION, 'utf8'))
     await pool.query(await readFile(INSTRUCTION_INBOX_MIGRATION, 'utf8'))
+    await pool.query(await readFile(GO_NATIVE_USAGE_MIGRATION, 'utf8'))
     const suffix = randomUUID().replaceAll('-', ''),
       password = `test_${suffix}`,
       names = {

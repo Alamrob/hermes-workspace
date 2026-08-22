@@ -15,6 +15,7 @@ describe('versioned migration runner', () => {
       { version: '008_simulation_safety_seed', sql: 'SELECT 8;' },
       { version: '009_internal_automation', sql: 'SELECT 9;' },
       { version: '010_instruction_inbox', sql: 'SELECT 10;' },
+      { version: '011_go_native_usage_ledger', sql: 'SELECT 11;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -32,6 +33,7 @@ describe('versioned migration runner', () => {
         '008_simulation_safety_seed',
         '009_internal_automation',
         '010_instruction_inbox',
+        '011_go_native_usage_ledger',
       ],
     )
     assert.equal(

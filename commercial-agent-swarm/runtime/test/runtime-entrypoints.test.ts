@@ -169,15 +169,17 @@ describe('broker dispatcher factory', () => {
     assert.deepEqual(queue.completed[0], {
       usageValueMicroCents: 1_000_000,
       usageRecordId: 'usage-new',
+      source: 'opencode_usage_export',
       budgetVersion: 7,
       total_tokens: 3,
       api_calls: 1,
     })
   })
 
-  it('does not read the token, export Usage, or invoke the child while disabled', async () => {
+  it('uses native Go telemetry without reading the unrelated Usage export credential', async () => {
     const queue = new Queue()
-    let touched = false
+    let executorCalls = 0
+    let usageCredentialTouches = 0
     const dispatcher = createBrokerDispatcher(
       environment(false),
       {} as never,
@@ -186,22 +188,28 @@ describe('broker dispatcher factory', () => {
         queue,
         executor: {
           execute: async () => {
-            touched = true
+            executorCalls += 1
             return envelope()
           },
         },
         usage: {
-          readToken: async () => { touched = true; return 'never' },
-          reader: { getCsvExport: async () => { touched = true; return 'never' } },
+          readToken: async () => { usageCredentialTouches += 1; return 'never' },
+          reader: { getCsvExport: async () => { usageCredentialTouches += 1; return 'never' } },
         },
       },
     )
 
     assert.equal(await dispatcher.runOnce(), true)
-    assert.equal(touched, false)
-    assert.deepEqual(queue.failed, [{
-      state: 'not_started',
-      error: 'OPENCODE_USAGE_RECONCILIATION_REQUIRED',
-    }])
+    assert.equal(executorCalls, 1)
+    assert.equal(usageCredentialTouches, 0)
+    assert.equal(queue.failed.length, 0)
+    assert.deepEqual(queue.completed[0], {
+      usageValueMicroCents: 1_000_000,
+      usageRecordId: `native:${claimed.job_id}:opencode-go-2026-08-21-v2`,
+      source: 'opencode_go_native_telemetry',
+      budgetVersion: 7,
+      total_tokens: 3,
+      api_calls: 1,
+    })
   })
 })

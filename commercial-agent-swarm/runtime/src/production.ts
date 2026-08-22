@@ -181,7 +181,7 @@ const EXPECTED_FUNCTIONS: Record<
     'control.recover_dispatch_leases()',
     'control.claim_dispatch(text,integer,integer)',
     'control.fail_dispatch(uuid,text,text,boolean,text,bigint)',
-    'control.complete_dispatch(uuid,text,jsonb,text,bigint,text,bigint,bigint,integer)',
+    'control.complete_dispatch(uuid,text,jsonb,text,bigint,text,text,bigint,bigint,integer)',
     'control.external_actions_blocked()',
     'control.get_mission_execution(uuid)',
     'control.get_dispatch_dependency_evidence(uuid)',

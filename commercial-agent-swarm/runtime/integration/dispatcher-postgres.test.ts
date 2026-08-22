@@ -32,6 +32,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       '003_dispatch_queue.sql',
       '007_usage_budget_ledger.sql',
       '009_internal_automation.sql',
+      '011_go_native_usage_ledger.sql',
     ])
       await a.query(
         await readFile(
@@ -240,6 +241,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       first.complete(id, 'wrong-worker', completionEnvelope(), 'a'.repeat(64), {
         usageValueMicroCents: 400_000,
         usageRecordId: 'usage-wrong-worker',
+        source: 'opencode_go_native_telemetry',
         budgetVersion: claim.usageBudget.version,
         total_tokens: 15,
         api_calls: 1,
@@ -254,6 +256,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       {
         usageValueMicroCents: 400_000,
         usageRecordId: 'usage-complete',
+        source: 'opencode_go_native_telemetry',
         budgetVersion: claim.usageBudget.version,
         total_tokens: 15,
         api_calls: 1,
@@ -292,6 +295,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       {
         usageValueMicroCents: 400_000,
         usageRecordId: 'usage-dependency-primary',
+        source: 'opencode_go_native_telemetry',
         budgetVersion: primary.usageBudget.version,
         total_tokens: 15,
         api_calls: 1,

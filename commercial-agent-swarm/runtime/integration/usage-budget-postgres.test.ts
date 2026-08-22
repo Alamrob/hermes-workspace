@@ -33,6 +33,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       '008_simulation_safety_seed',
       '009_internal_automation',
       '010_instruction_inbox',
+      '011_go_native_usage_ledger',
     ]
     await runVersionedMigrations(leftPool, await Promise.all(versions.map(async (version) => ({
       version,
@@ -69,6 +70,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       left.complete(firstJob.job_id, 'worker-a', completionEnvelope(), 'a'.repeat(64), {
         usageValueMicroCents: 0,
         usageRecordId: 'usage-record-zero',
+        source: 'opencode_go_native_telemetry',
         budgetVersion: 1,
         total_tokens: 15,
         api_calls: 1,
@@ -78,6 +80,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     await left.complete(firstJob.job_id, 'worker-a', completionEnvelope(), 'a'.repeat(64), {
       usageValueMicroCents: 3_000_000,
       usageRecordId: 'usage-record-settle-1',
+      source: 'opencode_go_native_telemetry',
       budgetVersion: 1,
       total_tokens: 15,
       api_calls: 1,
@@ -105,6 +108,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     await assert.rejects(
       left.complete(firstJob.job_id, 'worker-a', completionEnvelope(), 'a'.repeat(64), {
         usageValueMicroCents: 3_000_000, usageRecordId: 'usage-record-settle-1',
+        source: 'opencode_go_native_telemetry',
         budgetVersion: 1, total_tokens: 15, api_calls: 1,
       }),
       /DISPATCH_LEASE_CONFLICT|USAGE_BUDGET_CAS_CONFLICT/,
@@ -179,6 +183,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       await left.complete(candidate.job_id, `mission-worker-${index}`, completionEnvelope(), 'b'.repeat(64), {
         usageValueMicroCents: 10_000_000,
         usageRecordId: `usage-mission-${index}`,
+        source: 'opencode_go_native_telemetry',
         budgetVersion: claim.usageBudget.version,
         total_tokens: 15,
         api_calls: 1,
@@ -220,6 +225,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     assert.equal(boundaryClaim.usageBudget.totalCommittedBeforeMicroCents, 990_000_000)
     await left.complete(boundary.job_id, 'activation-worker', completionEnvelope(), 'c'.repeat(64), {
       usageValueMicroCents: 10_000_000, usageRecordId: 'usage-activation-boundary',
+      source: 'opencode_go_native_telemetry',
       budgetVersion: boundaryClaim.usageBudget.version, total_tokens: 15, api_calls: 1,
     })
     const overMission = await saveMission(leftPool, 'activation-over', 0.5)

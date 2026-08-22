@@ -52,6 +52,7 @@ export interface ClaimedJob {
 export interface CompletionCost {
   usageValueMicroCents: number
   usageRecordId: string
+  source: 'opencode_usage_export' | 'opencode_go_native_telemetry'
   budgetVersion: number
   total_tokens: number
   api_calls: number
@@ -265,7 +266,7 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
     cost: CompletionCost,
   ): Promise<void> {
     await this.pool.query(
-      'SELECT control.complete_dispatch($1::uuid,$2,$3::jsonb,$4,$5::bigint,$6,$7::bigint,$8::bigint,$9)',
+      'SELECT control.complete_dispatch($1::uuid,$2::text,$3::jsonb,$4::text,$5::bigint,$6::text,$7::text,$8::bigint,$9::bigint,$10::integer)',
       [
         id,
         worker,
@@ -273,6 +274,7 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
         artifactHash,
         cost.usageValueMicroCents,
         cost.usageRecordId,
+        cost.source,
         cost.budgetVersion,
         cost.total_tokens,
         cost.api_calls,
@@ -323,33 +325,51 @@ export class DeterministicDispatcher {
     this.emitPhase(job, 'claimed')
 
     try {
-      if (!this.options.usageProbe || !this.options.serviceAccountId)
-        throw new Error('OPENCODE_USAGE_RECONCILIATION_REQUIRED')
       let envelope: ExecutorEnvelope | undefined
-      const measured = await this.options.usageProbe.measure({
-        serviceAccountId: this.options.serviceAccountId,
-        missionCommittedUsageValueMicroCents:
-          job.usageBudget.missionCommittedBeforeMicroCents,
-        totalCommittedUsageValueMicroCents:
-          job.usageBudget.totalCommittedBeforeMicroCents,
-        onPhase: (phase) => this.emitPhase(job, phase),
-        probe: async () => {
-          envelope = await this.options.executor.execute({
-            mission_id: job.mission_id,
-            trace_id: job.trace_id,
-            assignment_id: job.job_id,
-            profile_id: job.profile_id,
-            execution_timeout_ms: this.options.hermesTimeoutMs,
-            instruction: job.instruction,
-            evidence: job.evidence,
-            reservation: job.reservation,
-          })
-          return envelope.usage
-        },
-      })
-      if (!envelope) throw new Error('OPENCODE_USAGE_RECONCILIATION_FAILED')
+      const execute = async () => {
+        envelope = await this.options.executor.execute({
+          mission_id: job.mission_id,
+          trace_id: job.trace_id,
+          assignment_id: job.job_id,
+          profile_id: job.profile_id,
+          execution_timeout_ms: this.options.hermesTimeoutMs,
+          instruction: job.instruction,
+          evidence: job.evidence,
+          reservation: job.reservation,
+        })
+        return envelope.usage
+      }
+      const measured =
+        this.options.usageProbe && this.options.serviceAccountId
+          ? await this.options.usageProbe.measure({
+              serviceAccountId: this.options.serviceAccountId,
+              missionCommittedUsageValueMicroCents:
+                job.usageBudget.missionCommittedBeforeMicroCents,
+              totalCommittedUsageValueMicroCents:
+                job.usageBudget.totalCommittedBeforeMicroCents,
+              onPhase: (phase) => this.emitPhase(job, phase),
+              probe: execute,
+            })
+          : undefined
+      if (!measured) {
+        this.emitPhase(job, 'executor_start')
+        await execute()
+        this.emitPhase(job, 'executor_complete')
+      }
+      if (!envelope) throw new Error('HERMES_EXECUTOR_RESULT_MISSING')
       if (envelope.usage.cost.status !== 'known')
         throw new Error('HERMES_COST_UNKNOWN')
+      const nativeMicroCents = Math.round(
+        envelope.usage.cost.usage_value_usd * 100_000_000,
+      )
+      if (
+        !Number.isSafeInteger(nativeMicroCents) ||
+        nativeMicroCents < 1 ||
+        nativeMicroCents > job.usageBudget.reservationMicroCents
+      )
+        throw new Error('HERMES_NATIVE_USAGE_VALUE_INVALID')
+      const usageRecordId = measured?.usageRecordId ??
+        `native:${job.job_id}:${envelope.usage.cost.pricing_snapshot_id}`
       const hash = hashAction(envelope.agent_result)
       await this.options.queue.complete(
         job.job_id,
@@ -357,8 +377,12 @@ export class DeterministicDispatcher {
         envelope,
         hash,
         {
-          usageValueMicroCents: measured.runUsageValueMicroCents,
-          usageRecordId: measured.usageRecordId,
+          usageValueMicroCents:
+            measured?.runUsageValueMicroCents ?? nativeMicroCents,
+          usageRecordId,
+          source: measured
+            ? 'opencode_usage_export'
+            : 'opencode_go_native_telemetry',
           budgetVersion: job.usageBudget.version,
           total_tokens: envelope.usage.tokens.total,
           api_calls: envelope.usage.api_calls,

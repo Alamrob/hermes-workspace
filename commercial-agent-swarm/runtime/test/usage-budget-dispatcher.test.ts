@@ -121,13 +121,14 @@ describe('authoritative Usage budget dispatch wiring', () => {
     assert.deepEqual(queue.completed[0][4], {
       usageValueMicroCents: 3_000_000,
       usageRecordId: 'usage-record-1',
+      source: 'opencode_usage_export',
       budgetVersion: 4,
       total_tokens: 3,
       api_calls: 1,
     })
   })
 
-  it('fails before executor invocation when reconciliation is disabled', async () => {
+  it('settles directly from priced native Go telemetry when Usage export is disabled', async () => {
     const queue = new Queue()
     let executorCalls = 0
     const dispatcher = new DeterministicDispatcher({
@@ -137,9 +138,16 @@ describe('authoritative Usage budget dispatch wiring', () => {
       hermesTimeoutMs: 30_000,
     })
     assert.equal(await dispatcher.runOnce(), true)
-    assert.equal(executorCalls, 0)
-    assert.equal(queue.completed.length, 0)
-    assert.equal(queue.failed[0][4], 'not_started')
+    assert.equal(executorCalls, 1)
+    assert.equal(queue.failed.length, 0)
+    assert.deepEqual(queue.completed[0][4], {
+      usageValueMicroCents: 1_000_000,
+      usageRecordId: `native:${claimed.job_id}:opencode-go-2026-08-21-v2`,
+      source: 'opencode_go_native_telemetry',
+      budgetVersion: 4,
+      total_tokens: 3,
+      api_calls: 1,
+    })
   })
 
   it('releases the reservation when the authoritative baseline fails before executor invocation', async () => {

@@ -12,6 +12,7 @@ const EXPECTED_MIGRATIONS = [
   '008_simulation_safety_seed',
   '009_internal_automation',
   '010_instruction_inbox',
+  '011_go_native_usage_ledger',
 ] as const
 
 export interface MigrationSource {
