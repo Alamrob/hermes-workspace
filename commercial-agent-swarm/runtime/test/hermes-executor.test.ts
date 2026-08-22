@@ -93,6 +93,7 @@ class FakeRunner implements ProcessRunner {
     service_tier: null,
   }
   usageRaw: string | undefined
+  writeUsage = true
   async run(invocation: ProcessInvocation) {
     this.invocations.push(invocation)
     this.copiedSeed = await readFile(
@@ -100,10 +101,11 @@ class FakeRunner implements ProcessRunner {
       'utf8',
     )
     const usageIndex = invocation.args.indexOf('--usage-file')
-    await writeFile(
-      invocation.args[usageIndex + 1],
-      this.usageRaw ?? JSON.stringify(this.usage),
-    )
+    if (this.writeUsage)
+      await writeFile(
+        invocation.args[usageIndex + 1],
+        this.usageRaw ?? JSON.stringify(this.usage),
+      )
     return {
       stdout: this.output,
       stderr: this.stderr,
@@ -386,6 +388,23 @@ describe('isolated Hermes executor', () => {
     state.runner.timedOut = true
     await assert.rejects(state.executor.execute(input()), /HERMES_TIMEOUT/)
     await assert.rejects(access(state.runner.invocations[0].env.HERMES_HOME))
+  })
+  it('classifies an exit-zero provider failure when Hermes omits its usage file', async () => {
+    const state = await setup()
+    state.runner.writeUsage = false
+    state.runner.stderr =
+      'API call failed after 3 retries: Connection error. SECRET-VALUE'
+    await assert.rejects(
+      state.executor.execute(input()),
+      /HERMES_PROVIDER_NETWORK_ERROR/,
+    )
+    await assert.rejects(access(state.runner.invocations[0].cwd))
+  })
+  it('fails closed with unknown usage when Hermes exits zero silently', async () => {
+    const state = await setup()
+    state.runner.writeUsage = false
+    await assert.rejects(state.executor.execute(input()), /HERMES_USAGE_UNKNOWN/)
+    await assert.rejects(access(state.runner.invocations[0].cwd))
   })
   it('classifies provider exits without persisting child-controlled text', async () => {
     assert.equal(

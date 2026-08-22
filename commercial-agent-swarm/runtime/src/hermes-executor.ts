@@ -314,13 +314,28 @@ export class HermesExecutor implements ExecutorPort {
         throw new Error(
           classifyHermesExit(output.exitCode, output.stdout, output.stderr),
         )
+      let usagePayload: string
+      try {
+        usagePayload = await readSecureUsageFile(
+          usageFile,
+          this.options.expectedUsageUid ?? this.options.childUid,
+        )
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === 'HERMES_USAGE_UNKNOWN'
+        ) {
+          const classified = classifyHermesExit(
+            1,
+            output.stdout,
+            output.stderr,
+          )
+          if (classified !== 'HERMES_EXIT_1') throw new Error(classified)
+        }
+        throw error
+      }
       const nativeUsage = validateHermesUsage(
-        JSON.parse(
-          await readSecureUsageFile(
-            usageFile,
-            this.options.expectedUsageUid ?? this.options.childUid,
-          ),
-        ) as unknown,
+        JSON.parse(usagePayload) as unknown,
         input.reservation,
       )
       const usage = priceOpenCodeGoUsage(nativeUsage, pricingNow)
@@ -685,6 +700,8 @@ async function readSecureUsageFile(
   } catch (error) {
     if (error instanceof Error && error.message === 'UNSAFE_HERMES_USAGE_FILE')
       throw error
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+      throw new Error('HERMES_USAGE_UNKNOWN')
     throw new Error('UNSAFE_HERMES_USAGE_FILE')
   } finally {
     await handle?.close()
