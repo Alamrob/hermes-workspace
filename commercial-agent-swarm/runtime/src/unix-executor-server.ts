@@ -193,6 +193,12 @@ function mapExecutorError(error: unknown): string {
   )
     return code
   if (
+    /^HERMES_(?:(?:PROFILE_HOME|WORK_DIRECTORY|IMMUTABLE_SEED|TEMP_DIRECTORY|LOCAL)_PERMISSION_DENIED|LOCAL_READ_ONLY_FILESYSTEM|PROFILE_(?:YAML_INVALID|CONFIG_INVALID|RUNTIME_ERROR))$/.test(
+      code,
+    )
+  )
+    return code
+  if (
     /^(?:PROFILE_|UNSAFE_|SECRET_|EXPECTED_CHILD_|EXECUTOR_EFFECTIVE_|POSIX_|SERVICE_PRIMARY_|HERMES_CWD_)[A-Z0-9_]*$/.test(
       code,
     )

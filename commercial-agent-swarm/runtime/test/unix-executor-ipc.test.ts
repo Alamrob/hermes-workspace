@@ -406,6 +406,37 @@ describe('Unix executor IPC', () => {
     }
   })
 
+  it('preserves every closed local Hermes classifier code across IPC', async () => {
+    const codes = [
+      'HERMES_PROFILE_HOME_PERMISSION_DENIED',
+      'HERMES_WORK_DIRECTORY_PERMISSION_DENIED',
+      'HERMES_IMMUTABLE_SEED_PERMISSION_DENIED',
+      'HERMES_TEMP_DIRECTORY_PERMISSION_DENIED',
+      'HERMES_LOCAL_PERMISSION_DENIED',
+      'HERMES_LOCAL_READ_ONLY_FILESYSTEM',
+      'HERMES_PROFILE_YAML_INVALID',
+      'HERMES_PROFILE_CONFIG_INVALID',
+      'HERMES_PROFILE_RUNTIME_ERROR',
+    ]
+    for (const code of codes) {
+      const path = socketPath()
+      const server = new UnixExecutorServer({
+        socketPath: path,
+        executor: { execute: async () => { throw new ExecutorExecutionError(code, 'finished') } },
+        frameTimeoutMs: 500,
+      })
+      await server.start()
+      try {
+        await assert.rejects(
+          new UnixExecutorClient({ socketPath: path, timeoutMs: 1_000 }).execute(input),
+          (error: unknown) => error instanceof ExecutorTransportError && error.code === code,
+        )
+      } finally {
+        await server.stop()
+      }
+    }
+  })
+
   it('normalizes a local POSIX failure without exposing paths across IPC', async () => {
     const path = socketPath()
     const server = new UnixExecutorServer({
