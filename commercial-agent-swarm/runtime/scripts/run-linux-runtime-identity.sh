@@ -18,8 +18,8 @@ exec /usr/bin/setpriv \
   --reuid=10000 \
   --regid=10000 \
   --clear-groups \
-  --inh-caps=+chown,+setgid,+setuid,+setpcap \
-  --ambient-caps=+chown,+setgid,+setuid,+setpcap \
-  --bounding-set=-all,+chown,+setgid,+setuid,+setpcap \
+  --inh-caps=+chown,+kill,+setgid,+setuid,+setpcap \
+  --ambient-caps=+chown,+kill,+setgid,+setuid,+setpcap \
+  --bounding-set=-all,+chown,+kill,+setgid,+setuid,+setpcap \
   --no-new-privs \
   -- /usr/local/bin/node /workspace/scripts/test-linux-runtime-identity.mjs
