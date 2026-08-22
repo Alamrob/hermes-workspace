@@ -32,7 +32,22 @@ await ownership.prepare(ephemeral, 10002, 10002)
 assert.equal((await lstat(ephemeral)).uid, 10002)
 assert.equal((await lstat(ephemeral)).gid, 10000)
 assert.equal((await lstat(join(ephemeral, 'profile'))).uid, 10002)
+const childProfileProbe = await new NodeProcessRunner().run({
+  command: process.execPath,
+  args: ['-e', `require('fs').appendFileSync(${JSON.stringify(join(ephemeral, 'profile'))},'-child')`],
+  env: { PATH: '/usr/local/bin:/usr/bin:/bin' },
+  uid: 10002,
+  gid: 10002,
+  shell: false,
+  detached: true,
+  cwd,
+  timeoutMs: 5_000,
+  stdoutLimitBytes: 4_096,
+  stderrLimitBytes: 4_096,
+})
+assert.equal(childProfileProbe.exitCode, 0, childProfileProbe.stderr)
 await ownership.reclaim(ephemeral, 10000, 10000)
+assert.equal(await readFile(join(ephemeral, 'profile'), 'utf8'), 'fixture-child')
 await rm(ephemeral, { recursive: true })
 
 const security = new PosixSocketSecurity(directory, 11000, 10000, 10000)

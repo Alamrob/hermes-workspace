@@ -12,7 +12,7 @@ chmod 2770 /tmp/runtime-identity/ipc
 chown 10000:11000 /tmp/runtime-identity/ipc
 chmod 0710 /tmp/runtime-identity/cwd
 chown 10002:10000 /tmp/runtime-identity/cwd
-chmod 0700 /tmp/runtime-identity/temporary
+chmod 0711 /tmp/runtime-identity/temporary
 chown 10000:10000 /tmp/runtime-identity/temporary
 exec /usr/bin/setpriv \
   --reuid=10000 \

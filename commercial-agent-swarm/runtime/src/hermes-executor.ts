@@ -497,7 +497,7 @@ export class PosixHomeOwnershipPreparer implements HomeOwnershipPreparer {
       (process.platform !== 'win32' &&
         (root.uid !== this.supervisorUid ||
           root.gid !== this.supervisorGid ||
-          (root.mode & 0o022) !== 0))
+          (root.mode & 0o777) !== 0o711))
     )
       throw new Error('UNSAFE_EPHEMERAL_HOME_PATH')
   }
@@ -588,7 +588,7 @@ async function assertSecureDirectory(
     throw new Error('UNSAFE_TEMPORARY_ROOT')
   if (
     process.platform !== 'win32' &&
-    (metadata.uid !== ownerUid || (metadata.mode & 0o022) !== 0)
+    (metadata.uid !== ownerUid || (metadata.mode & 0o777) !== 0o711)
   )
     throw new Error('UNSAFE_TEMPORARY_ROOT')
 }

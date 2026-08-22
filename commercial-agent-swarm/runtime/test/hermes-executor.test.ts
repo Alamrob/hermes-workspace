@@ -123,7 +123,10 @@ async function setup(options: { productionPricing?: boolean } = {}) {
   )
   const keyFile = join(root, 'custom-api-key')
   await writeFile(keyFile, 'llm-only-secret\n')
-  if (process.platform !== 'win32') await chmod(keyFile, 0o600)
+  if (process.platform !== 'win32') {
+    await chmod(root, 0o711)
+    await chmod(keyFile, 0o600)
+  }
   const runner = new FakeRunner()
   const ownershipCalls: Array<{ home: string; uid: number; gid: number }> = []
   const ownership: HomeOwnershipPreparer = {
@@ -420,7 +423,7 @@ describe('isolated Hermes executor', () => {
       await mkdir(logs, { recursive: true, mode: 0o700 })
       await writeFile(log, '', { mode: 0o400 })
       await chown(root, 0, 0)
-      await chmod(root, 0o700)
+      await chmod(root, 0o711)
       try {
         await new PosixHomeOwnershipPreparer(root, 0, 0).prepare(
           home,
