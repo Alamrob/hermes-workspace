@@ -45,6 +45,7 @@ export async function loadMigrationSources() {
       '011_go_native_usage_ledger',
       '012_dependency_terminalization',
       '013_variable_usage_reservations',
+      '014_variable_usage_constraint',
     ].map(async (version) => ({
       version,
       sql: await readFile(

@@ -36,6 +36,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       '011_go_native_usage_ledger',
       '012_dependency_terminalization',
       '013_variable_usage_reservations',
+      '014_variable_usage_constraint',
     ]
     await runVersionedMigrations(leftPool, await Promise.all(versions.map(async (version) => ({
       version,
@@ -352,6 +353,8 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       [candidate.job_id],
     )).rows[0], { status: 'usage_unknown', usage_budget_state: 'held_uncertain', usage_value_actual_micro_cents: null })
 
+    const constraintRollback = await readFile(new URL('../migrations/014_variable_usage_constraint.rollback.sql', import.meta.url), 'utf8')
+    await leftPool.query(constraintRollback)
     const variableRollback = await readFile(new URL('../migrations/013_variable_usage_reservations.rollback.sql', import.meta.url), 'utf8')
     await leftPool.query(variableRollback)
     const rollback = await readFile(new URL('../migrations/007_usage_budget_ledger.rollback.sql', import.meta.url), 'utf8')

@@ -15,6 +15,7 @@ const EXPECTED_MIGRATIONS = [
   '011_go_native_usage_ledger',
   '012_dependency_terminalization',
   '013_variable_usage_reservations',
+  '014_variable_usage_constraint',
 ] as const
 
 export interface MigrationSource {
