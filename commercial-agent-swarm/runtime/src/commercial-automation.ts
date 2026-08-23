@@ -74,6 +74,16 @@ const APPROVED_COMMERCIAL_CONTEXT = [
   '- Facts absent from the signed work order or verified evidence remain unknown. Label assumptions, inferences, recommendations and experiments separately.',
 ].join('\n')
 
+const STRICT_INTERNAL_OUTPUT_CONTRACT = [
+  'EXECUTION_CONTRACT_V1:',
+  '- Complete this bounded design in the first model response. Do not call file, todo, session_search, web or any other tool.',
+  '- Put the complete requested deliverable in summary using compact headings and at most 3,500 characters.',
+  '- Set facts, inferences, actions_taken, evidence, artifacts, errors, risks, pending_approvals and external_changes to empty arrays because this mission supplies no verified customer facts and authorizes no tool action.',
+  '- Use only scalar metrics such as plan_version and deliverable_count. Use at most three concise recommended_next_actions.',
+  '- Preserve the four identity fields from the output template. Do not invent hashes, timestamps, costs, sources, actions or approvals; the runtime replaces telemetry fields.',
+  '- Return status completed only when every requested section is present in summary; otherwise return blocked with the exact material gap.',
+].join('\n')
+
 const WORKFLOWS: Workflow[] = [
   {
     identifier: 'ALA-31', predecessor: 'ALA-30', primaryProfile: 'qualification-prioritization',
@@ -83,27 +93,27 @@ const WORKFLOWS: Workflow[] = [
   {
     identifier: 'ALA-32', predecessor: 'ALA-31', primaryProfile: 'sales-orchestrator',
     objective: 'Prepare the internal landing, funnel and bounded channel experiment design.',
-    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\nTASK ALA-32: Produce a generic, non-addressed internal demand-generation design, not personalized outreach. Deliver: (1) landing-page information architecture and draft copy with only approved generic offer statements; (2) one primary CTA and a measurable funnel from visit to qualified discovery request; (3) channel hypotheses limited to future controlled email and owned landing-page tests; (4) a backlog of ten experiments, changing exactly one of segment, offer framing, channel or message per experiment; and (5) for every experiment, hypothesis, fixed variables, sample as a scenario, primary metric, evidence required, threshold, guardrail, maximum cost, duration and kill rule. Do not invent conversion baselines, testimonials, savings, contacts, suppression state or proof. No recipient identity is required because this artifact is generic and contact_permitted=false. Return a completed internal artifact when these requirements are met; block only for a material missing input that cannot safely remain an explicit scenario or unknown.`,
+    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\n${STRICT_INTERNAL_OUTPUT_CONTRACT}\nTASK ALA-32: Produce a generic, non-addressed internal demand-generation design, not personalized outreach. Deliver: (1) landing-page information architecture and draft copy with only approved generic offer statements; (2) one primary CTA and a measurable funnel from visit to qualified discovery request; (3) channel hypotheses limited to future controlled email and owned landing-page tests; (4) a backlog of ten experiments, changing exactly one of segment, offer framing, channel or message per experiment; and (5) for every experiment, hypothesis, fixed variables, sample as a scenario, primary metric, evidence required, threshold, guardrail, maximum cost, duration and kill rule. Do not invent conversion baselines, testimonials, savings, contacts, suppression state or proof. No recipient identity is required because this artifact is generic and contact_permitted=false.`,
   },
   {
     identifier: 'ALA-33', predecessor: 'ALA-32', primaryProfile: 'qualification-prioritization',
     objective: 'Define the measurable CRM pipeline, SLAs, fields and revenue analytics.',
-    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\nTASK ALA-33: Specify a proposed measurable CRM operating design without writing to the CRM. For each non-ambiguous pipeline stage include entry condition, mandatory evidence, next action, accountable role, maximum age, stagnation alert, exit condition and exception path. Include closed-lost reason taxonomy, minimum account/contact/opportunity fields, data provenance and freshness, deduplication keys, SLA definitions, and formulas for stage conversion, velocity, cycle time, win rate, ticket, gross margin, CAC, payback and pipeline coverage. Unknown current baselines must remain unknown; thresholds and probabilities must be labeled proposed scenarios pending observed data.`,
+    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\n${STRICT_INTERNAL_OUTPUT_CONTRACT}\nTASK ALA-33: Specify a proposed measurable CRM operating design without writing to the CRM. For each non-ambiguous pipeline stage include entry condition, mandatory evidence, next action, accountable role, maximum age, stagnation alert, exit condition and exception path. Include closed-lost reason taxonomy, minimum account/contact/opportunity fields, data provenance and freshness, deduplication keys, SLA definitions, and formulas for stage conversion, velocity, cycle time, win rate, ticket, gross margin, CAC, payback and pipeline coverage. Unknown current baselines must remain unknown; thresholds and probabilities must be labeled proposed scenarios pending observed data.`,
   },
   {
     identifier: 'ALA-34', predecessor: 'ALA-33', primaryProfile: 'sales-orchestrator',
     objective: 'Design the minimum Diagnostico360 delivery architecture from validated commercial evidence.',
-    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\nTASK ALA-34: Design the minimum proposed Diagnostico360 delivery architecture as a delivery component supporting Proptimiza, not as a separately approved commercial offer. Map only capabilities justified by the approved Operación Sin Planillas motion to intake, diagnostic, recommendation, implementation handoff, onboarding, activation, support and measurable first value. Separate confirmed portfolio facts from assumptions and recommendations; define required evidence, owners, dependencies, exclusions, failure modes and acceptance criteria. Keep any unverified module, integration or autonomous action disabled. Do not claim that Diagnostico360 is production-ready, sold or validated unless verified evidence says so.`,
+    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\n${STRICT_INTERNAL_OUTPUT_CONTRACT}\nTASK ALA-34: Design the minimum proposed Diagnostico360 delivery architecture as a delivery component supporting Proptimiza, not as a separately approved commercial offer. Map only capabilities justified by the approved Operación Sin Planillas motion to intake, diagnostic, recommendation, implementation handoff, onboarding, activation, support and measurable first value. Separate confirmed portfolio facts from assumptions and recommendations; define required evidence, owners, dependencies, exclusions, failure modes and acceptance criteria. Keep any unverified module, integration or autonomous action disabled. Do not claim that Diagnostico360 is production-ready, sold or validated unless verified evidence says so.`,
   },
   {
     identifier: 'ALA-35', predecessor: 'ALA-34', primaryProfile: 'sales-orchestrator',
     objective: 'Run the independent governance, compliance and commercial kill-gate review.',
-    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\nTASK ALA-35: Produce a governance and commercial kill-gate dossier for independent QA. Evaluate privacy, authorization, consent/opposition, promises, price consistency, unit-economics unknowns, operational complexity, domain reputation, deliverability prerequisites, duplication, data freshness, secrets, access control, auditability, rollback and kill switches. For every gate state the required evidence, owner, pass/fail/unknown rule, current evidence state, remediation and promotion blocker. Never treat this execution or its QA result as human approval and never self-promote A3.`,
+    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\n${STRICT_INTERNAL_OUTPUT_CONTRACT}\nTASK ALA-35: Produce a governance and commercial kill-gate dossier for independent QA. Evaluate privacy, authorization, consent/opposition, promises, price consistency, unit-economics unknowns, operational complexity, domain reputation, deliverability prerequisites, duplication, data freshness, secrets, access control, auditability, rollback and kill switches. For every gate state the required evidence, owner, pass/fail/unknown rule, current evidence state, remediation and promotion blocker. Never treat this execution or its QA result as human approval and never self-promote A3.`,
   },
   {
     identifier: 'ALA-36', predecessor: 'ALA-35', primaryProfile: 'sales-orchestrator',
     objective: 'Synthesize the approved evidence into the 72-hour to 90-day execution roadmap.',
-    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\nTASK ALA-36: Synthesize only approved and QA-reviewed evidence into a proposed roadmap from the next 72 hours through day 90 toward a target of five paying customers. Include phases, owners or suggested owners, dependencies, internal deliverables, scenario budgets, KPI definitions, evidence gates, stop conditions, rollback and decisions requiring the user. Distinguish current facts from targets and recommendations. Shadow mode, internal mail test and any future external pilot are separate gates; do not schedule or authorize external outreach, CRM writes, spending or A3.`,
+    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\n${STRICT_INTERNAL_OUTPUT_CONTRACT}\nTASK ALA-36: Synthesize only approved and QA-reviewed evidence into a proposed roadmap from the next 72 hours through day 90 toward a target of five paying customers. Include phases, owners or suggested owners, dependencies, internal deliverables, scenario budgets, KPI definitions, evidence gates, stop conditions, rollback and decisions requiring the user. Distinguish current facts from targets and recommendations. Shadow mode, internal mail test and any future external pilot are separate gates; do not schedule or authorize external outreach, CRM writes, spending or A3.`,
   },
 ]
 
@@ -117,7 +127,7 @@ export class CommercialAutomation {
 
   constructor(private readonly options: CommercialAutomationOptions) {
     this.now = options.now ?? (() => new Date())
-    this.workflowVersion = options.workflowVersion ?? 'commercial-v5'
+    this.workflowVersion = options.workflowVersion ?? 'commercial-v6'
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(this.workflowVersion)) throw new Error('AUTOMATION_WORKFLOW_VERSION_INVALID')
   }
 
