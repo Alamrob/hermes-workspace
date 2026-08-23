@@ -276,6 +276,33 @@ describe('Paperclip commercial automation', () => {
     assert.match(assignments[0].instruction, /AFTER LEDGER FIX/)
   })
 
+  it('dispatches ALA-42 as one fixed-URL extraction with a reconciled USD 0.08 ceiling', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-40', 'blocked'), issue('ALA-41', 'blocked'), issue('ALA-42', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const dispatched = await automation(paperclip, broker).tick()
+    assert.equal(dispatched.issue, 'ALA-42')
+    const order = broker.orders[0] as any
+    assert.equal(order.idempotency_key, 'paperclip:ALA-42:commercial-v14')
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.budget_limit.maximum, 0.08)
+    assert.equal(order.volume_limits.maximum_accounts, 1)
+    assert.equal(order.volume_limits.maximum_contacts, 0)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    assert.equal(order.contact_policy.contact_permitted, false)
+    const assignments = broker.plans[0].assignments
+    assert.equal(assignments.length, 2)
+    assert.ok(assignments.every((assignment) => assignment.usage_value_reservation_usd === 0.04))
+    assert.ok(assignments.every((assignment) => assignment.maximum_tokens === 24_000))
+    assert.ok(assignments.every((assignment) => assignment.maximum_api_calls === 3))
+    assert.ok(assignments.every((assignment) => assignment.max_attempts === 1))
+    assert.match(assignments[0].instruction, /Do not call web_search/)
+    assert.match(assignments[0].instruction, /web_extract exactly once/)
+    assert.match(assignments[0].instruction, /https:\/\/www\.buk\.cl\//)
+    assert.match(assignments[1].instruction, /ONE-COMPANY INDEPENDENT QA/)
+  })
+
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),
