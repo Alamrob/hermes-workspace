@@ -7,6 +7,7 @@ import { ExecutorTransportError } from './unix-executor-client.js'
 import type { ExecutorIpcPhase } from './unix-executor-client.js'
 import type { Pool } from 'pg'
 import type {
+  ExecutionPolicy,
   ExecutorEnvelope,
   ExecutorPort,
   ProfileId,
@@ -34,6 +35,7 @@ export interface ClaimedJob {
   profile_id: ProfileId
   instruction: string
   evidence: { trust: 'untrusted_data'; content: string }
+  execution_policy: ExecutionPolicy
   reservation: {
     maximum_tokens: number
     maximum_api_calls: number
@@ -209,6 +211,14 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
         row.evidence,
         dependencies.rows[0]?.evidence,
       )
+      const missionResult = await client.query<{ payload: unknown }>(
+        'SELECT control.get_mission($1::uuid) AS payload',
+        [row.mission_id],
+      )
+      const executionPolicy = parseExecutionPolicy(
+        missionResult.rows[0]?.payload,
+        row.trace_id,
+      )
       const claimed: ClaimedJob = {
           job_id: row.job_id,
           mission_id: row.mission_id,
@@ -216,6 +226,7 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
           profile_id: row.profile_id,
           instruction: row.instruction,
           evidence,
+          execution_policy: executionPolicy,
           reservation: {
             maximum_tokens: integer(row.maximum_tokens),
             maximum_api_calls: row.maximum_api_calls,
@@ -338,6 +349,7 @@ export class DeterministicDispatcher {
           execution_timeout_ms: this.options.hermesTimeoutMs,
           instruction: job.instruction,
           evidence: job.evidence,
+          execution_policy: job.execution_policy,
           reservation: job.reservation,
         })
         return envelope.usage
@@ -443,6 +455,38 @@ function integer(value: string): number {
   if (!Number.isSafeInteger(parsed) || parsed < 0)
     throw new Error('USAGE_BUDGET_RESULT_INVALID')
   return parsed
+}
+
+function parseExecutionPolicy(value: unknown, traceId: string): ExecutionPolicy {
+  if (!record(value)) throw new Error('MISSION_EXECUTION_POLICY_INVALID')
+  const arrays = ['allowed_actions', 'approved_channels', 'approved_tools'] as const
+  if (
+    value.trace_id !== traceId ||
+    !['A0', 'A1', 'A2'].includes(String(value.autonomy_level)) ||
+    value.project_id !== 'proptimiza' ||
+    value.dry_run !== true ||
+    arrays.some((field) => !validPolicyStrings(value[field]))
+  )
+    throw new Error('MISSION_EXECUTION_POLICY_INVALID')
+  return {
+    autonomy_level: value.autonomy_level as ExecutionPolicy['autonomy_level'],
+    allowed_actions: [...(value.allowed_actions as string[])],
+    approved_channels: [...(value.approved_channels as string[])],
+    approved_tools: [...(value.approved_tools as string[])],
+  }
+}
+
+function validPolicyStrings(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 32 &&
+    new Set(value).size === value.length &&
+    value.every(
+      (item) =>
+        typeof item === 'string' &&
+        /^[a-z][a-z0-9._-]{0,63}$/.test(item),
+    )
+  )
 }
 
 export function mergeDependencyEvidence(

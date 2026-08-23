@@ -31,6 +31,12 @@ function input(evidence = 'analyze public facts'): ExecuteInput {
     execution_timeout_ms: 1_000,
     instruction: 'Analyze only the supplied evidence.',
     evidence: { trust: 'untrusted_data', content: evidence },
+    execution_policy: {
+      autonomy_level: 'A1',
+      allowed_actions: ['analysis.internal', 'research.public.read'],
+      approved_channels: ['internal', 'public_web'],
+      approved_tools: ['hermes.analysis', 'hermes.web'],
+    },
     reservation: {
       maximum_tokens: 100,
       maximum_api_calls: 2,
@@ -115,7 +121,7 @@ class FakeRunner implements ProcessRunner {
   }
 }
 
-async function setup(options: { productionPricing?: boolean } = {}) {
+async function setup(options: { productionPricing?: boolean; externalResearchEnabled?: boolean } = {}) {
   const root = join(tmpdir(), `executor-test-${crypto.randomUUID()}`)
   const seed = join(root, 'seed')
   await mkdir(join(seed, 'profiles', profileId), { recursive: true })
@@ -150,8 +156,9 @@ async function setup(options: { productionPricing?: boolean } = {}) {
     expectedSecretGid: 10000,
     readCustomApiKey: async (path) => (await readFile(path, 'utf8')).trim(),
     safePath: '/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin',
-    modelProxyUrl: 'http://egress-proxy:3128',
+    modelProxyUrl: 'http://executor-egress-proxy:3128',
     noProxy: 'broker,localhost,127.0.0.1',
+    externalResearchEnabled: options.externalResearchEnabled ?? true,
     timeoutMs: 1_000,
     pricingClock: () => new Date('2026-08-16T12:00:00Z'),
     pricingPreflight: options.productionPricing ? undefined : () => undefined,
@@ -167,6 +174,15 @@ describe('isolated Hermes executor', () => {
     )
     assert.match(entrypoints, /expectedUsageUid:\s*config\.childUid/)
     assert.doesNotMatch(entrypoints, /expectedUsageUid:\s*config\.executorUid/)
+  })
+  it('fails before spawning a web-capable profile when the deployment research gate is closed', async () => {
+    const state = await setup({ externalResearchEnabled: false })
+    await assert.rejects(
+      () => state.executor.execute(input()),
+      /EXECUTION_TOOL_POLICY_DENIED/,
+    )
+    assert.equal(state.runner.invocations.length, 0)
+    await rm(state.root, { recursive: true, force: true })
   })
   it('uses exact Hermes 0.20.1 argv, controlled cwd, non-root identity, filtered env, and cleanup', async () => {
     const state = await setup()
@@ -220,8 +236,8 @@ describe('isolated Hermes executor', () => {
       invocation.env.OPENCODE_GO_BASE_URL,
       'https://opencode.ai/zen/go/v1',
     )
-    assert.equal(invocation.env.HTTP_PROXY, 'http://egress-proxy:3128')
-    assert.equal(invocation.env.HTTPS_PROXY, 'http://egress-proxy:3128')
+    assert.equal(invocation.env.HTTP_PROXY, 'http://executor-egress-proxy:3128')
+    assert.equal(invocation.env.HTTPS_PROXY, 'http://executor-egress-proxy:3128')
     assert.equal(invocation.env.NO_PROXY, 'broker,localhost,127.0.0.1')
     assert.match(state.runner.copiedSeed!, /provider: opencode-go/)
     for (const forbidden of [

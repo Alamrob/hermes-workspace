@@ -41,6 +41,7 @@ import type { AgentResult } from './agent-result.js'
 
 export {
   ACTIVE_PROFILES,
+  type ExecutionPolicy,
   type ExecuteInput,
   type ProfileId,
 } from './executor-contract.js'
@@ -157,6 +158,7 @@ export interface HermesExecutorOptions {
   safePath: string
   modelProxyUrl: string
   noProxy: string
+  externalResearchEnabled: boolean
   timeoutMs: number
   stdoutLimitBytes?: number
   stderrLimitBytes?: number
@@ -194,6 +196,8 @@ export class HermesExecutor implements ExecutorPort {
       throw new Error('EXECUTOR_MODEL_PROXY_INVALID')
     if (!/^[0-9a-f]{64}$/.test(options.expectedSeedSha256))
       throw new Error('PROFILE_SEED_HASH_REQUIRED')
+    if (typeof options.externalResearchEnabled !== 'boolean')
+      throw new Error('EXTERNAL_RESEARCH_GATE_REQUIRED')
     if (
       !Number.isSafeInteger(options.timeoutMs) ||
       options.timeoutMs <= 0 ||
@@ -237,6 +241,7 @@ export class HermesExecutor implements ExecutorPort {
     })
     if (request.execution_timeout_ms !== this.options.timeoutMs)
       throw new Error('HERMES_TIMEOUT_HANDSHAKE_MISMATCH')
+    assertExecutionAuthority(request, this.options.externalResearchEnabled)
     const pricingNow = (this.options.pricingClock ?? (() => new Date()))()
     ;(this.options.pricingPreflight ?? assertOpenCodeGoExecutionPreflight)(
       request.reservation,
@@ -406,6 +411,73 @@ export class HermesExecutor implements ExecutorPort {
       await rm(cwd, { recursive: true, force: true })
     }
   }
+}
+
+const EXECUTION_CAPABILITIES: Record<
+  ProfileId,
+  {
+    tools: string[]
+    actions: string[]
+    channels: string[]
+    research: boolean
+  }
+> = {
+  'sales-orchestrator': {
+    tools: ['hermes.analysis'],
+    actions: ['analysis.internal'],
+    channels: ['internal'],
+    research: false,
+  },
+  'market-account-intelligence': {
+    tools: ['hermes.analysis', 'hermes.web'],
+    actions: ['analysis.internal', 'research.public.read'],
+    channels: ['internal', 'public_web'],
+    research: true,
+  },
+  'contact-data-steward': {
+    tools: ['hermes.analysis', 'hermes.web'],
+    actions: ['analysis.internal', 'research.public.read'],
+    channels: ['internal', 'public_web'],
+    research: true,
+  },
+  'qualification-prioritization': {
+    tools: ['hermes.analysis'],
+    actions: ['analysis.internal'],
+    channels: ['internal'],
+    research: false,
+  },
+  'outreach-draft-manager': {
+    tools: ['hermes.analysis', 'hermes.file.ephemeral'],
+    actions: ['analysis.internal', 'artifact.prepare'],
+    channels: ['internal'],
+    research: false,
+  },
+  'commercial-qa-compliance': {
+    tools: ['hermes.analysis'],
+    actions: ['analysis.internal'],
+    channels: ['internal'],
+    research: false,
+  },
+}
+
+export function assertExecutionAuthority(
+  input: ExecuteInput,
+  externalResearchEnabled: boolean,
+): void {
+  const capability = EXECUTION_CAPABILITIES[input.profile_id]
+  const policy = input.execution_policy
+  const tools = new Set(policy.approved_tools)
+  const actions = new Set(policy.allowed_actions)
+  const channels = new Set(policy.approved_channels)
+  if (
+    capability.tools.some((item) => !tools.has(item)) ||
+    capability.actions.some((item) => !actions.has(item)) ||
+    capability.channels.some((item) => !channels.has(item)) ||
+    (capability.research &&
+      (!externalResearchEnabled ||
+        !['A1', 'A2'].includes(policy.autonomy_level)))
+  )
+    throw new Error('EXECUTION_TOOL_POLICY_DENIED')
 }
 
 const RESULT_VALIDATION_FAILURES = new Set([

@@ -17,7 +17,11 @@ import {
   verifyWorkOrder,
 } from './security.js'
 import { ValidationError, validateWorkOrder } from './work-orders.js'
-import { AssignmentPlanError, validateAssignmentPlan } from './assignment-plan.js'
+import {
+  AssignmentPlanError,
+  validateAssignmentPlan,
+  type AssignmentPlan,
+} from './assignment-plan.js'
 import type { DispatchQueuePort } from './dispatch-queue.js'
 
 export interface ApplicationRequest {
@@ -167,6 +171,7 @@ export class BrokerApplication {
       const mission = await this.options.repository.getMission(plan.mission_id)
       if (!mission) return { status: 404, body: { error: 'not_found' } }
       assertInternalExecutionMission(mission, plan.trace_id)
+      assertAssignmentPlanAuthority(mission, plan)
       const assignmentIds: string[] = []
       for (const assignment of plan.assignments) {
         assignmentIds.push(await this.options.dispatchQueue.enqueue({
@@ -371,6 +376,72 @@ function assertInternalExecutionMission(
     requiredProhibitions.some((action) => !prohibited.includes(action))
   )
     throw new AuthenticationError('INTERNAL_EXECUTION_POLICY_REQUIRED')
+}
+
+const PROFILE_CAPABILITIES = {
+  'sales-orchestrator': {
+    tools: ['hermes.analysis'],
+    actions: ['analysis.internal'],
+    channels: ['internal'],
+    research: false,
+  },
+  'market-account-intelligence': {
+    tools: ['hermes.analysis', 'hermes.web'],
+    actions: ['analysis.internal', 'research.public.read'],
+    channels: ['internal', 'public_web'],
+    research: true,
+  },
+  'contact-data-steward': {
+    tools: ['hermes.analysis', 'hermes.web'],
+    actions: ['analysis.internal', 'research.public.read'],
+    channels: ['internal', 'public_web'],
+    research: true,
+  },
+  'qualification-prioritization': {
+    tools: ['hermes.analysis'],
+    actions: ['analysis.internal'],
+    channels: ['internal'],
+    research: false,
+  },
+  'outreach-draft-manager': {
+    tools: ['hermes.analysis', 'hermes.file.ephemeral'],
+    actions: ['analysis.internal', 'artifact.prepare'],
+    channels: ['internal'],
+    research: false,
+  },
+  'commercial-qa-compliance': {
+    tools: ['hermes.analysis'],
+    actions: ['analysis.internal'],
+    channels: ['internal'],
+    research: false,
+  },
+} as const
+
+export function assertAssignmentPlanAuthority(
+  mission: Record<string, unknown>,
+  plan: AssignmentPlan,
+): void {
+  const tools = stringSet(mission.approved_tools)
+  const actions = stringSet(mission.allowed_actions)
+  const channels = stringSet(mission.approved_channels)
+  if (!tools || !actions || !channels)
+    throw new AuthenticationError('ASSIGNMENT_TOOL_POLICY_REQUIRED')
+  for (const assignment of plan.assignments) {
+    const capability = PROFILE_CAPABILITIES[assignment.profile_id]
+    if (
+      capability.tools.some((item) => !tools.has(item)) ||
+      capability.actions.some((item) => !actions.has(item)) ||
+      capability.channels.some((item) => !channels.has(item)) ||
+      (capability.research && !['A1', 'A2'].includes(String(mission.autonomy_level)))
+    )
+      throw new AuthenticationError('ASSIGNMENT_TOOL_POLICY_REQUIRED')
+  }
+}
+
+function stringSet(value: unknown): Set<string> | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string'))
+    return null
+  return new Set(value as string[])
 }
 
 function validateEvidenceDecision(value: unknown): {

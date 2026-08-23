@@ -17,7 +17,7 @@ export const EXECUTOR_GID = 10000
 export const EXECUTOR_CHILD_UID = 10002
 export const EXECUTOR_CHILD_GID = 10002
 export const EXECUTOR_IPC_GID = 11000
-export const EXECUTOR_MODEL_PROXY_URL = 'http://egress-proxy:3128'
+export const EXECUTOR_MODEL_PROXY_URL = 'http://executor-egress-proxy:3128'
 export const EXECUTOR_NO_PROXY = 'broker,localhost,127.0.0.1'
 
 export interface BrokerRuntimeConfig {
@@ -41,6 +41,7 @@ export interface ExecutorRuntimeConfig {
   customApiKeyFile: string
   modelProxyUrl: string
   noProxy: string
+  externalResearchEnabled: boolean
   hermesTimeoutMs: number
 }
 
@@ -118,6 +119,7 @@ export function loadExecutorRuntimeConfig(
     customApiKeyFile: required(env, 'CUSTOM_API_KEY_FILE'),
     modelProxyUrl: httpProxy,
     noProxy,
+    externalResearchEnabled: boolean(env, 'EXTERNAL_RESEARCH_ENABLED'),
     hermesTimeoutMs: integer(env, 'HERMES_TIMEOUT_MS', 1, 3_600_000),
   }
 }
@@ -153,4 +155,13 @@ function integer(
   if (!Number.isSafeInteger(value) || value < min || value > max)
     throw new Error(`${name}_INVALID`)
   return value
+}
+function boolean(
+  env: Record<string, string | undefined>,
+  name: string,
+): boolean {
+  const value = required(env, name)
+  if (value !== 'true' && value !== 'false')
+    throw new Error(`${name}_INVALID`)
+  return value === 'true'
 }

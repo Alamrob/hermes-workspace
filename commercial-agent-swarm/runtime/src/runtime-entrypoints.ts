@@ -94,6 +94,7 @@ export function createExecutorServer(
     safePath: '/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin',
     modelProxyUrl: config.modelProxyUrl,
     noProxy: config.noProxy,
+    externalResearchEnabled: config.externalResearchEnabled,
     timeoutMs: config.hermesTimeoutMs,
   })
   return new UnixExecutorServer({

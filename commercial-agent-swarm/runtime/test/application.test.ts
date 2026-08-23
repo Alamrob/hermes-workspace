@@ -560,6 +560,24 @@ describe('broker application routes', () => {
     assert.equal((execution.body as MissionExecution).assignments.length, 2)
   })
 
+  it('rejects a web-capable profile unless the signed mission authorizes its exact action, channel, tool and A1+', async () => {
+    const state = setup('either', false, false)
+    const order = signedInternalWorkOrder()
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: order,
+    })).status, 201)
+    const plan = assignmentPlan()
+    plan.assignments[0].profile_id = 'market-account-intelligence'
+    const denied = await state.app.handle({
+      method: 'POST',
+      path: `/v1/missions/${order.mission_id}/assignments`,
+      headers: headers('control-plane-token'),
+      body: plan,
+    })
+    assert.deepEqual(denied, { status: 403, body: { error: 'forbidden' } })
+    assert.equal(state.dispatched.length, 0)
+  })
+
   it('rejects assignment plans that are cyclic, lack final QA, or target an external/A3 mission', async () => {
     const internal = setup('either', false, false)
     const order = signedInternalWorkOrder()

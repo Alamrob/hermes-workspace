@@ -34,7 +34,7 @@ Sitio corporativo oficial, página profesional pública del empleador, registros
 
 ## Herramientas
 
-Solo `web` y `file`. `web` busca y extrae información pública sin browser interactivo; `file` lee la orden y escribe artefactos internos. No hay herramientas de envío, CRM, terminal, código, memoria, cron ni MCP.
+Solo `web`, limitado a búsqueda pública sin browser interactivo. No hay extracción arbitraria de páginas, archivos, envío, CRM, terminal, código, memoria, cron, delegación ni MCP.
 
 ## Procedimiento operativo
 
@@ -69,7 +69,7 @@ La memoria durable está deshabilitada. No crea dossiers persistentes, listas pe
 
 ## Permisos
 
-Máximo A1 para fuentes públicas y A2 para archivos internos. **A3 no está disponible para este perfil. A4 es humano y exclusivamente humano.**
+Máximo A1 para búsqueda pública; el runtime conserva el resultado internamente. **A2 de escritura, A3 y A4 no están disponibles para este perfil; A4 es humano y exclusivamente humano.**
 
 ## Aprobaciones
 

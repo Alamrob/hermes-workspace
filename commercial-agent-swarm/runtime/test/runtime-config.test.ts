@@ -48,9 +48,10 @@ describe('split runtime trust-zone configuration', () => {
       HERMES_PROFILE_SEED_SHA256: 'a'.repeat(64),
       HERMES_TEMPORARY_ROOT: '/run/hermes-executor',
       CUSTOM_API_KEY_FILE: '/run/secrets/key',
-      HTTP_PROXY: 'http://egress-proxy:3128',
-      HTTPS_PROXY: 'http://egress-proxy:3128',
+      HTTP_PROXY: 'http://executor-egress-proxy:3128',
+      HTTPS_PROXY: 'http://executor-egress-proxy:3128',
       NO_PROXY: 'broker,localhost,127.0.0.1',
+      EXTERNAL_RESEARCH_ENABLED: 'false',
     }
     assert.equal(
       loadExecutorRuntimeConfig(good).customApiKeyFile,

@@ -9,6 +9,13 @@ export const ACTIVE_PROFILES = [
 
 export type ProfileId = (typeof ACTIVE_PROFILES)[number]
 
+export interface ExecutionPolicy {
+  autonomy_level: 'A0' | 'A1' | 'A2'
+  allowed_actions: string[]
+  approved_channels: string[]
+  approved_tools: string[]
+}
+
 export interface ExecuteInput {
   mission_id: string
   trace_id: string
@@ -17,6 +24,7 @@ export interface ExecuteInput {
   execution_timeout_ms: number
   instruction: string
   evidence: { trust: 'untrusted_data'; content: string }
+  execution_policy: ExecutionPolicy
   reservation: {
     maximum_tokens: number
     maximum_api_calls: number
@@ -98,11 +106,13 @@ export function validateExecuteRequest(value: unknown): ExecuteRequest {
       'execution_timeout_ms',
       'instruction',
       'evidence',
+      'execution_policy',
       'reservation',
     ])
   )
     invalid('INVALID_EXECUTOR_REQUEST')
   const evidence = value.evidence
+  const executionPolicy = value.execution_policy
   const reservation = value.reservation
   if (
     !isRecord(evidence) ||
@@ -110,6 +120,8 @@ export function validateExecuteRequest(value: unknown): ExecuteRequest {
     evidence.trust !== 'untrusted_data' ||
     typeof evidence.content !== 'string'
   )
+    invalid('INVALID_EXECUTOR_REQUEST')
+  if (!validExecutionPolicy(executionPolicy))
     invalid('INVALID_EXECUTOR_REQUEST')
   if (
     !isRecord(reservation) ||
@@ -313,6 +325,7 @@ export function buildHermesPrompt(value: ExecuteRequest): string {
       trace_id: request.trace_id,
       assignment_id: request.assignment_id,
       agent_id: request.profile_id,
+      execution_policy: request.execution_policy,
     }),
     'TRUSTED_INSTRUCTION:',
     request.instruction,
@@ -485,6 +498,34 @@ function validReservation(value: Record<string, unknown>): boolean {
     Number.isFinite(charge.amount) &&
     charge.amount > 0 &&
     charge.amount <= 10_000
+  )
+}
+function validExecutionPolicy(value: unknown): value is ExecutionPolicy {
+  if (
+    !isRecord(value) ||
+    !onlyKeys(value, [
+      'autonomy_level',
+      'allowed_actions',
+      'approved_channels',
+      'approved_tools',
+    ]) ||
+    !['A0', 'A1', 'A2'].includes(String(value.autonomy_level))
+  )
+    return false
+  return [
+    value.allowed_actions,
+    value.approved_channels,
+    value.approved_tools,
+  ].every(
+    (items) =>
+      Array.isArray(items) &&
+      items.length <= 32 &&
+      new Set(items).size === items.length &&
+      items.every(
+        (item) =>
+          typeof item === 'string' &&
+          /^[a-z][a-z0-9._-]{0,63}$/.test(item),
+      ),
   )
 }
 function validUsageReservation(value: Record<string, unknown>): boolean {

@@ -10,7 +10,7 @@ Identificar empresas chilenas B2B de servicios con 10–100 personas y señales 
 
 ## Alcance
 
-Investiga fuentes web públicas accesibles sin autenticación, contrasta identidad empresarial, tamaño, ubicación, actividad y señales operativas, y escribe artefactos internos con citas y confianza.
+Investiga mediante búsqueda web pública accesible sin autenticación y devuelve resultados al runtime con citas y confianza. Contrasta identidad empresarial, tamaño, ubicación, actividad y señales operativas sin descargar páginas ni escribir archivos.
 
 ## Fuera de alcance
 
@@ -34,7 +34,7 @@ Sitios oficiales de empresas, registros públicos legítimos, cámaras/asociacio
 
 ## Herramientas
 
-Solo `web` y `file`. `web` realiza búsqueda/extracción pública sin browser interactivo; `file` lee inputs y escribe resultados internos en rutas autorizadas. No uses ninguna otra herramienta.
+Solo `web`, limitado a búsqueda pública sin browser interactivo. No hay extracción arbitraria de páginas, archivos, terminal, código, memoria, mensajería, CRM, delegación ni MCP. No uses ninguna otra herramienta.
 
 ## Procedimiento operativo
 
@@ -69,7 +69,7 @@ La memoria durable está deshabilitada. No crea perfiles persistentes ni guarda 
 
 ## Permisos
 
-Máximo A1 para lectura pública y A2 para archivos internos. **A3 no está disponible para este perfil. A4 es humano y exclusivamente humano.**
+Máximo A1 para búsqueda pública; el runtime conserva el resultado internamente. **A2 de escritura, A3 y A4 no están disponibles para este perfil; A4 es humano y exclusivamente humano.**
 
 ## Aprobaciones
 
