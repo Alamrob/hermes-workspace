@@ -25,4 +25,13 @@ describe('commercial Hermes profile accounting', () => {
       )
     }
   })
+
+  it('binds market extraction to the reviewed read-only public HTTP provider', async () => {
+    const config = await readFile(
+      new URL('../../profiles/market-account-intelligence/config.yaml', import.meta.url),
+      'utf8',
+    )
+    assert.match(config, /web:\s*\n\s+search_backend: ddgs\s*\n\s+extract_backend: public-http/)
+    assert.match(config, /disabled_toolsets:\s*[\s\S]*?- browser/)
+  })
 })

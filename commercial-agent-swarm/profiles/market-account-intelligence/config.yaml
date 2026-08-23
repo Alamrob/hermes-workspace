@@ -5,6 +5,9 @@ model:
 auxiliary:
   title_generation:
     enabled: false
+web:
+  search_backend: ddgs
+  extract_backend: public-http
 memory:
   memory_enabled: false
   user_profile_enabled: false
