@@ -25,8 +25,8 @@ class PaperclipFake implements PaperclipAutomationPort {
   constructor(readonly values = structuredClone(issues)) {}
   async listIssues() { return structuredClone(this.values) }
   async listComments(id: string) { return structuredClone(this.comments.get(id) ?? []) }
-  async addSystemComment(id: string, body: string) {
-    this.comments.set(id, [...(this.comments.get(id) ?? []), { body, authorType: 'system' }])
+  async addSignedComment(id: string, body: string) {
+    this.comments.set(id, [...(this.comments.get(id) ?? []), { body, authorType: 'user' }])
   }
   async updateIssueStatus(id: string, status: 'in_progress' | 'in_review' | 'blocked') {
     this.updates.push({ id, status })
@@ -41,6 +41,7 @@ class BrokerFake implements BrokerAutomationPort {
   execution: MissionExecution | null = null
   async createWorkOrder(order: WorkOrder) { this.orders.push(structuredClone(order)) }
   async createAssignments(plan: AssignmentPlan) { this.plans.push(structuredClone(plan)) }
+  async findExecution() { return this.execution }
   async getExecution(missionId: string) {
     return this.execution ?? { mission_id: missionId, status: 'queued', assignments: [] }
   }
@@ -93,7 +94,7 @@ describe('Paperclip commercial automation', () => {
     assert.deepEqual(paperclip.updates, [{ id: 'issue-ala-31', status: 'in_progress' }])
   })
 
-  it('resumes from its exact system marker without duplicate dispatch and returns QA to review', async () => {
+  it('resumes from its exact signed marker without duplicate dispatch and returns QA to review', async () => {
     const paperclip = new PaperclipFake()
     const broker = new BrokerFake()
     const service = automation(paperclip, broker)
@@ -111,6 +112,21 @@ describe('Paperclip commercial automation', () => {
     assert.equal(broker.orders.length, 1)
     assert.equal(paperclip.updates.at(-1)?.status, 'in_review')
     assert.match(paperclip.comments.get('issue-ala-31')!.at(-1)!.body, /qa_sha256=b{64}/)
+  })
+
+  it('repairs a mission accepted before the signed Paperclip marker without creating a duplicate order', async () => {
+    const paperclip = new PaperclipFake()
+    const broker = new BrokerFake()
+    const missionId = deterministicUuid('387d4503-0f7b-4708-bb62-8295a1e23e1b:issue-ala-31:commercial-v2:mission')
+    broker.execution = { mission_id: missionId, status: 'running', assignments: [] }
+    const recovered = await automation(paperclip, broker).tick()
+    assert.deepEqual(recovered, {
+      status: 'running', issue: 'ALA-31', mission_id: missionId, external_actions: 0,
+    })
+    assert.equal(broker.orders.length, 0)
+    assert.equal(broker.plans.length, 1)
+    assert.equal(paperclip.comments.get('issue-ala-31')?.length, 1)
+    assert.equal(paperclip.comments.get('issue-ala-31')?.[0]?.authorType, 'user')
   })
 
   it('blocks rather than promoting when execution fails or QA evidence is absent', async () => {

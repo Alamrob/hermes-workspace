@@ -371,11 +371,11 @@ export function validateHermesUsage(
     invalid('HERMES_USAGE_COUNTS_INVALID')
   if (Number(value.total_tokens) !== expectedTotal)
     invalid('HERMES_USAGE_TOTAL_MISMATCH')
-  if (
-    Number(value.total_tokens) > reservation.maximum_tokens ||
-    Number(value.api_calls) > reservation.maximum_api_calls
-  )
-    invalid('HERMES_USAGE_BUDGET_EXCEEDED')
+  // Preserve valid post-execution telemetry even when a usage ceiling was
+  // exceeded. The authoritative completion transaction compares these counts
+  // with the reservation and settles the job as budget_exceeded; rejecting the
+  // report here would discard known cost and incorrectly quarantine it as
+  // usage_unknown.
   if (value.model !== 'deepseek-v4-flash')
     invalid('HERMES_USAGE_MODEL_MISMATCH')
   if (value.provider !== 'opencode-go')

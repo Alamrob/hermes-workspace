@@ -22,13 +22,14 @@ export type PaperclipComment = {
 export interface PaperclipAutomationPort {
   listIssues(): Promise<PaperclipIssue[]>
   listComments(issueId: string): Promise<PaperclipComment[]>
-  addSystemComment(issueId: string, body: string): Promise<void>
+  addSignedComment(issueId: string, body: string): Promise<void>
   updateIssueStatus(issueId: string, status: 'in_progress' | 'in_review' | 'blocked'): Promise<void>
 }
 
 export interface BrokerAutomationPort {
   createWorkOrder(order: WorkOrder): Promise<void>
   createAssignments(plan: AssignmentPlan): Promise<void>
+  findExecution(missionId: string): Promise<MissionExecution | null>
   getExecution(missionId: string): Promise<MissionExecution>
 }
 
@@ -131,7 +132,7 @@ export class CommercialAutomation {
 
       const comments = await this.options.paperclip.listComments(issue.id)
       const marker = comments
-        .filter((comment) => comment.authorType === 'system')
+        .filter((comment) => comment.authorType === 'system' || comment.authorType === 'user')
         .map((comment) => MARKER.exec(comment.body))
         .find(
           (match) =>
@@ -155,16 +156,21 @@ export class CommercialAutomation {
     const traceId = deterministicUuid(`${this.options.companyId}:${issue.id}:${this.workflowVersion}:trace`)
     const created = this.now()
     const expires = new Date(created.getTime() + 24 * 60 * 60 * 1000)
-    const order = this.workOrder(issue, workflow, missionId, traceId, created, expires)
-    await this.options.broker.createWorkOrder(order)
     const plan = this.assignmentPlan(issue, workflow, missionId, traceId)
+    const existing = await this.options.broker.findExecution(missionId)
+    if (!existing) {
+      const order = this.workOrder(issue, workflow, missionId, traceId, created, expires)
+      await this.options.broker.createWorkOrder(order)
+    }
+    // Assignment enqueueing is idempotent. Repeating it repairs a mission that
+    // was accepted before a later Paperclip write failed.
     await this.options.broker.createAssignments(plan)
-    await this.options.paperclip.addSystemComment(
+    await this.options.paperclip.addSignedComment(
       issue.id,
       this.marker(issue.id, missionId),
     )
     await this.options.paperclip.updateIssueStatus(issue.id, 'in_progress')
-    return result('dispatched', issue.identifier, missionId)
+    return existing ? await this.reconcile(issue, missionId) : result('dispatched', issue.identifier, missionId)
   }
 
   private marker(issueId: string, missionId: string): string {
@@ -201,7 +207,7 @@ export class CommercialAutomation {
     if (execution.status === 'queued' || execution.status === 'running')
       return result('running', issue.identifier, missionId)
     if (execution.status === 'blocked' || execution.status === 'failed') {
-      await this.options.paperclip.addSystemComment(
+      await this.options.paperclip.addSignedComment(
         issue.id,
         `AUTOMATION_RESULT_V1 mission=${missionId} status=${execution.status}; no external actions; inspect broker audit evidence.`,
       )
@@ -210,7 +216,7 @@ export class CommercialAutomation {
     }
     const qa = execution.assignments.find((assignment) => assignment.profile_id === 'commercial-qa-compliance')
     if (!qa || qa.status !== 'succeeded' || !qa.artifact_sha256) {
-      await this.options.paperclip.addSystemComment(
+      await this.options.paperclip.addSignedComment(
         issue.id,
         `AUTOMATION_RESULT_V1 mission=${missionId} status=blocked; required QA evidence missing; no external actions.`,
       )
@@ -218,7 +224,7 @@ export class CommercialAutomation {
       return result('blocked', issue.identifier, missionId)
     }
     const primary = execution.assignments.find((assignment) => assignment.profile_id !== 'commercial-qa-compliance')
-    await this.options.paperclip.addSystemComment(
+    await this.options.paperclip.addSignedComment(
       issue.id,
       `AUTOMATION_RESULT_V1 mission=${missionId} status=review_ready primary_sha256=${primary?.artifact_sha256 ?? 'missing'} qa_sha256=${qa.artifact_sha256} external_actions=0`,
     )

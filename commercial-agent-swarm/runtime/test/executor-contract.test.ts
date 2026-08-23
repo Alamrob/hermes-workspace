@@ -99,6 +99,29 @@ describe('closed executor contracts', () => {
     )
     assert.equal(usage.cost.status, 'unknown')
     assert.equal(usage.cost.usage_value_usd, null)
+    const overage = validateHermesUsage(
+      {
+        input_tokens: 101,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: 0,
+        total_tokens: 101,
+        api_calls: 3,
+        model: 'deepseek-v4-flash',
+        provider: 'opencode-go',
+        completed: true,
+        failed: false,
+        estimated_cost_usd: null,
+        cost_status: 'unknown',
+        cost_source: 'none',
+        session_id: null,
+        service_tier: null,
+      },
+      { maximum_tokens: 100, maximum_api_calls: 2 },
+    )
+    assert.equal(overage.tokens.total, 101)
+    assert.equal(overage.api_calls, 3)
     assert.throws(
       () =>
         validateHermesUsage(

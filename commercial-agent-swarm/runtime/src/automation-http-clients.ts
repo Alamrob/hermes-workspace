@@ -39,12 +39,10 @@ export class PaperclipHttpClient implements PaperclipAutomationPort {
     })
   }
 
-  async addSystemComment(issueId: string, body: string): Promise<void> {
+  async addSignedComment(issueId: string, body: string): Promise<void> {
     if (body.length < 1 || body.length > 4_000) throw new Error('PAPERCLIP_COMMENT_INVALID')
     await this.request(`/api/issues/${uuid(issueId)}/comments`, 'POST', {
       body,
-      authorType: 'system',
-      presentation: { kind: 'system_notice', tone: 'info', title: 'Commercial automation', detailsDefaultOpen: false },
     })
   }
 
@@ -95,13 +93,19 @@ export class BrokerHttpClient implements BrokerAutomationPort {
   async createAssignments(plan: AssignmentPlan): Promise<void> {
     await this.request(`/v1/missions/${plan.mission_id}/assignments`, 'POST', plan, await this.controlBearer(), [202])
   }
-  async getExecution(missionId: string): Promise<MissionExecution> {
-    const value = await this.request(`/internal/v1/missions/${uuid(missionId)}/execution`, 'GET', undefined, await this.internalBearer(), [200])
+  async findExecution(missionId: string): Promise<MissionExecution | null> {
+    const value = await this.request(`/internal/v1/missions/${uuid(missionId)}/execution`, 'GET', undefined, await this.internalBearer(), [200, 404], true)
+    if (value === null) return null
     if (!record(value) || value.mission_id !== missionId || !Array.isArray(value.assignments) || !['queued', 'running', 'completed', 'failed', 'blocked'].includes(String(value.status))) throw new Error('BROKER_RESPONSE_INVALID')
     return value as unknown as MissionExecution
   }
+  async getExecution(missionId: string): Promise<MissionExecution> {
+    const value = await this.findExecution(missionId)
+    if (!value) throw new Error('BROKER_HTTP_404')
+    return value
+  }
 
-  private async request(path: string, method: string, body: unknown, bearer: string, statuses: number[]): Promise<unknown> {
+  private async request(path: string, method: string, body: unknown, bearer: string, statuses: number[], notFoundIsNull = false): Promise<unknown> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 10_000)
     try {
@@ -111,6 +115,7 @@ export class BrokerHttpClient implements BrokerAutomationPort {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       })
       if (!statuses.includes(response.status)) throw new Error(`BROKER_HTTP_${response.status}`)
+      if (response.status === 404 && notFoundIsNull) return null
       return await boundedJson(response)
     } catch (error) {
       if (error instanceof Error && /^BROKER_(?:HTTP_|RESPONSE_)/.test(error.message)) throw error
