@@ -122,7 +122,7 @@ describe('closed executor contracts', () => {
           },
           { maximum_tokens: 100, maximum_api_calls: 2 },
         ),
-      /INVALID_HERMES_USAGE/,
+      /HERMES_USAGE_TOTAL_MISMATCH/,
     )
     assert.throws(
       () =>
@@ -194,7 +194,7 @@ describe('closed executor contracts', () => {
           },
           { maximum_tokens: 100, maximum_api_calls: 2 },
         ),
-      /INVALID_HERMES_USAGE/,
+      /HERMES_USAGE_COST_SOURCE_INVALID/,
     )
     const priced = {
       estimated_cost_usd: 0.004,
@@ -231,7 +231,7 @@ describe('closed executor contracts', () => {
           { ...base, ...priced, session_id: 'x'.repeat(257) },
           { maximum_tokens: 100, maximum_api_calls: 2 },
         ),
-      /INVALID_HERMES_USAGE/,
+      /HERMES_USAGE_SESSION_ID_INVALID/,
     )
   })
 })

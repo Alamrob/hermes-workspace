@@ -329,8 +329,8 @@ export function validateHermesUsage(
 ): TrustedUsage {
   if (!validUsageReservation(reservation as unknown as Record<string, unknown>))
     invalid('INVALID_USAGE_RESERVATION')
+  if (!isRecord(value)) invalid('HERMES_USAGE_SHAPE_INVALID')
   if (
-    !isRecord(value) ||
     !onlyKeys(value, [
       'input_tokens',
       'output_tokens',
@@ -350,7 +350,7 @@ export function validateHermesUsage(
       'service_tier',
     ])
   )
-    invalid('INVALID_HERMES_USAGE')
+    invalid('HERMES_USAGE_KEYS_INVALID')
   if (value.failed === true || value.completed !== true)
     invalid('HERMES_USAGE_FAILED')
   const counts = [
@@ -367,25 +367,36 @@ export function validateHermesUsage(
     Number(value.output_tokens) +
     Number(value.cache_read_tokens) +
     Number(value.cache_write_tokens)
+  if (!counts.every((item) => Number.isSafeInteger(item) && Number(item) >= 0))
+    invalid('HERMES_USAGE_COUNTS_INVALID')
+  if (Number(value.total_tokens) !== expectedTotal)
+    invalid('HERMES_USAGE_TOTAL_MISMATCH')
   if (
-    !counts.every((item) => Number.isSafeInteger(item) && Number(item) >= 0) ||
-    Number(value.total_tokens) !== expectedTotal ||
     Number(value.total_tokens) > reservation.maximum_tokens ||
-    Number(value.api_calls) > reservation.maximum_api_calls ||
-    value.model !== 'deepseek-v4-flash' ||
-    value.provider !== 'opencode-go' ||
-    !HERMES_COST_SOURCES.includes(value.cost_source as HermesCostSource) ||
+    Number(value.api_calls) > reservation.maximum_api_calls
+  )
+    invalid('HERMES_USAGE_BUDGET_EXCEEDED')
+  if (value.model !== 'deepseek-v4-flash')
+    invalid('HERMES_USAGE_MODEL_MISMATCH')
+  if (value.provider !== 'opencode-go')
+    invalid('HERMES_USAGE_PROVIDER_MISMATCH')
+  if (!HERMES_COST_SOURCES.includes(value.cost_source as HermesCostSource))
+    invalid('HERMES_USAGE_COST_SOURCE_INVALID')
+  if (
     !(
       value.session_id === null ||
       (typeof value.session_id === 'string' && value.session_id.length <= 256)
-    ) ||
+    )
+  )
+    invalid('HERMES_USAGE_SESSION_ID_INVALID')
+  if (
     !(
       value.service_tier === null ||
       (typeof value.service_tier === 'string' &&
         value.service_tier.length <= 64)
     )
   )
-    invalid('INVALID_HERMES_USAGE')
+    invalid('HERMES_USAGE_SERVICE_TIER_INVALID')
   if (Number(value.total_tokens) === 0 || Number(value.api_calls) === 0)
     invalid('HERMES_USAGE_UNKNOWN')
   let cost: TrustedUsage['cost']
@@ -427,7 +438,7 @@ export function validateHermesUsage(
       source: value.cost_source as HermesCostSource,
       pricing_snapshot_id: null,
     }
-  else invalid('INVALID_HERMES_USAGE')
+  else invalid('HERMES_USAGE_COST_INVALID')
   return {
     tokens: {
       input: Number(value.input_tokens),
