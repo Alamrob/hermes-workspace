@@ -82,7 +82,7 @@ describe('Paperclip commercial automation', () => {
     assert.equal(broker.orders.length, 1)
     assert.equal(broker.plans.length, 1)
     const order = broker.orders[0] as any
-    assert.equal(order.idempotency_key, 'paperclip:ALA-31:commercial-v8')
+    assert.equal(order.idempotency_key, 'paperclip:ALA-31:commercial-v9')
     assert.equal(order.autonomy_level, 'A2')
     assert.equal(order.dry_run, true)
     assert.equal(order.contact_policy.contact_permitted, false)
@@ -124,6 +124,18 @@ describe('Paperclip commercial automation', () => {
     assert.equal((broker.orders[0] as any).volume_limits.maximum_external_actions, 0)
   })
 
+  it('routes ALA-33 CRM operating design through the schema-reliable sales orchestrator', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-32', 'done'), issue('ALA-33', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const dispatched = await automation(paperclip, broker).tick()
+    assert.equal(dispatched.issue, 'ALA-33')
+    assert.equal(broker.plans[0].assignments[0].profile_id, 'sales-orchestrator')
+    assert.match(broker.plans[0].assignments[0].instruction, /measurable CRM operating design/)
+    assert.equal((broker.orders[0] as any).volume_limits.maximum_external_actions, 0)
+  })
+
   it('resumes from its exact signed marker without duplicate dispatch and returns QA to review', async () => {
     const paperclip = new PaperclipFake()
     const broker = new BrokerFake()
@@ -154,7 +166,7 @@ describe('Paperclip commercial automation', () => {
   it('repairs a mission accepted before the signed Paperclip marker without creating a duplicate order', async () => {
     const paperclip = new PaperclipFake()
     const broker = new BrokerFake()
-    const missionId = deterministicUuid('387d4503-0f7b-4708-bb62-8295a1e23e1b:issue-ala-31:commercial-v8:mission')
+    const missionId = deterministicUuid('387d4503-0f7b-4708-bb62-8295a1e23e1b:issue-ala-31:commercial-v9:mission')
     broker.execution = { mission_id: missionId, status: 'running', assignments: [] }
     const recovered = await automation(paperclip, broker).tick()
     assert.deepEqual(recovered, {
@@ -191,11 +203,11 @@ describe('Paperclip commercial automation', () => {
     ])
     paperclip.comments.set('issue-ala-31', [{
       authorType: 'user',
-      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker')} workflow=commercial-v8 state=dispatched`,
+      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker')} workflow=commercial-v9 state=dispatched`,
     }])
     paperclip.comments.set('issue-ala-32', [{
       authorType: 'system',
-      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker-system')} workflow=commercial-v8 state=dispatched sig=${'0'.repeat(64)}`,
+      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker-system')} workflow=commercial-v9 state=dispatched sig=${'0'.repeat(64)}`,
     }])
     const broker = new BrokerFake()
     assert.deepEqual(await automation(paperclip, broker).tick(), {
@@ -213,7 +225,7 @@ describe('Paperclip commercial automation', () => {
       ...paperclip.comments.get('issue-ala-31')!,
       {
         authorType: 'system',
-        body: `AUTOMATION_RESULT_V2 mission=${dispatched.mission_id} workflow=commercial-v8 state=review_ready primary_sha256=${'a'.repeat(64)} qa_sha256=${'b'.repeat(64)} external_actions=0 sig=${'0'.repeat(64)}`,
+        body: `AUTOMATION_RESULT_V2 mission=${dispatched.mission_id} workflow=commercial-v9 state=review_ready primary_sha256=${'a'.repeat(64)} qa_sha256=${'b'.repeat(64)} external_actions=0 sig=${'0'.repeat(64)}`,
       },
     ])
     broker.execution = { mission_id: dispatched.mission_id!, status: 'running', assignments: [] }

@@ -96,7 +96,7 @@ const WORKFLOWS: Workflow[] = [
     primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\n${STRICT_INTERNAL_OUTPUT_CONTRACT}\nTASK ALA-32: Produce a generic, non-addressed internal demand-generation design, not personalized outreach. Deliver: (1) landing-page information architecture and draft copy with only approved generic offer statements; (2) one primary CTA and a measurable funnel from visit to qualified discovery request; (3) channel hypotheses limited to future controlled email and owned landing-page tests; (4) a backlog of ten experiments, changing exactly one of segment, offer framing, channel or message per experiment; and (5) for every experiment, hypothesis, fixed variables, sample as a scenario, primary metric, evidence required, threshold, guardrail, maximum cost, duration and kill rule. Do not invent conversion baselines, testimonials, savings, contacts, suppression state or proof. No recipient identity is required because this artifact is generic and contact_permitted=false.`,
   },
   {
-    identifier: 'ALA-33', predecessor: 'ALA-32', primaryProfile: 'qualification-prioritization',
+    identifier: 'ALA-33', predecessor: 'ALA-32', primaryProfile: 'sales-orchestrator',
     objective: 'Define the measurable CRM pipeline, SLAs, fields and revenue analytics.',
     primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\n${STRICT_INTERNAL_OUTPUT_CONTRACT}\nTASK ALA-33: Specify a proposed measurable CRM operating design without writing to the CRM. For each non-ambiguous pipeline stage include entry condition, mandatory evidence, next action, accountable role, maximum age, stagnation alert, exit condition and exception path. Include closed-lost reason taxonomy, minimum account/contact/opportunity fields, data provenance and freshness, deduplication keys, SLA definitions, and formulas for stage conversion, velocity, cycle time, win rate, ticket, gross margin, CAC, payback and pipeline coverage. Unknown current baselines must remain unknown; thresholds and probabilities must be labeled proposed scenarios pending observed data.`,
   },
@@ -127,7 +127,7 @@ export class CommercialAutomation {
 
   constructor(private readonly options: CommercialAutomationOptions) {
     this.now = options.now ?? (() => new Date())
-    this.workflowVersion = options.workflowVersion ?? 'commercial-v8'
+    this.workflowVersion = options.workflowVersion ?? 'commercial-v9'
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(this.workflowVersion)) throw new Error('AUTOMATION_WORKFLOW_VERSION_INVALID')
   }
 
