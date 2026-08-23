@@ -90,6 +90,8 @@ describe('Paperclip commercial automation', () => {
     assert.equal(order.approved_channels.includes('email'), false)
     assert.equal(order.prohibited_actions.includes('mail.send'), true)
     assert.equal(broker.plans[0].assignments.at(-1)?.profile_id, 'commercial-qa-compliance')
+    assert.ok(broker.plans[0].assignments.every((assignment) => assignment.maximum_tokens === 75_000))
+    assert.ok(broker.plans[0].assignments.every((assignment) => assignment.usage_value_reservation_usd === 0.1))
     assert.deepEqual(broker.plans[0].assignments[1].depends_on, [broker.plans[0].assignments[0].assignment_id])
     assert.deepEqual(paperclip.updates, [{ id: 'issue-ala-31', status: 'in_progress' }])
   })
