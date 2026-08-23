@@ -10,6 +10,7 @@ import {
   classifyHermesExit,
   hashProfileSeed,
   parseStrictModelJson,
+  modelOutputDiagnostics,
 } from '../src/hermes-executor.js'
 import type {
   HomeOwnershipPreparer,
@@ -35,6 +36,27 @@ describe('strict model JSON parser', () => {
       parseStrictModelJson('Final structured response:\n```json\n{"ok":true}\n```\nEnd of response.'),
       { ok: true },
     )
+  })
+
+  it('records only closed scalar diagnostics for rejected model output', () => {
+    assert.deepEqual(modelOutputDiagnostics('prefix\n```json\n{"ok":true}\n```\nsuffix'), {
+      output_chars: 37,
+      output_lines: 5,
+      output_fence_count: 2,
+      output_starts_with_object: false,
+      output_ends_with_object: false,
+      output_whole_json_fence: false,
+      output_raw_json_parseable: false,
+    })
+    assert.deepEqual(modelOutputDiagnostics('{"ok":true}'), {
+      output_chars: 11,
+      output_lines: 1,
+      output_fence_count: 0,
+      output_starts_with_object: true,
+      output_ends_with_object: true,
+      output_whole_json_fence: false,
+      output_raw_json_parseable: true,
+    })
   })
 
   it('rejects prose, multiple fences, malformed, NUL and oversized output', () => {
@@ -417,6 +439,8 @@ describe('isolated Hermes executor', () => {
     const envelope = await state.executor.execute(input())
     assert.equal(envelope.agent_result.status, 'failed')
     assert.equal(envelope.agent_result.metrics.runtime_output_accepted, false)
+    assert.equal(envelope.agent_result.metrics.output_raw_json_parseable, true)
+    assert.equal(envelope.agent_result.metrics.output_starts_with_object, true)
     assert.deepEqual(envelope.agent_result.external_changes, [])
     assert.equal(
       (envelope.agent_result.errors[0] as { code: string }).code,
@@ -434,6 +458,9 @@ describe('isolated Hermes executor', () => {
       (envelope.agent_result.errors[0] as { code: string }).code,
       'INVALID_EXECUTOR_ENVELOPE',
     )
+    assert.equal(envelope.agent_result.metrics.output_chars, 33)
+    assert.equal(envelope.agent_result.metrics.output_raw_json_parseable, false)
+    assert.equal(envelope.agent_result.metrics.output_fence_count, 0)
     assert.doesNotMatch(JSON.stringify(envelope), /not json/)
     await assert.rejects(access(state.runner.invocations[0].cwd))
   })

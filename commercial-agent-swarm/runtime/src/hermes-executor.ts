@@ -382,7 +382,13 @@ export class HermesExecutor implements ExecutorPort {
         // runtime-owned failed AgentResult so the broker can settle the ledger
         // without accepting or retaining malformed model output.
         agentResult = reconcileAgentResult(
-          runtimeValidationFailure(input, code, startedAt, finishedAt),
+          runtimeValidationFailure(
+            input,
+            code,
+            startedAt,
+            finishedAt,
+            modelOutputDiagnostics(output.stdout),
+          ),
           input,
           usage,
           input.reservation.budget_reservation,
@@ -445,6 +451,48 @@ export function parseStrictModelJson(output: string): unknown {
     return JSON.parse(candidate) as unknown
   } catch {
     throw new Error('INVALID_EXECUTOR_ENVELOPE')
+  }
+}
+
+export type ModelOutputDiagnostics = {
+  output_chars: number
+  output_lines: number
+  output_fence_count: number
+  output_starts_with_object: boolean
+  output_ends_with_object: boolean
+  output_whole_json_fence: boolean
+  output_raw_json_parseable: boolean
+}
+
+/**
+ * Describe a rejected response without retaining or logging any of its text.
+ * These bounded scalar fields distinguish truncation, fencing and ordinary
+ * prose while keeping model output (which may contain untrusted data) erased.
+ */
+export function modelOutputDiagnostics(output: string): ModelOutputDiagnostics {
+  const trimmed = output.trim()
+  let fenceCount = 0
+  for (let index = 0; index < output.length;) {
+    const next = output.indexOf('```', index)
+    if (next < 0) break
+    fenceCount += 1
+    index = next + 3
+  }
+  let rawJsonParseable = false
+  try {
+    JSON.parse(trimmed)
+    rawJsonParseable = true
+  } catch {
+    rawJsonParseable = false
+  }
+  return {
+    output_chars: output.length,
+    output_lines: output.length === 0 ? 0 : output.split(/\r?\n/).length,
+    output_fence_count: fenceCount,
+    output_starts_with_object: trimmed.startsWith('{'),
+    output_ends_with_object: trimmed.endsWith('}'),
+    output_whole_json_fence: /^```(?:json)?[\t ]*\r?\n[\s\S]*\r?\n```$/.test(trimmed),
+    output_raw_json_parseable: rawJsonParseable,
   }
 }
 
@@ -527,6 +575,7 @@ function runtimeValidationFailure(
   code: string,
   startedAt: string,
   finishedAt: string,
+  diagnostics: ModelOutputDiagnostics,
 ): AgentResult {
   return {
     mission_id: input.mission_id,
@@ -541,7 +590,7 @@ function runtimeValidationFailure(
     external_changes: [],
     evidence: [],
     artifacts: [],
-    metrics: { runtime_output_accepted: false },
+    metrics: { runtime_output_accepted: false, ...diagnostics },
     cost: {
       currency: 'USD',
       llm: 0,
