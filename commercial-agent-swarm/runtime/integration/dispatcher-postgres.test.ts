@@ -33,6 +33,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       '007_usage_budget_ledger.sql',
       '009_internal_automation.sql',
       '011_go_native_usage_ledger.sql',
+      '012_dependency_terminalization.sql',
     ])
       await a.query(
         await readFile(
@@ -328,6 +329,54 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       'not_started',
       qa.usageBudget.version,
     )
+  })
+
+  it('terminalizes queued dependents when an upstream job fails', async () => {
+    const primaryId = await first.enqueue(
+      job({
+        job_id: 'd23e4567-e89b-42d3-a456-426614174903',
+        idempotency_key: 'dependency-failed-primary',
+        profile_id: 'qualification-prioritization',
+      }),
+    )
+    const qaId = await first.enqueue(
+      job({
+        job_id: 'e23e4567-e89b-42d3-a456-426614174903',
+        idempotency_key: 'dependency-failed-qa',
+        profile_id: 'commercial-qa-compliance',
+        dependencies: [primaryId],
+      }),
+    )
+    const primary = await first.claim('worker-failed-primary', 60, 30)
+    assert(primary)
+    await first.fail(
+      primaryId,
+      'worker-failed-primary',
+      'SYNTHETIC_PRIMARY_FAILURE',
+      false,
+      'not_started',
+      primary.usageBudget.version,
+    )
+    assert.equal(await first.claim('worker-after-failure', 60, 30), null)
+    const dependent = await a.query(
+      'SELECT status,error,usage_budget_state,usage_value_consumed_usd FROM control.dispatch_jobs WHERE job_id=$1',
+      [qaId],
+    )
+    assert.deepEqual(dependent.rows[0], {
+      status: 'failed',
+      error: 'DEPENDENCY_TERMINAL_NON_SUCCESS',
+      usage_budget_state: 'released',
+      usage_value_consumed_usd: '0.000000',
+    })
+    const event = await a.query(
+      'SELECT from_status,to_status,reason FROM control.dispatch_events WHERE job_id=$1 ORDER BY occurred_at DESC LIMIT 1',
+      [qaId],
+    )
+    assert.deepEqual(event.rows[0], {
+      from_status: 'queued',
+      to_status: 'failed',
+      reason: 'DEPENDENCY_TERMINAL_NON_SUCCESS',
+    })
   })
 
   it('allows runtime only narrow functions and keeps events append-only', async () => {

@@ -1,0 +1,15 @@
+BEGIN;
+
+DO $$
+BEGIN
+  IF EXISTS(
+    SELECT 1 FROM control.dispatch_events
+    WHERE reason='DEPENDENCY_TERMINAL_NON_SUCCESS'
+  ) THEN
+    RAISE EXCEPTION 'ROLLBACK_BLOCKED_DEPENDENCY_TERMINALIZATION_HISTORY';
+  END IF;
+END$$;
+
+DROP FUNCTION IF EXISTS control.terminalize_failed_dispatch_dependencies();
+
+COMMIT;

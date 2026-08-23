@@ -172,6 +172,9 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
+      await client.query(
+        'SELECT control.terminalize_failed_dispatch_dependencies()',
+      )
       const result = await client.query<{
       job_id: string
       mission_id: string
