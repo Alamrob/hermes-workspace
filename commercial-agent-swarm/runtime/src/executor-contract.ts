@@ -402,7 +402,7 @@ export function validateHermesUsage(
   let cost: TrustedUsage['cost']
   if (
     value.cost_status === 'unknown' &&
-    value.estimated_cost_usd === null &&
+    (value.estimated_cost_usd === null || value.estimated_cost_usd === 0) &&
     value.cost_source === 'none'
   )
     cost = {
