@@ -68,7 +68,8 @@ export function reconcileAgentResult(
   startedAt: string,
   finishedAt: string,
 ): AgentResult {
-  if (!record(raw) || !exact(raw, [...AGENT_RESULT_TOP_LEVEL_KEYS])) invalid()
+  if (!record(raw) || !exact(raw, [...AGENT_RESULT_TOP_LEVEL_KEYS]))
+    invalidStage('TOP_LEVEL')
   // Identity is transport-owned. The model is required to return the fields so
   // malformed envelopes still fail closed, but it is never authoritative for
   // mission, trace, assignment or profile identity. Always replace those four
@@ -85,35 +86,39 @@ export function reconcileAgentResult(
     raw.summary.length < 1 ||
     raw.summary.length > 4000
   )
-    invalid()
-  if (!Array.isArray(raw.external_changes)) invalid()
+    invalidStage('STATUS_SUMMARY')
+  if (!Array.isArray(raw.external_changes)) invalidStage('EXTERNAL_CHANGES')
   if (raw.external_changes.length) throw new Error('SIMULATION_EXTERNAL_CHANGE')
-  array(raw.facts).forEach(fact)
-  array(raw.inferences).forEach(inference)
-  array(raw.actions_taken).forEach(action)
-  array(raw.evidence).forEach(evidence)
-  array(raw.artifacts).forEach(artifact)
-  array(raw.errors).forEach(agentError)
-  array(raw.risks).forEach(risk)
-  array(raw.pending_approvals).forEach(approval)
-  const next = array(raw.recommended_next_actions)
-  if (!next.every((v) => str(v, 1, 1000))) invalid()
-  if (
-    !record(raw.metrics) ||
-    !Object.values(raw.metrics).every(
-      (v) => v === null || ['string', 'number', 'boolean'].includes(typeof v),
-    )
-  )
-    invalid()
-  cost(raw.cost)
-  if (
-    !date(raw.started_at) ||
-    !date(raw.finished_at) ||
-    !date(startedAt) ||
-    !date(finishedAt) ||
-    Date.parse(finishedAt) < Date.parse(startedAt)
-  )
-    invalid()
+  validateStage('FACTS', () => array(raw.facts).forEach(fact))
+  validateStage('INFERENCES', () => array(raw.inferences).forEach(inference))
+  validateStage('ACTIONS', () => array(raw.actions_taken).forEach(action))
+  validateStage('EVIDENCE', () => array(raw.evidence).forEach(evidence))
+  validateStage('ARTIFACTS', () => array(raw.artifacts).forEach(artifact))
+  validateStage('ERRORS', () => array(raw.errors).forEach(agentError))
+  validateStage('RISKS', () => array(raw.risks).forEach(risk))
+  validateStage('APPROVALS', () => array(raw.pending_approvals).forEach(approval))
+  validateStage('NEXT_ACTIONS', () => {
+    const next = array(raw.recommended_next_actions)
+    if (!next.every((v) => str(v, 1, 1000))) invalid()
+  })
+  validateStage('METRICS', () => {
+    if (
+      !record(raw.metrics) ||
+      !Object.values(raw.metrics).every(
+        (v) => v === null || ['string', 'number', 'boolean'].includes(typeof v),
+      )
+    ) invalid()
+  })
+  validateStage('COST', () => cost(raw.cost))
+  validateStage('TIMESTAMPS', () => {
+    if (
+      !date(raw.started_at) ||
+      !date(raw.finished_at) ||
+      !date(startedAt) ||
+      !date(finishedAt) ||
+      Date.parse(finishedAt) < Date.parse(startedAt)
+    ) invalid()
+  })
   if (
     charge.currency !== 'USD' ||
     typeof charge.amount !== 'number' ||
@@ -156,6 +161,22 @@ export function reconcileAgentResult(
     started_at: startedAt,
     finished_at: finishedAt,
   }
+}
+
+function validateStage(name: string, validate: () => void): void {
+  try {
+    validate()
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      ['SIMULATION_EXTERNAL_CHANGE', 'SIMULATION_EXTERNAL_ACTION'].includes(error.message)
+    ) throw error
+    invalidStage(name)
+  }
+}
+
+function invalidStage(name: string): never {
+  throw new Error(`INVALID_AGENT_RESULT_${name}`)
 }
 
 function source(v: unknown) {

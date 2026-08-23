@@ -372,7 +372,7 @@ describe('isolated Hermes executor', () => {
     assert.deepEqual(envelope.agent_result.external_changes, [])
     assert.equal(
       (envelope.agent_result.errors[0] as { code: string }).code,
-      'INVALID_AGENT_RESULT',
+      'INVALID_AGENT_RESULT_TOP_LEVEL',
     )
     assert.equal(envelope.usage.cost.status, 'known')
     await assert.rejects(access(state.runner.invocations[0].env.HERMES_HOME))

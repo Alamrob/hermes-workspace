@@ -377,7 +377,7 @@ export class HermesExecutor implements ExecutorPort {
         )
       } catch (error) {
         const code = error instanceof Error ? error.message : 'EXECUTOR_FAILURE'
-        if (!RESULT_VALIDATION_FAILURES.has(code)) throw error
+        if (!RESULT_VALIDATION_FAILURES.has(code) && !code.startsWith('INVALID_AGENT_RESULT_')) throw error
         // Usage is already trusted and priced at this boundary. Return a
         // runtime-owned failed AgentResult so the broker can settle the ledger
         // without accepting or retaining malformed model output.
