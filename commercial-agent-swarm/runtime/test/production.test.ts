@@ -143,6 +143,12 @@ describe('runtime persistence composition', () => {
       ),
       true,
     )
+    assert.equal(
+      expectedFunctionSets[0].includes(
+        'control.terminalize_failed_dispatch_dependencies()',
+      ),
+      true,
+    )
     await verifyProductionDatabasePrincipals([
       {
         pool: fake('evidence_login', ['commercial_approval_evidence']) as never,

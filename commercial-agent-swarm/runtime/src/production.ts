@@ -179,6 +179,7 @@ const EXPECTED_FUNCTIONS: Record<
     'control.record_audit_event(jsonb)',
     'control.enqueue_dispatch(uuid,uuid,uuid,text,text,text,text,uuid[],numeric,bigint,integer,integer)',
     'control.recover_dispatch_leases()',
+    'control.terminalize_failed_dispatch_dependencies()',
     'control.claim_dispatch(text,integer,integer)',
     'control.fail_dispatch(uuid,text,text,boolean,text,bigint)',
     'control.complete_dispatch(uuid,text,jsonb,text,bigint,text,text,bigint,bigint,integer)',
