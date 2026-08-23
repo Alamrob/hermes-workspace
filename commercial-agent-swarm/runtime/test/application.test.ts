@@ -560,6 +560,27 @@ describe('broker application routes', () => {
     assert.equal((execution.body as MissionExecution).assignments.length, 2)
   })
 
+  it('rejects an assignment DAG whose aggregate usage reservation exceeds the signed mission budget', async () => {
+    const state = setup('either', false, false)
+    const order = signedInternalWorkOrder()
+    order.budget_limit = { currency: 'USD', maximum: 0.19 }
+    order.authority.signature = signWorkOrder(
+      order as never,
+      'test-control-key-with-at-least-32-bytes',
+    )
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: order,
+    })).status, 201)
+    const denied = await state.app.handle({
+      method: 'POST',
+      path: `/v1/missions/${order.mission_id}/assignments`,
+      headers: headers('control-plane-token'),
+      body: assignmentPlan(),
+    })
+    assert.deepEqual(denied, { status: 403, body: { error: 'forbidden' } })
+    assert.equal(state.dispatched.length, 0)
+  })
+
   it('rejects a web-capable profile unless the signed mission authorizes its exact action, channel, tool and A1+', async () => {
     const state = setup('either', false, false)
     const order = signedInternalWorkOrder()

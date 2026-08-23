@@ -54,9 +54,9 @@
             "uniqueItems": true,
             "items": { "type": "string", "format": "uuid" }
           },
-          "usage_value_reservation_usd": { "const": 0.1 },
-          "maximum_tokens": { "type": "integer", "minimum": 24576, "maximum": 1000000 },
-          "maximum_api_calls": { "type": "integer", "minimum": 6, "maximum": 100 },
+          "usage_value_reservation_usd": { "type": "number", "minimum": 0.01, "maximum": 0.1 },
+          "maximum_tokens": { "type": "integer", "minimum": 6144, "maximum": 1000000 },
+          "maximum_api_calls": { "type": "integer", "minimum": 3, "maximum": 100 },
           "max_attempts": { "type": "integer", "minimum": 1, "maximum": 2 }
         }
       }

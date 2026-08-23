@@ -66,9 +66,9 @@ export function validateAssignmentPlan(value: unknown): AssignmentPlan {
         if (new Set(entry.depends_on).size !== entry.depends_on.length) issues.push(`${path}.depends_on is duplicated`)
         for (const dependency of entry.depends_on) if (!ids.has(dependency)) issues.push(`${path}.depends_on must reference an earlier assignment`)
       }
-      if (entry.usage_value_reservation_usd !== 0.1) issues.push(`${path}.usage_value_reservation_usd must equal 0.1`)
-      if (typeof entry.maximum_tokens !== 'number' || !Number.isSafeInteger(entry.maximum_tokens) || entry.maximum_tokens < 24_576 || entry.maximum_tokens > 1_000_000) issues.push(`${path}.maximum_tokens is invalid`)
-      if (typeof entry.maximum_api_calls !== 'number' || !Number.isSafeInteger(entry.maximum_api_calls) || entry.maximum_api_calls < 6 || entry.maximum_api_calls > 100) issues.push(`${path}.maximum_api_calls is invalid`)
+      if (typeof entry.usage_value_reservation_usd !== 'number' || !Number.isFinite(entry.usage_value_reservation_usd) || entry.usage_value_reservation_usd < 0.01 || entry.usage_value_reservation_usd > 0.1) issues.push(`${path}.usage_value_reservation_usd is invalid`)
+      if (typeof entry.maximum_tokens !== 'number' || !Number.isSafeInteger(entry.maximum_tokens) || entry.maximum_tokens < 6_144 || entry.maximum_tokens > 1_000_000) issues.push(`${path}.maximum_tokens is invalid`)
+      if (typeof entry.maximum_api_calls !== 'number' || !Number.isSafeInteger(entry.maximum_api_calls) || entry.maximum_api_calls < 3 || entry.maximum_api_calls > 100) issues.push(`${path}.maximum_api_calls is invalid`)
       if (typeof entry.max_attempts !== 'number' || !Number.isSafeInteger(entry.max_attempts) || entry.max_attempts < 1 || entry.max_attempts > 2) issues.push(`${path}.max_attempts is invalid`)
       if (typeof entry.assignment_id === 'string') ids.add(entry.assignment_id)
       if (typeof entry.idempotency_key === 'string') keys.add(entry.idempotency_key)

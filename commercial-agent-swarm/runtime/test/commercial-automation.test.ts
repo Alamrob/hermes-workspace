@@ -225,6 +225,38 @@ describe('Paperclip commercial automation', () => {
     assert.match(assignments[3].instruction, /VERDICT: allow_internal/)
   })
 
+  it('dispatches ALA-40 as a one-company A1 transport diagnostic with a USD 0.05 mission ceiling', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-40', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const dispatched = await automation(paperclip, broker).tick()
+    assert.equal(dispatched.issue, 'ALA-40')
+    const order = broker.orders[0] as any
+    assert.equal(order.idempotency_key, 'paperclip:ALA-40:commercial-v14')
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.budget_limit.maximum, 0.05)
+    assert.equal(order.volume_limits.maximum_accounts, 1)
+    assert.equal(order.volume_limits.maximum_contacts, 0)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    assert.equal(order.contact_policy.contact_permitted, false)
+    assert.deepEqual(order.approved_tools, ['hermes.analysis', 'hermes.web'])
+    const assignments = broker.plans[0].assignments
+    assert.deepEqual(
+      assignments.map((assignment) => assignment.profile_id),
+      ['market-account-intelligence', 'commercial-qa-compliance'],
+    )
+    assert.deepEqual(assignments[1].depends_on, [assignments[0].assignment_id])
+    assert.ok(assignments.every((assignment) => assignment.usage_value_reservation_usd === 0.025))
+    assert.ok(assignments.every((assignment) => assignment.maximum_tokens === 6_144))
+    assert.ok(assignments.every((assignment) => assignment.maximum_api_calls === 3))
+    assert.ok(assignments.every((assignment) => assignment.max_attempts === 1))
+    assert.match(assignments[0].instruction, /exactly one compact fact/)
+    assert.match(assignments[0].instruction, /no markdown fence/)
+    assert.match(assignments[1].instruction, /ONE-COMPANY INDEPENDENT QA/)
+    assert.match(assignments[1].instruction, /accounts_reviewed=1/)
+  })
+
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),

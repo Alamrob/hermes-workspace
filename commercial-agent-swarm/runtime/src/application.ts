@@ -424,8 +424,28 @@ export function assertAssignmentPlanAuthority(
   const tools = stringSet(mission.approved_tools)
   const actions = stringSet(mission.allowed_actions)
   const channels = stringSet(mission.approved_channels)
+  const budget = mission.budget_limit
   if (!tools || !actions || !channels)
     throw new AuthenticationError('ASSIGNMENT_TOOL_POLICY_REQUIRED')
+  if (
+    budget === null ||
+    typeof budget !== 'object' ||
+    Array.isArray(budget) ||
+    (budget as Record<string, unknown>).currency !== 'USD' ||
+    typeof (budget as Record<string, unknown>).maximum !== 'number' ||
+    !Number.isFinite((budget as Record<string, unknown>).maximum)
+  )
+    throw new AuthenticationError('ASSIGNMENT_BUDGET_POLICY_REQUIRED')
+  const missionMicrodollars = Math.round(
+    Number((budget as Record<string, unknown>).maximum) * 1_000_000,
+  )
+  const reservedMicrodollars = plan.assignments.reduce(
+    (total, assignment) =>
+      total + Math.round(assignment.usage_value_reservation_usd * 1_000_000),
+    0,
+  )
+  if (reservedMicrodollars > missionMicrodollars)
+    throw new AuthenticationError('ASSIGNMENT_BUDGET_POLICY_REQUIRED')
   for (const assignment of plan.assignments) {
     const capability = PROFILE_CAPABILITIES[assignment.profile_id]
     if (
