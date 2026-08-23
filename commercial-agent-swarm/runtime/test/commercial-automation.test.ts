@@ -205,6 +205,27 @@ describe('Paperclip commercial automation', () => {
     assert.match(assignments[3].instruction, /VERDICT: allow_internal/)
   })
 
+  it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const service = automation(paperclip, broker)
+    const first = await service.tick()
+    assert.equal(first.issue, 'ALA-37')
+    broker.execution = { mission_id: first.mission_id!, status: 'failed', assignments: [] }
+    const blocked = await service.tick()
+    assert.equal(blocked.status, 'blocked')
+    assert.equal(blocked.issue, 'ALA-37')
+    broker.execution = null
+    const successor = await service.tick()
+    assert.equal(successor.status, 'dispatched')
+    assert.equal(successor.issue, 'ALA-38')
+    const successorOrder = broker.orders.at(-1)
+    assert.ok(successorOrder)
+    assert.equal(successorOrder.metadata?.paperclip_issue_identifier, 'ALA-38')
+  })
+
   it('resumes from its exact signed marker without duplicate dispatch and returns QA to review', async () => {
     const paperclip = new PaperclipFake()
     const broker = new BrokerFake()

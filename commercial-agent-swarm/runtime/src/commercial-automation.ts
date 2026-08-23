@@ -185,7 +185,13 @@ export class CommercialAutomation {
           )
         if (terminal) {
           const terminalStatus: 'review_ready' | 'blocked' = terminal[3] === 'review_ready' ? 'review_ready' : 'blocked'
-          return result(terminalStatus, issue.identifier, marker[1])
+          // Paperclip CE normalizes the non-native `blocked` status back to
+          // `todo`. A verified terminal marker is nevertheless authoritative
+          // for this workflow, so do not redispatch it or prevent a later
+          // explicitly declared workflow from being evaluated.
+          if (terminalStatus === 'review_ready' && issue.status === 'in_review')
+            return result(terminalStatus, issue.identifier, marker[1])
+          continue
         }
         return await this.reconcile(issue, marker[1])
       }
