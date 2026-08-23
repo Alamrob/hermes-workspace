@@ -98,6 +98,15 @@ function envelope(): ExecutorEnvelope {
   }
 }
 
+function overBudgetEnvelope(): ExecutorEnvelope {
+  const value = envelope()
+  value.usage.tokens.input = 101
+  value.usage.tokens.total = 103
+  value.usage.api_calls = 3
+  value.agent_result.cost.input_tokens = 101
+  return value
+}
+
 describe('Unix executor IPC', () => {
   it('round-trips one strict request per connection without a bearer token', async () => {
     const path = socketPath()
@@ -131,6 +140,31 @@ describe('Unix executor IPC', () => {
         'executor_ipc_request_sent',
         'executor_ipc_response_received',
       ])
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('preserves trusted usage above assignment ceilings for authoritative settlement', async () => {
+    const path = socketPath()
+    const executor: ExecutorPort = {
+      execute: async () => overBudgetEnvelope(),
+    }
+    const server = new UnixExecutorServer({
+      socketPath: path,
+      executor,
+      frameTimeoutMs: 500,
+    })
+    await server.start()
+    try {
+      const client = new UnixExecutorClient({
+        socketPath: path,
+        timeoutMs: 1_000,
+        connectTimeoutMs: 250,
+      })
+      const result = await client.execute(input)
+      assert.equal(result.usage.tokens.total, 103)
+      assert.equal(result.usage.api_calls, 3)
     } finally {
       await server.stop()
     }

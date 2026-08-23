@@ -231,11 +231,13 @@ function validateEnvelope(value: unknown, input: ExecuteInput): void {
         Number(usage.tokens.output) +
         Number(usage.tokens.cache_read) +
         Number(usage.tokens.cache_write) ||
-    Number(usage.tokens.total) > input.reservation.maximum_tokens ||
-    Number(usage.api_calls) < 1 ||
-    Number(usage.api_calls) > input.reservation.maximum_api_calls
+    Number(usage.api_calls) < 1
   )
     throw new Error('INVALID_EXECUTOR_RESPONSE')
+  // A trusted executor may report usage above the assignment ceilings. The
+  // transport must preserve that telemetry so the authoritative queue can
+  // settle the reservation and mark the job budget_exceeded. Rejecting it here
+  // turns a known provider charge into an ambiguous IPC loss.
   const result = reconcileAgentResult(
     value.agent_result,
     input,
