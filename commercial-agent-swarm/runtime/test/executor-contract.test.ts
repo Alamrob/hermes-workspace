@@ -61,6 +61,9 @@ describe('closed executor contracts', () => {
     const prompt = buildHermesPrompt(request)
     assert.match(prompt, /OUTPUT_TEMPLATE_JSON:/)
     assert.match(prompt, /NESTED_ITEM_CONTRACTS_JSON:/)
+    assert.match(prompt, /NESTED_ITEM_EXAMPLES_JSON:/)
+    assert.match(prompt, /"verification_method":"web_extract"/)
+    assert.match(prompt, /fact\.confidence is a number from 0 to 1/)
     assert.match(prompt, /"external_changes":\[\]/)
     assert.match(prompt, /external must be false/)
     assert.match(
