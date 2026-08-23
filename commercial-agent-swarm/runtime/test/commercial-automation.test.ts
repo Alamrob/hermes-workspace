@@ -303,6 +303,40 @@ describe('Paperclip commercial automation', () => {
     assert.match(assignments[1].instruction, /ONE-COMPANY INDEPENDENT QA/)
   })
 
+  it('dispatches ALA-44 as the post-diagnostic ten-account and thirty-decision shadow gate', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-44', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const dispatched = await automation(paperclip, broker).tick()
+    assert.equal(dispatched.issue, 'ALA-44')
+    const order = broker.orders[0] as any
+    assert.equal(order.idempotency_key, 'paperclip:ALA-44:commercial-v14')
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.budget_limit.maximum, 0.5)
+    assert.equal(order.volume_limits.maximum_accounts, 10)
+    assert.equal(order.volume_limits.maximum_contacts, 0)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    assert.equal(order.contact_policy.contact_permitted, false)
+    const assignments = broker.plans[0].assignments
+    assert.equal(assignments.length, 4)
+    assert.deepEqual(
+      assignments.map((assignment) => assignment.profile_id),
+      [
+        'market-account-intelligence',
+        'contact-data-steward',
+        'qualification-prioritization',
+        'commercial-qa-compliance',
+      ],
+    )
+    assert.ok(assignments.every((assignment) => assignment.max_attempts === 1))
+    assert.match(assignments[0].instruction, /Use only web_search/)
+    assert.match(assignments[0].instruction, /exactly ten candidate facts/)
+    assert.match(assignments[0].instruction, /do not call web_extract/)
+    assert.match(assignments[2].instruction, /THIRTY COMPACT SHADOW DECISIONS/)
+    assert.match(assignments[3].instruction, /INDEPENDENT SHADOW QA/)
+  })
+
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),
