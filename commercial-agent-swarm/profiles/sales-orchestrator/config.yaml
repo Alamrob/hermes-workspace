@@ -1,6 +1,11 @@
+custom_providers:
+  - name: deepseek-v4-flash
+    base_url: https://opencode.ai/zen/go/v1
+    key_env: CUSTOM_API_KEY
+    api_mode: chat_completions
 model:
   default: deepseek-v4-flash
-  provider: opencode-go
+  provider: custom:deepseek-v4-flash
   max_tokens: 4096
 memory:
   memory_enabled: false
@@ -13,14 +18,11 @@ agent:
     - web
     - browser
     - terminal
-    - file
     - code_execution
     - vision
     - image_gen
     - skills
-    - todo
     - memory
-    - session_search
     - clarify
     - delegation
     - cronjob
@@ -37,8 +39,14 @@ agent:
     - spotify
     - yuanbao
 toolsets:
+  - file
+  - todo
+  - session_search
   - no_mcp
 platform_toolsets:
   cli:
+    - file
+    - todo
+    - session_search
     - no_mcp
 mcp_servers: {}
