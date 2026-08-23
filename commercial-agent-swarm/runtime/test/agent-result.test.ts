@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 import {
   AGENT_RESULT_TOP_LEVEL_KEYS,
+  MAX_AGENT_RESULT_SUMMARY_CHARS,
   reconcileAgentResult,
 } from '../src/agent-result.js'
 
@@ -210,6 +211,29 @@ describe('canonical AgentResult reconciliation', () => {
           '2026-08-16T08:00:01Z',
         ),
       /HERMES_COST_UNKNOWN/,
+    )
+  })
+
+  it('accepts bounded internal design artifacts and rejects oversized summaries', () => {
+    const accepted = reconcileAgentResult(
+      { ...raw, summary: 'x'.repeat(MAX_AGENT_RESULT_SUMMARY_CHARS) },
+      identity,
+      usage,
+      { currency: 'USD', amount: 0.02 },
+      '2026-08-16T08:00:00Z',
+      '2026-08-16T08:00:01Z',
+    )
+    assert.equal(accepted.summary.length, MAX_AGENT_RESULT_SUMMARY_CHARS)
+    assert.throws(
+      () => reconcileAgentResult(
+        { ...raw, summary: 'x'.repeat(MAX_AGENT_RESULT_SUMMARY_CHARS + 1) },
+        identity,
+        usage,
+        { currency: 'USD', amount: 0.02 },
+        '2026-08-16T08:00:00Z',
+        '2026-08-16T08:00:01Z',
+      ),
+      /INVALID_AGENT_RESULT_STATUS_SUMMARY/,
     )
   })
 })

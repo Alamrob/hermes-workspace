@@ -30,6 +30,8 @@ export interface AgentResult {
   finished_at: string
 }
 
+export const MAX_AGENT_RESULT_SUMMARY_CHARS = 32_000
+
 export const AGENT_RESULT_TOP_LEVEL_KEYS = [
   'mission_id',
   'trace_id',
@@ -84,7 +86,7 @@ export function reconcileAgentResult(
     ].includes(String(raw.status)) ||
     typeof raw.summary !== 'string' ||
     raw.summary.length < 1 ||
-    raw.summary.length > 4000
+    raw.summary.length > MAX_AGENT_RESULT_SUMMARY_CHARS
   )
     invalidStage('STATUS_SUMMARY')
   if (!Array.isArray(raw.external_changes)) invalidStage('EXTERNAL_CHANGES')

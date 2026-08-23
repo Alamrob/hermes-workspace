@@ -34,7 +34,7 @@
     "status": {
       "enum": ["completed", "partial", "blocked", "failed", "approval_required"]
     },
-    "summary": { "type": "string", "minLength": 1, "maxLength": 4000 },
+    "summary": { "type": "string", "minLength": 1, "maxLength": 32000 },
     "facts": { "type": "array", "items": { "$ref": "#/$defs/fact" } },
     "inferences": { "type": "array", "items": { "$ref": "#/$defs/inference" } },
     "actions_taken": { "type": "array", "items": { "$ref": "#/$defs/action" } },
