@@ -38,6 +38,25 @@ describe('commercial automation HTTP boundaries', () => {
     assert.equal((calls[0].init?.headers as Record<string, string>).authorization, `Bearer ${'p'.repeat(32)}`)
   })
 
+  it('writes the exact installed Paperclip system-comment contract without unsupported fields', async () => {
+    let requestBody: unknown = null
+    const client = new PaperclipHttpClient('http://paperclip:3100', company, async () => 'p'.repeat(32), async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body))
+      return new Response(JSON.stringify({ id: '123e4567-e89b-42d3-a456-426614174001' }), { status: 201 })
+    })
+    await client.addSystemComment('123e4567-e89b-42d3-a456-426614174000', 'marker')
+    assert.deepEqual(requestBody, {
+      body: 'marker',
+      authorType: 'system',
+      presentation: {
+        kind: 'system_notice',
+        tone: 'info',
+        title: 'Commercial automation',
+        detailsDefaultOpen: false,
+      },
+    })
+  })
+
   it('cancels oversized responses and fails closed without returning response bodies', async () => {
     const oversized = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array(1_048_577)); controller.close() } })
     const client = new PaperclipHttpClient('http://paperclip:3100', company, async () => 'p'.repeat(32), async () => new Response(oversized, { status: 200 }))

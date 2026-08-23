@@ -81,6 +81,7 @@ describe('Paperclip commercial automation', () => {
     assert.equal(broker.orders.length, 1)
     assert.equal(broker.plans.length, 1)
     const order = broker.orders[0] as any
+    assert.equal(order.idempotency_key, 'paperclip:ALA-31:commercial-v2')
     assert.equal(order.autonomy_level, 'A2')
     assert.equal(order.dry_run, true)
     assert.equal(order.contact_policy.contact_permitted, false)
@@ -137,11 +138,11 @@ describe('Paperclip commercial automation', () => {
     ])
     paperclip.comments.set('issue-ala-31', [{
       authorType: 'user',
-      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker')} workflow=commercial-v1 state=dispatched`,
+      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker')} workflow=commercial-v2 state=dispatched`,
     }])
     paperclip.comments.set('issue-ala-32', [{
       authorType: 'system',
-      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker-system')} workflow=commercial-v1 state=dispatched sig=${'0'.repeat(64)}`,
+      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker-system')} workflow=commercial-v2 state=dispatched sig=${'0'.repeat(64)}`,
     }])
     const broker = new BrokerFake()
     assert.deepEqual(await automation(paperclip, broker).tick(), {

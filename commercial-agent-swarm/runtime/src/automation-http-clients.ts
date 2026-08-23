@@ -44,7 +44,7 @@ export class PaperclipHttpClient implements PaperclipAutomationPort {
     await this.request(`/api/issues/${uuid(issueId)}/comments`, 'POST', {
       body,
       authorType: 'system',
-      presentation: { kind: 'system_notice', tone: 'info', title: 'Commercial automation', detailsDefaultOpen: false, density: 'compact' },
+      presentation: { kind: 'system_notice', tone: 'info', title: 'Commercial automation', detailsDefaultOpen: false },
     })
   }
 
