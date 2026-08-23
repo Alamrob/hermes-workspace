@@ -45,12 +45,12 @@ export const ACTIVE_PROFILE_IDS = [
 type ActiveProfileId = (typeof ACTIVE_PROFILE_IDS)[number]
 
 export const PROFILE_TOOLSETS: Record<ActiveProfileId, Array<string>> = {
-  'sales-orchestrator': ['file', 'todo', 'session_search'],
+  'sales-orchestrator': [],
   'market-account-intelligence': ['web', 'file'],
   'contact-data-steward': ['web', 'file'],
-  'qualification-prioritization': ['file'],
+  'qualification-prioritization': [],
   'outreach-draft-manager': ['file'],
-  'commercial-qa-compliance': ['file'],
+  'commercial-qa-compliance': [],
 }
 
 export const HERMES_TOOLSET_KEYS = [
@@ -87,7 +87,6 @@ export const HERMES_OBSERVABLE_TOOLSET_KEYS = HERMES_TOOLSET_KEYS.filter(
 )
 
 const NATIVE_CONFIG_FIELDS = [
-  'custom_providers',
   'model',
   'memory',
   'max_concurrent_sessions',
@@ -95,13 +94,6 @@ const NATIVE_CONFIG_FIELDS = [
   'toolsets',
   'platform_toolsets',
   'mcp_servers',
-] as const
-
-const NATIVE_PROVIDER_FIELDS = [
-  'name',
-  'base_url',
-  'key_env',
-  'api_mode',
 ] as const
 
 const PROFILE_PROMPT_CONTRACTS: Record<
@@ -368,34 +360,14 @@ export function validateNativeProfileConfig(
     )
   }
 
-  const customProviders = Array.isArray(value.custom_providers)
-    ? value.custom_providers
-    : []
-  const provider = customProviders.length === 1 ? customProviders[0] : null
-  if (
-    !isRecord(provider) ||
-    provider.name !== 'deepseek-v4-flash' ||
-    provider.base_url !== 'https://opencode.ai/zen/go/v1' ||
-    provider.key_env !== 'CUSTOM_API_KEY' ||
-    provider.api_mode !== 'chat_completions' ||
-    unsupportedKeys(provider, NATIVE_PROVIDER_FIELDS).length > 0
-  ) {
-    errors.push(
-      `${profileId}: custom provider must pin deepseek-v4-flash at https://opencode.ai/zen/go/v1 via CUSTOM_API_KEY`,
-    )
-  }
-  if (isRecord(provider) && Object.hasOwn(provider, 'api_key')) {
-    errors.push(`${profileId}: custom provider must not contain api_key`)
-  }
-
   const model = isRecord(value.model) ? value.model : null
   if (
     !model ||
     unsupportedKeys(model, ['default', 'provider', 'max_tokens']).length > 0 ||
     model.default !== 'deepseek-v4-flash' ||
-    model.provider !== 'custom:deepseek-v4-flash'
+    model.provider !== 'opencode-go'
   ) {
-    errors.push(`${profileId}: model must use custom:deepseek-v4-flash`)
+    errors.push(`${profileId}: model must use the confirmed opencode-go provider`)
   }
   if (model?.max_tokens !== 4096) {
     errors.push(`${profileId}: model.max_tokens must equal 4096`)
@@ -540,7 +512,7 @@ function validateDistributionManifest(
   const customKey = envRequires.length === 1 ? envRequires[0] : null
   if (
     !isRecord(customKey) ||
-    customKey.name !== 'CUSTOM_API_KEY' ||
+    customKey.name !== 'OPENCODE_GO_API_KEY' ||
     customKey.required !== true ||
     typeof customKey.description !== 'string' ||
     customKey.description.trim().length === 0 ||
@@ -548,7 +520,7 @@ function validateDistributionManifest(
     Object.hasOwn(customKey, 'default')
   ) {
     errors.push(
-      `${label}: env_requires must declare only required CUSTOM_API_KEY without a value`,
+      `${label}: env_requires must declare only required OPENCODE_GO_API_KEY without a value`,
     )
   }
 

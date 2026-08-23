@@ -2,14 +2,14 @@ Built-in toolsets (cli):
   ✗ disabled  web  🌐 Web
   ✗ disabled  browser  🌍 Browser
   ✗ disabled  terminal  💻 Terminal
-  ✓ enabled  file  📁 File
+  ✗ disabled  file  📁 File
   ✗ disabled  code_execution  🧪 Code Execution
   ✗ disabled  vision  👁 Vision
   ✗ disabled  image_gen  🎨 Image Generation
   ✗ disabled  skills  🧰 Skills
-  ✓ enabled  todo  ✅ Todo
+  ✗ disabled  todo  ✅ Todo
   ✗ disabled  memory  🧠 Memory
-  ✓ enabled  session_search  🔎 Session Search
+  ✗ disabled  session_search  🔎 Session Search
   ✗ disabled  clarify  ❓ Clarify
   ✗ disabled  delegation  👥 Delegation
   ✗ disabled  cronjob  ⏰ Cronjob

@@ -59,12 +59,12 @@ const hermes0201Toolsets = [
 ]
 
 const expectedProfileToolsets: Record<string, Array<string>> = {
-  'sales-orchestrator': ['file', 'todo', 'session_search'],
+  'sales-orchestrator': [],
   'market-account-intelligence': ['web', 'file'],
   'contact-data-steward': ['web', 'file'],
-  'qualification-prioritization': ['file'],
+  'qualification-prioritization': [],
   'outreach-draft-manager': ['file'],
-  'commercial-qa-compliance': ['file'],
+  'commercial-qa-compliance': [],
 }
 
 function readProfileConfig(profileId: string): Record<string, unknown> {
@@ -114,20 +114,22 @@ describe('commercial swarm package validator', () => {
     expect(result.rosterWorkerIds).toEqual(activeProfileIds)
   })
 
-  it('pins every native profile to the OpenCode Go endpoint', () => {
+  it('binds native profiles to the runtime-confirmed OpenCode Go contract', () => {
     for (const profileId of activeProfileIds) {
       const config = readProfileConfig(profileId)
-      const providers = config.custom_providers as Array<
-        Record<string, unknown>
-      >
-
-      expect(providers[0].base_url, profileId).toBe(
-        'https://opencode.ai/zen/go/v1',
-      )
-      expect(`${providers[0].base_url}/chat/completions`, profileId).toBe(
-        'https://opencode.ai/zen/go/v1/chat/completions',
-      )
+      const model = config.model as Record<string, unknown>
+      expect(model.provider, profileId).toBe('opencode-go')
+      expect(config).not.toHaveProperty('custom_providers')
     }
+
+    const executor = readFileSync(
+      join(packageRoot, 'runtime', 'src', 'hermes-executor.ts'),
+      'utf8',
+    )
+    expect(executor).toContain(
+      "HERMES_BASE_URL = 'https://opencode.ai/zen/go/v1'",
+    )
+    expect(executor).toContain("HERMES_KEY_ENV = 'OPENCODE_GO_API_KEY'")
   })
 
   it('caps every native profile to a bounded simulation turn and output budget', () => {
@@ -247,7 +249,9 @@ describe('commercial swarm package validator', () => {
       'utf8',
     )
 
-    expect(soul.toLowerCase()).not.toContain('deleg')
+    const config = readProfileConfig('sales-orchestrator')
+    const agent = config.agent as Record<string, unknown>
+    expect(agent.disabled_toolsets).toContain('delegation')
     expect(roster.toLowerCase()).not.toContain('deleg')
     expect(matrix.toLowerCase()).not.toContain('deleg')
     expect(soul).toContain('broker')
@@ -304,10 +308,11 @@ describe('commercial swarm package validator', () => {
   it('rejects toolset escalation and inline credentials in a native profile config', () => {
     const config = readProfileConfig('market-account-intelligence')
     const toolsets = config.toolsets as Array<string>
-    const providers = config.custom_providers as Array<Record<string, unknown>>
     toolsets.push('terminal')
-    providers[0].api_key = 'inline-placeholder-is-still-forbidden'
-    providers[0].base_url = 'https://opencode.ai'
+    config.api_key = 'inline-placeholder-is-still-forbidden'
+    config.custom_providers = [{ base_url: 'https://opencode.ai' }]
+    ;(config.model as Record<string, unknown>).provider =
+      'custom:deepseek-v4-flash'
 
     const errors = validateNativeProfileConfig(
       config,
@@ -318,10 +323,10 @@ describe('commercial swarm package validator', () => {
       'market-account-intelligence: CLI toolsets must equal web,file plus no_mcp sentinel',
     )
     expect(errors).toContain(
-      'market-account-intelligence: custom provider must not contain api_key',
+      'market-account-intelligence: config.yaml contains unsupported keys api_key,custom_providers',
     )
     expect(errors).toContain(
-      'market-account-intelligence: custom provider must pin deepseek-v4-flash at https://opencode.ai/zen/go/v1 via CUSTOM_API_KEY',
+      'market-account-intelligence: model must use the confirmed opencode-go provider',
     )
   })
 
