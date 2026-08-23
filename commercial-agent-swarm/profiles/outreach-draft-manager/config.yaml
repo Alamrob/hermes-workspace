@@ -2,6 +2,9 @@ model:
   default: deepseek-v4-flash
   provider: opencode-go
   max_tokens: 4096
+auxiliary:
+  title_generation:
+    enabled: false
 memory:
   memory_enabled: false
   user_profile_enabled: false
