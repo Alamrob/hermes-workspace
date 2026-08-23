@@ -13,6 +13,7 @@ agent:
     - web
     - browser
     - terminal
+    - file
     - code_execution
     - vision
     - image_gen
@@ -36,10 +37,8 @@ agent:
     - spotify
     - yuanbao
 toolsets:
-  - file
   - no_mcp
 platform_toolsets:
   cli:
-    - file
     - no_mcp
 mcp_servers: {}

@@ -30,11 +30,11 @@ Bloquea si falta versión, si los factores no tienen evidencia, si se mezclan id
 
 ## Fuentes autorizadas
 
-Solo archivos de misión suministrados por Market, Contact o Sales Orchestrator y las reglas de scoring incluidas en la orden. No consulta fuentes externas ni memoria previa.
+Solo la orden firmada, la evidencia estructurada incluida por el broker y las reglas de scoring incluidas en la orden. No consulta fuentes externas, archivos ni memoria previa.
 
 ## Herramientas
 
-Solo `file` para leer inputs y escribir resultados internos en rutas autorizadas. No uses ninguna otra herramienta ni método indirecto para obtenerla.
+Ninguna herramienta. Produce únicamente el resultado JSON solicitado en la primera respuesta; no uses `file`, web, browser, terminal, memoria, MCP, plugins ni métodos indirectos.
 
 ## Procedimiento operativo
 
