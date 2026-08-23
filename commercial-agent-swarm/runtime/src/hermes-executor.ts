@@ -409,10 +409,11 @@ export class HermesExecutor implements ExecutorPort {
 }
 
 /**
- * Hermes `-z` normally emits the final answer as raw JSON. Some models wrap
- * that single answer in one Markdown JSON fence even when instructed not to.
- * Accept that narrow transport variation, but never extract JSON from prose,
- * multiple fences, nested instructions, or an oversized response.
+ * Hermes `-z` normally emits the final answer as raw JSON. Some providers add
+ * a short, brace-free transport notice around one Markdown JSON fence even
+ * when instructed not to. Accept only that bounded variation. Never extract
+ * a JSON object from ordinary prose, multiple fences, nested instructions, or
+ * an oversized response.
  */
 export function parseStrictModelJson(output: string): unknown {
   const trimmed = output.trim()
@@ -423,8 +424,20 @@ export function parseStrictModelJson(output: string): unknown {
   )
     throw new Error('INVALID_EXECUTOR_ENVELOPE')
 
-  const fenced = /^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/.exec(trimmed)
-  const candidate = (fenced?.[1] ?? trimmed).trim()
+  const wholeFence = /^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/.exec(trimmed)
+  let candidate = (wholeFence?.[1] ?? trimmed).trim()
+  if (!wholeFence && !candidate.startsWith('{')) {
+    const fenced = /```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```/.exec(trimmed)
+    if (!fenced || fenced[1].includes('```'))
+      throw new Error('INVALID_EXECUTOR_ENVELOPE')
+    const prefix = trimmed.slice(0, fenced.index).trim()
+    const suffix = trimmed.slice(fenced.index + fenced[0].length).trim()
+    const unsafeWrapper = (value: string) =>
+      value.length > 2_048 || /[{}\0`]/.test(value)
+    if (unsafeWrapper(prefix) || unsafeWrapper(suffix))
+      throw new Error('INVALID_EXECUTOR_ENVELOPE')
+    candidate = fenced[1].trim()
+  }
   if (!candidate.startsWith('{') || !candidate.endsWith('}'))
     throw new Error('INVALID_EXECUTOR_ENVELOPE')
 

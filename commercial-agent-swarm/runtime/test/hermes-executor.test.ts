@@ -25,10 +25,14 @@ const profileId = 'market-account-intelligence' as const
 const rootLinux = process.platform === 'linux' && process.getuid?.() === 0
 
 describe('strict model JSON parser', () => {
-  it('accepts raw JSON and one whole JSON fence', () => {
+  it('accepts raw JSON, one whole JSON fence and bounded brace-free transport text', () => {
     assert.deepEqual(parseStrictModelJson(' {"ok":true} \n'), { ok: true })
     assert.deepEqual(
       parseStrictModelJson('```json\n{"ok":true}\n```'),
+      { ok: true },
+    )
+    assert.deepEqual(
+      parseStrictModelJson('Final structured response:\n```json\n{"ok":true}\n```\nEnd of response.'),
       { ok: true },
     )
   })
@@ -36,6 +40,8 @@ describe('strict model JSON parser', () => {
   it('rejects prose, multiple fences, malformed, NUL and oversized output', () => {
     for (const output of [
       'Result: {"ok":true}',
+      'Unsafe {context}\n```json\n{"ok":true}\n```',
+      '```json\n{"ok":true}\n```\nUnsafe {context}',
       '```json\n{"ok":true}\n```\n```json\n{"extra":true}\n```',
       '```json\n{"ok":\n```',
       '{"ok":"\0"}',

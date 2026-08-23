@@ -205,6 +205,26 @@ describe('Paperclip commercial automation', () => {
     assert.match(assignments[3].instruction, /VERDICT: allow_internal/)
   })
 
+  it('dispatches ALA-39 as the final compact retry without expanding authority', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-39', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const dispatched = await automation(paperclip, broker).tick()
+    assert.equal(dispatched.issue, 'ALA-39')
+    const order = broker.orders[0] as any
+    assert.equal(order.idempotency_key, 'paperclip:ALA-39:commercial-v14')
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.contact_policy.contact_permitted, false)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    const assignments = broker.plans[0].assignments
+    assert.equal(assignments.length, 4)
+    assert.ok(assignments.every((assignment) => /ALA-39/.test(assignment.instruction)))
+    assert.match(assignments[0].instruction, /FINAL COMPACT BOUNDED/)
+    assert.match(assignments[2].instruction, /THIRTY COMPACT SHADOW DECISIONS/)
+    assert.match(assignments[3].instruction, /VERDICT: allow_internal/)
+  })
+
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),
