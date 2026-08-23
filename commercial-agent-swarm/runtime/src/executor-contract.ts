@@ -428,7 +428,7 @@ export function validateHermesUsage(
     }
   else if (
     value.cost_status === 'included' &&
-    value.cost_source !== 'none' &&
+    value.cost_source === 'none' &&
     (value.estimated_cost_usd === null || value.estimated_cost_usd === 0)
   )
     cost = {

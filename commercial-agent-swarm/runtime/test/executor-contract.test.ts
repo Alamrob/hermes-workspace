@@ -183,6 +183,22 @@ describe('closed executor contracts', () => {
       source: 'provider_cost_api',
       pricing_snapshot_id: null,
     })
+    const included = validateHermesUsage(
+      {
+        ...base,
+        estimated_cost_usd: 0,
+        cost_status: 'included',
+        cost_source: 'none',
+      },
+      { maximum_tokens: 100, maximum_api_calls: 2 },
+    )
+    assert.deepEqual(included.cost, {
+      status: 'included',
+      usage_value_usd: null,
+      cash_cost_usd: 0,
+      source: 'none',
+      pricing_snapshot_id: null,
+    })
     assert.throws(
       () =>
         validateHermesUsage(
