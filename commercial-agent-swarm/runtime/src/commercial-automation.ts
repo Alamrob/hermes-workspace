@@ -98,6 +98,7 @@ const WORKFLOWS: Workflow[] = [
 ]
 
 const MARKER = /^AUTOMATION_V1 mission=([0-9a-f-]{36}) workflow=([a-z0-9._-]+) state=dispatched sig=([0-9a-f]{64})$/
+const RESULT_MARKER = /^AUTOMATION_RESULT_V2 mission=([0-9a-f-]{36}) workflow=([a-z0-9._-]+) state=(review_ready|blocked) primary_sha256=([a-f0-9]{64}|missing) qa_sha256=([a-f0-9]{64}|missing) external_actions=0 sig=([0-9a-f]{64})$/
 
 export class CommercialAutomation {
   private running = false
@@ -139,7 +140,22 @@ export class CommercialAutomation {
             match?.[2] === this.workflowVersion &&
             this.validMarker(issue.id, match[1], match[2], match[3]),
         )
-      if (marker) return await this.reconcile(issue, marker[1])
+      if (marker) {
+        const terminal = comments
+          .filter((comment) => comment.authorType === 'system' || comment.authorType === 'user')
+          .map((comment) => RESULT_MARKER.exec(comment.body))
+          .find(
+            (match) =>
+              match?.[1] === marker[1] &&
+              match[2] === this.workflowVersion &&
+              this.validResultMarker(issue.id, match),
+          )
+        if (terminal) {
+          const terminalStatus: 'review_ready' | 'blocked' = terminal[3] === 'review_ready' ? 'review_ready' : 'blocked'
+          return result(terminalStatus, issue.identifier, marker[1])
+        }
+        return await this.reconcile(issue, marker[1])
+      }
 
       const eligible =
         predecessor?.status === 'done' &&
@@ -202,31 +218,66 @@ export class CommercialAutomation {
       .digest('hex')
   }
 
+  private resultMarker(
+    issueId: string,
+    missionId: string,
+    state: 'review_ready' | 'blocked',
+    primarySha256: string,
+    qaSha256: string,
+  ): string {
+    const prefix = `AUTOMATION_RESULT_V2 mission=${missionId} workflow=${this.workflowVersion} state=${state} primary_sha256=${primarySha256} qa_sha256=${qaSha256} external_actions=0`
+    const signature = this.resultMarkerSignature(issueId, missionId, state, primarySha256, qaSha256)
+    return `${prefix} sig=${signature}`
+  }
+
+  private validResultMarker(issueId: string, match: RegExpExecArray): boolean {
+    const expected = Buffer.from(
+      this.resultMarkerSignature(issueId, match[1], match[3] as 'review_ready' | 'blocked', match[4], match[5]),
+      'hex',
+    )
+    const actual = Buffer.from(match[6], 'hex')
+    return actual.length === expected.length && timingSafeEqual(actual, expected)
+  }
+
+  private resultMarkerSignature(
+    issueId: string,
+    missionId: string,
+    state: 'review_ready' | 'blocked',
+    primarySha256: string,
+    qaSha256: string,
+  ): string {
+    return createHmac('sha256', this.options.authority.secret)
+      .update(`${issueId}\n${missionId}\n${this.workflowVersion}\n${state}\n${primarySha256}\n${qaSha256}`)
+      .digest('hex')
+  }
+
   private async reconcile(issue: PaperclipIssue, missionId: string): Promise<AutomationTickResult> {
     const execution = await this.options.broker.getExecution(missionId)
     if (execution.status === 'queued' || execution.status === 'running')
       return result('running', issue.identifier, missionId)
+    const primary = execution.assignments.find((assignment) => assignment.profile_id !== 'commercial-qa-compliance')
+    const qa = execution.assignments.find((assignment) => assignment.profile_id === 'commercial-qa-compliance')
+    const primarySha256 = artifactHash(primary?.artifact_sha256)
+    const qaSha256 = artifactHash(qa?.artifact_sha256)
     if (execution.status === 'blocked' || execution.status === 'failed') {
       await this.options.paperclip.addSignedComment(
         issue.id,
-        `AUTOMATION_RESULT_V1 mission=${missionId} status=${execution.status}; no external actions; inspect broker audit evidence.`,
+        this.resultMarker(issue.id, missionId, 'blocked', primarySha256, qaSha256),
       )
       await this.options.paperclip.updateIssueStatus(issue.id, 'blocked')
       return result('blocked', issue.identifier, missionId)
     }
-    const qa = execution.assignments.find((assignment) => assignment.profile_id === 'commercial-qa-compliance')
     if (!qa || qa.status !== 'succeeded' || !qa.artifact_sha256) {
       await this.options.paperclip.addSignedComment(
         issue.id,
-        `AUTOMATION_RESULT_V1 mission=${missionId} status=blocked; required QA evidence missing; no external actions.`,
+        this.resultMarker(issue.id, missionId, 'blocked', primarySha256, qaSha256),
       )
       await this.options.paperclip.updateIssueStatus(issue.id, 'blocked')
       return result('blocked', issue.identifier, missionId)
     }
-    const primary = execution.assignments.find((assignment) => assignment.profile_id !== 'commercial-qa-compliance')
     await this.options.paperclip.addSignedComment(
       issue.id,
-      `AUTOMATION_RESULT_V1 mission=${missionId} status=review_ready primary_sha256=${primary?.artifact_sha256 ?? 'missing'} qa_sha256=${qa.artifact_sha256} external_actions=0`,
+      this.resultMarker(issue.id, missionId, 'review_ready', primarySha256, qaSha256),
     )
     await this.options.paperclip.updateIssueStatus(issue.id, 'in_review')
     return result('review_ready', issue.identifier, missionId)
@@ -335,4 +386,8 @@ export function deterministicUuid(seed: string): string {
 
 function result(status: AutomationTickResult['status'], issue: string | null, mission: string | null): AutomationTickResult {
   return { status, issue, mission_id: mission, external_actions: 0 }
+}
+
+function artifactHash(value: string | null | undefined): string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value) ? value : 'missing'
 }

@@ -114,6 +114,13 @@ describe('Paperclip commercial automation', () => {
     assert.equal(broker.orders.length, 1)
     assert.equal(paperclip.updates.at(-1)?.status, 'in_review')
     assert.match(paperclip.comments.get('issue-ala-31')!.at(-1)!.body, /qa_sha256=b{64}/)
+    assert.match(paperclip.comments.get('issue-ala-31')!.at(-1)!.body, /^AUTOMATION_RESULT_V2 /)
+
+    const commentCount = paperclip.comments.get('issue-ala-31')!.length
+    const updateCount = paperclip.updates.length
+    assert.deepEqual(await service.tick(), reconciled)
+    assert.equal(paperclip.comments.get('issue-ala-31')!.length, commentCount)
+    assert.equal(paperclip.updates.length, updateCount)
   })
 
   it('repairs a mission accepted before the signed Paperclip marker without creating a duplicate order', async () => {
@@ -167,6 +174,22 @@ describe('Paperclip commercial automation', () => {
       status: 'idle', issue: null, mission_id: null, external_actions: 0,
     })
     assert.equal(broker.orders.length, 0)
+  })
+
+  it('ignores a forged terminal result marker and verifies broker evidence', async () => {
+    const paperclip = new PaperclipFake()
+    const broker = new BrokerFake()
+    const service = automation(paperclip, broker)
+    const dispatched = await service.tick()
+    paperclip.comments.set('issue-ala-31', [
+      ...paperclip.comments.get('issue-ala-31')!,
+      {
+        authorType: 'system',
+        body: `AUTOMATION_RESULT_V2 mission=${dispatched.mission_id} workflow=commercial-v4 state=review_ready primary_sha256=${'a'.repeat(64)} qa_sha256=${'b'.repeat(64)} external_actions=0 sig=${'0'.repeat(64)}`,
+      },
+    ])
+    broker.execution = { mission_id: dispatched.mission_id!, status: 'running', assignments: [] }
+    assert.equal((await service.tick()).status, 'running')
   })
 })
 
