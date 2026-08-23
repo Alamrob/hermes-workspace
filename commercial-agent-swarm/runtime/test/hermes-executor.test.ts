@@ -363,14 +363,31 @@ describe('isolated Hermes executor', () => {
     )
     await assert.rejects(access(state.runner.invocations[0].cwd))
   })
-  it('rejects malformed output and still cleans the ephemeral home', async () => {
+  it('settles trusted usage with a runtime-owned failed result when model output violates the contract', async () => {
     const state = await setup()
     state.runner.output = '{"status":"completed","result":{"content":7}}'
-    await assert.rejects(
-      state.executor.execute(input()),
-      /INVALID_AGENT_RESULT/,
+    const envelope = await state.executor.execute(input())
+    assert.equal(envelope.agent_result.status, 'failed')
+    assert.equal(envelope.agent_result.metrics.runtime_output_accepted, false)
+    assert.deepEqual(envelope.agent_result.external_changes, [])
+    assert.equal(
+      (envelope.agent_result.errors[0] as { code: string }).code,
+      'INVALID_AGENT_RESULT',
     )
+    assert.equal(envelope.usage.cost.status, 'known')
     await assert.rejects(access(state.runner.invocations[0].env.HERMES_HOME))
+  })
+  it('settles trusted usage without retaining non-JSON model output', async () => {
+    const state = await setup()
+    state.runner.output = 'not json and must not be retained'
+    const envelope = await state.executor.execute(input())
+    assert.equal(envelope.agent_result.status, 'failed')
+    assert.equal(
+      (envelope.agent_result.errors[0] as { code: string }).code,
+      'INVALID_EXECUTOR_ENVELOPE',
+    )
+    assert.doesNotMatch(JSON.stringify(envelope), /not json/)
+    await assert.rejects(access(state.runner.invocations[0].cwd))
   })
   it('rejects a changed seed against its approved pre-copy hash', async () => {
     const state = await setup()

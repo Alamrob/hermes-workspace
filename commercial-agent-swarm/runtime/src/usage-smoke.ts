@@ -62,7 +62,7 @@ export class UsageSmoke {
           assignment_id: assignmentId,
           idempotency_key: `usage-smoke:${missionId}`,
           profile_id: 'commercial-qa-compliance',
-          instruction: 'Return a minimal closed AgentResult confirming synthetic internal inference only. Do not use tools, browse, contact anyone, modify systems, or claim external evidence.',
+          instruction: 'Return the exact OUTPUT_TEMPLATE_JSON supplied by the runtime. Change only summary to "Synthetic internal inference completed." Keep status completed, keep every array empty, keep metrics empty, and keep all other template values unchanged. Do not use tools, browse, contact anyone, modify systems, or claim external evidence.',
           evidence: JSON.stringify({ trust: 'untrusted_data', synthetic: true, external_actions_allowed: 0 }),
           depends_on: [],
           usage_value_reservation_usd: 0.1,

@@ -358,20 +358,38 @@ export class HermesExecutor implements ExecutorPort {
         throw error
       }
       const usage = priceOpenCodeGoUsage(nativeUsage, pricingNow)
-      let rawResult: unknown
+      const finishedAt = new Date().toISOString()
+      let agentResult: AgentResult
       try {
-        rawResult = JSON.parse(output.stdout)
-      } catch {
-        throw new Error('INVALID_EXECUTOR_ENVELOPE')
+        let rawResult: unknown
+        try {
+          rawResult = JSON.parse(output.stdout)
+        } catch {
+          throw new Error('INVALID_EXECUTOR_ENVELOPE')
+        }
+        agentResult = reconcileAgentResult(
+          rawResult,
+          input,
+          usage,
+          input.reservation.budget_reservation,
+          startedAt,
+          finishedAt,
+        )
+      } catch (error) {
+        const code = error instanceof Error ? error.message : 'EXECUTOR_FAILURE'
+        if (!RESULT_VALIDATION_FAILURES.has(code)) throw error
+        // Usage is already trusted and priced at this boundary. Return a
+        // runtime-owned failed AgentResult so the broker can settle the ledger
+        // without accepting or retaining malformed model output.
+        agentResult = reconcileAgentResult(
+          runtimeValidationFailure(input, code, startedAt, finishedAt),
+          input,
+          usage,
+          input.reservation.budget_reservation,
+          startedAt,
+          finishedAt,
+        )
       }
-      const agentResult = reconcileAgentResult(
-        rawResult,
-        input,
-        usage,
-        input.reservation.budget_reservation,
-        startedAt,
-        new Date().toISOString(),
-      )
       return { schema_version: '1.0', agent_result: agentResult, usage }
     } finally {
       await this.options.ownership.reclaim?.(
@@ -387,6 +405,60 @@ export class HermesExecutor implements ExecutorPort {
       await rm(home, { recursive: true, force: true })
       await rm(cwd, { recursive: true, force: true })
     }
+  }
+}
+
+const RESULT_VALIDATION_FAILURES = new Set([
+  'INVALID_EXECUTOR_ENVELOPE',
+  'INVALID_AGENT_RESULT',
+  'SIMULATION_EXTERNAL_CHANGE',
+  'SIMULATION_EXTERNAL_ACTION',
+])
+
+function runtimeValidationFailure(
+  input: ExecuteInput,
+  code: string,
+  startedAt: string,
+  finishedAt: string,
+): AgentResult {
+  return {
+    mission_id: input.mission_id,
+    trace_id: input.trace_id,
+    assignment_id: input.assignment_id,
+    agent_id: input.profile_id,
+    status: 'failed',
+    summary: 'Hermes completed the inference, but the deterministic runtime rejected the model output contract.',
+    facts: [],
+    inferences: [],
+    actions_taken: [],
+    external_changes: [],
+    evidence: [],
+    artifacts: [],
+    metrics: { runtime_output_accepted: false },
+    cost: {
+      currency: 'USD',
+      llm: 0,
+      tools: 0,
+      total: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+    },
+    errors: [
+      {
+        code,
+        message: 'Model output was rejected without storing its content.',
+        recoverable: false,
+        attempts: 1,
+        next_safe_step: 'Review the trusted prompt and schema before authorizing a new execution.',
+      },
+    ],
+    risks: [],
+    pending_approvals: [],
+    recommended_next_actions: [
+      'Review the trusted prompt and schema before authorizing a new execution.',
+    ],
+    started_at: startedAt,
+    finished_at: finishedAt,
   }
 }
 
