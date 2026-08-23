@@ -17,6 +17,7 @@ describe('versioned migration runner', () => {
       { version: '010_instruction_inbox', sql: 'SELECT 10;' },
       { version: '011_go_native_usage_ledger', sql: 'SELECT 11;' },
       { version: '012_dependency_terminalization', sql: 'SELECT 12;' },
+      { version: '013_variable_usage_reservations', sql: 'SELECT 13;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -36,6 +37,7 @@ describe('versioned migration runner', () => {
         '010_instruction_inbox',
         '011_go_native_usage_ledger',
         '012_dependency_terminalization',
+        '013_variable_usage_reservations',
       ],
     )
     assert.equal(

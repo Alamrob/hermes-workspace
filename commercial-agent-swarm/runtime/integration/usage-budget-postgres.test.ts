@@ -34,6 +34,8 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       '009_internal_automation',
       '010_instruction_inbox',
       '011_go_native_usage_ledger',
+      '012_dependency_terminalization',
+      '013_variable_usage_reservations',
     ]
     await runVersionedMigrations(leftPool, await Promise.all(versions.map(async (version) => ({
       version,
@@ -129,6 +131,45 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     assert.equal((await leftPool.query(
       `SELECT usage_budget_state FROM control.dispatch_jobs WHERE job_id=$1`, [secondJob.job_id],
     )).rows[0].usage_budget_state, 'released')
+  })
+
+  it('reserves each signed assignment amount and enforces the exact mission ceiling', async () => {
+    const mission = await saveMission(leftPool, 'variable-reservation-boundary', 0.05)
+    const first = job(mission, 'variable-reservation-1', 0.025)
+    await left.enqueue(first)
+    const firstClaim = await left.claim('variable-worker-1', 60, 30)
+    assert(firstClaim)
+    assert.equal(firstClaim.usageBudget.reservationMicroCents, 2_500_000)
+    await left.complete(first.job_id, 'variable-worker-1', completionEnvelope(), 'd'.repeat(64), {
+      usageValueMicroCents: 2_500_000,
+      usageRecordId: 'usage-variable-1',
+      source: 'opencode_go_native_telemetry',
+      budgetVersion: firstClaim.usageBudget.version,
+      total_tokens: 15,
+      api_calls: 1,
+    })
+
+    const second = job(mission, 'variable-reservation-2', 0.025)
+    await left.enqueue(second)
+    const secondClaim = await left.claim('variable-worker-2', 60, 30)
+    assert(secondClaim)
+    assert.equal(secondClaim.usageBudget.reservationMicroCents, 2_500_000)
+    assert.equal(secondClaim.usageBudget.missionCommittedBeforeMicroCents, 2_500_000)
+    await left.complete(second.job_id, 'variable-worker-2', completionEnvelope(), 'e'.repeat(64), {
+      usageValueMicroCents: 2_500_000,
+      usageRecordId: 'usage-variable-2',
+      source: 'opencode_go_native_telemetry',
+      budgetVersion: secondClaim.usageBudget.version,
+      total_tokens: 15,
+      api_calls: 1,
+    })
+
+    const over = job(mission, 'variable-reservation-over', 0.01)
+    await left.enqueue(over)
+    assert.equal(await left.claim('variable-worker-over', 60, 30), null)
+    assert.equal((await leftPool.query(
+      `SELECT status,error FROM control.dispatch_jobs WHERE job_id=$1`, [over.job_id],
+    )).rows[0].status, 'budget_exceeded')
   })
 
   it('serializes concurrent probes and quarantines an ambiguous outcome without refunding zero', async () => {
@@ -311,6 +352,8 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       [candidate.job_id],
     )).rows[0], { status: 'usage_unknown', usage_budget_state: 'held_uncertain', usage_value_actual_micro_cents: null })
 
+    const variableRollback = await readFile(new URL('../migrations/013_variable_usage_reservations.rollback.sql', import.meta.url), 'utf8')
+    await leftPool.query(variableRollback)
     const rollback = await readFile(new URL('../migrations/007_usage_budget_ledger.rollback.sql', import.meta.url), 'utf8')
     await leftPool.query(rollback)
     assert.equal((await leftPool.query(
@@ -339,12 +382,12 @@ async function saveMission(pool: Pool, key: string, maximum: number): Promise<st
   return missionId
 }
 
-function job(missionId: string, key: string): EnqueueJob {
+function job(missionId: string, key: string, reservation = 0.1): EnqueueJob {
   return {
     job_id: randomUUID(), mission_id: missionId, trace_id: randomUUID(),
     idempotency_key: key, profile_id: 'market-account-intelligence',
     instruction: 'Analyze only supplied evidence.', evidence: 'untrusted evidence',
-    dependencies: [], usage_value_reservation_usd: 0.02,
+    dependencies: [], usage_value_reservation_usd: reservation,
     maximum_tokens: 100, maximum_api_calls: 2, max_attempts: 3,
   }
 }

@@ -257,6 +257,25 @@ describe('Paperclip commercial automation', () => {
     assert.match(assignments[1].instruction, /accounts_reviewed=1/)
   })
 
+  it('dispatches the explicit ALA-41 successor without relying on Paperclip blocked as a native terminal state', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-40', 'blocked'), issue('ALA-41', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const dispatched = await automation(paperclip, broker).tick()
+    assert.equal(dispatched.issue, 'ALA-41')
+    const order = broker.orders[0] as any
+    assert.equal(order.idempotency_key, 'paperclip:ALA-41:commercial-v14')
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.budget_limit.maximum, 0.05)
+    assert.equal(order.volume_limits.maximum_accounts, 1)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    const assignments = broker.plans[0].assignments
+    assert.equal(assignments.length, 2)
+    assert.ok(assignments.every((assignment) => assignment.usage_value_reservation_usd === 0.025))
+    assert.match(assignments[0].instruction, /AFTER LEDGER FIX/)
+  })
+
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),

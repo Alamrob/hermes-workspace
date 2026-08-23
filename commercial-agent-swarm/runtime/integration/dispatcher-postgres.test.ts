@@ -34,6 +34,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       '009_internal_automation.sql',
       '011_go_native_usage_ledger.sql',
       '012_dependency_terminalization.sql',
+      '013_variable_usage_reservations.sql',
     ])
       await a.query(
         await readFile(
