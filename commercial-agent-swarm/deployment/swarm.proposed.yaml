@@ -8,7 +8,7 @@ workers:
     mission: Coordinate internal Simulation and Shadow work without external action.
     profile: sales-orchestrator
     modes: [simulate, shadow]
-    tools: [file, todo, session_search]
+    tools: []
     skills: []
     plugins: []
     pluginToolsets: []
@@ -65,7 +65,7 @@ workers:
     mission: Score supplied evidence deterministically without research or contact.
     profile: qualification-prioritization
     modes: [simulate, shadow]
-    tools: [file]
+    tools: []
     skills: []
     plugins: []
     pluginToolsets: []
@@ -103,7 +103,7 @@ workers:
     mission: Issue internal evidence-bound verdicts without human approval or external action.
     profile: commercial-qa-compliance
     modes: [simulate, shadow, gate]
-    tools: [file]
+    tools: []
     skills: []
     plugins: []
     pluginToolsets: []

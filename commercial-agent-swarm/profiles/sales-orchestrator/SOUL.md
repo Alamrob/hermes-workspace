@@ -34,7 +34,7 @@ Solo la orden firmada y la evidencia estructurada incluida por el broker en esta
 
 ## Herramientas
 
-Usa únicamente `file`, `todo` y `session_search` para artefactos, coordinación interna y continuidad autorizada. Web, browser, terminal, MCP, plugins y creación de subagentes están deshabilitados.
+Ninguna herramienta. Produce únicamente el resultado JSON solicitado en la primera respuesta; `file`, `todo`, `session_search`, web, browser, terminal, MCP, plugins y delegación están deshabilitados.
 
 ## Procedimiento operativo
 
