@@ -82,7 +82,7 @@ describe('Paperclip commercial automation', () => {
     assert.equal(broker.orders.length, 1)
     assert.equal(broker.plans.length, 1)
     const order = broker.orders[0] as any
-    assert.equal(order.idempotency_key, 'paperclip:ALA-31:commercial-v13')
+    assert.equal(order.idempotency_key, 'paperclip:ALA-31:commercial-v14')
     assert.equal(order.autonomy_level, 'A2')
     assert.equal(order.dry_run, true)
     assert.equal(order.contact_policy.contact_permitted, false)
@@ -179,9 +179,30 @@ describe('Paperclip commercial automation', () => {
       assignments[2].assignment_id,
     ])
     assert.match(assignments[0].instruction, /exactly ten/)
-    assert.match(assignments[2].instruction, /exactly three inspectable categorical decisions/)
-    assert.match(assignments[3].instruction, /exactly thirty categorical decisions/)
+    assert.match(assignments[2].instruction, /exactly three categorical decisions/)
+    assert.match(assignments[3].instruction, /thirty categorical decisions/)
     assert.ok(assignments.every((assignment) => assignment.max_attempts === 1))
+  })
+
+  it('dispatches ALA-38 as a compact versioned retry without expanding authority', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-37', 'blocked'), issue('ALA-38', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const dispatched = await automation(paperclip, broker).tick()
+    assert.equal(dispatched.issue, 'ALA-38')
+    const order = broker.orders[0] as any
+    assert.equal(order.idempotency_key, 'paperclip:ALA-38:commercial-v14')
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.contact_policy.contact_permitted, false)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    const assignments = broker.plans[0].assignments
+    assert.equal(assignments.length, 4)
+    assert.ok(assignments.every((assignment) => /ALA-38/.test(assignment.instruction)))
+    assert.match(assignments[0].instruction, /exactly ten candidate facts/)
+    assert.match(assignments[0].instruction, /at most 5,000 characters/)
+    assert.match(assignments[2].instruction, /THIRTY COMPACT SHADOW DECISIONS/)
+    assert.match(assignments[3].instruction, /VERDICT: allow_internal/)
   })
 
   it('resumes from its exact signed marker without duplicate dispatch and returns QA to review', async () => {
@@ -214,7 +235,7 @@ describe('Paperclip commercial automation', () => {
   it('repairs a mission accepted before the signed Paperclip marker without creating a duplicate order', async () => {
     const paperclip = new PaperclipFake()
     const broker = new BrokerFake()
-    const missionId = deterministicUuid('387d4503-0f7b-4708-bb62-8295a1e23e1b:issue-ala-31:commercial-v13:mission')
+    const missionId = deterministicUuid('387d4503-0f7b-4708-bb62-8295a1e23e1b:issue-ala-31:commercial-v14:mission')
     broker.execution = { mission_id: missionId, status: 'running', assignments: [] }
     const recovered = await automation(paperclip, broker).tick()
     assert.deepEqual(recovered, {
@@ -251,11 +272,11 @@ describe('Paperclip commercial automation', () => {
     ])
     paperclip.comments.set('issue-ala-31', [{
       authorType: 'user',
-      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker')} workflow=commercial-v13 state=dispatched`,
+      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker')} workflow=commercial-v14 state=dispatched`,
     }])
     paperclip.comments.set('issue-ala-32', [{
       authorType: 'system',
-      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker-system')} workflow=commercial-v13 state=dispatched sig=${'0'.repeat(64)}`,
+      body: `AUTOMATION_V1 mission=${deterministicUuid('attacker-system')} workflow=commercial-v14 state=dispatched sig=${'0'.repeat(64)}`,
     }])
     const broker = new BrokerFake()
     assert.deepEqual(await automation(paperclip, broker).tick(), {
@@ -273,7 +294,7 @@ describe('Paperclip commercial automation', () => {
       ...paperclip.comments.get('issue-ala-31')!,
       {
         authorType: 'system',
-        body: `AUTOMATION_RESULT_V2 mission=${dispatched.mission_id} workflow=commercial-v13 state=review_ready primary_sha256=${'a'.repeat(64)} qa_sha256=${'b'.repeat(64)} external_actions=0 sig=${'0'.repeat(64)}`,
+        body: `AUTOMATION_RESULT_V2 mission=${dispatched.mission_id} workflow=commercial-v14 state=review_ready primary_sha256=${'a'.repeat(64)} qa_sha256=${'b'.repeat(64)} external_actions=0 sig=${'0'.repeat(64)}`,
       },
     ])
     broker.execution = { mission_id: dispatched.mission_id!, status: 'running', assignments: [] }

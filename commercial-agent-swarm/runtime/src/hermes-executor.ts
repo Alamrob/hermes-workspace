@@ -366,12 +366,7 @@ export class HermesExecutor implements ExecutorPort {
       const finishedAt = new Date().toISOString()
       let agentResult: AgentResult
       try {
-        let rawResult: unknown
-        try {
-          rawResult = JSON.parse(output.stdout)
-        } catch {
-          throw new Error('INVALID_EXECUTOR_ENVELOPE')
-        }
+        const rawResult = parseStrictModelJson(output.stdout)
         agentResult = reconcileAgentResult(
           rawResult,
           input,
@@ -410,6 +405,33 @@ export class HermesExecutor implements ExecutorPort {
       await rm(home, { recursive: true, force: true })
       await rm(cwd, { recursive: true, force: true })
     }
+  }
+}
+
+/**
+ * Hermes `-z` normally emits the final answer as raw JSON. Some models wrap
+ * that single answer in one Markdown JSON fence even when instructed not to.
+ * Accept that narrow transport variation, but never extract JSON from prose,
+ * multiple fences, nested instructions, or an oversized response.
+ */
+export function parseStrictModelJson(output: string): unknown {
+  const trimmed = output.trim()
+  if (
+    trimmed.length < 2 ||
+    trimmed.length > 262_144 ||
+    trimmed.includes('\0')
+  )
+    throw new Error('INVALID_EXECUTOR_ENVELOPE')
+
+  const fenced = /^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/.exec(trimmed)
+  const candidate = (fenced?.[1] ?? trimmed).trim()
+  if (!candidate.startsWith('{') || !candidate.endsWith('}'))
+    throw new Error('INVALID_EXECUTOR_ENVELOPE')
+
+  try {
+    return JSON.parse(candidate) as unknown
+  } catch {
+    throw new Error('INVALID_EXECUTOR_ENVELOPE')
   }
 }
 

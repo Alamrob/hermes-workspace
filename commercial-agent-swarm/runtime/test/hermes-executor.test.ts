@@ -9,6 +9,7 @@ import {
   PosixHomeOwnershipPreparer,
   classifyHermesExit,
   hashProfileSeed,
+  parseStrictModelJson,
 } from '../src/hermes-executor.js'
 import type {
   HomeOwnershipPreparer,
@@ -22,6 +23,31 @@ const traceId = '223e4567-e89b-42d3-a456-426614174000'
 const assignmentId = '323e4567-e89b-42d3-a456-426614174000'
 const profileId = 'market-account-intelligence' as const
 const rootLinux = process.platform === 'linux' && process.getuid?.() === 0
+
+describe('strict model JSON parser', () => {
+  it('accepts raw JSON and one whole JSON fence', () => {
+    assert.deepEqual(parseStrictModelJson(' {"ok":true} \n'), { ok: true })
+    assert.deepEqual(
+      parseStrictModelJson('```json\n{"ok":true}\n```'),
+      { ok: true },
+    )
+  })
+
+  it('rejects prose, multiple fences, malformed, NUL and oversized output', () => {
+    for (const output of [
+      'Result: {"ok":true}',
+      '```json\n{"ok":true}\n```\n```json\n{"extra":true}\n```',
+      '```json\n{"ok":\n```',
+      '{"ok":"\0"}',
+      `{${' '.repeat(262_144)}}`,
+    ])
+      assert.throws(
+        () => parseStrictModelJson(output),
+        /INVALID_EXECUTOR_ENVELOPE/,
+      )
+  })
+})
+
 function input(evidence = 'analyze public facts'): ExecuteInput {
   return {
     mission_id: missionId,
