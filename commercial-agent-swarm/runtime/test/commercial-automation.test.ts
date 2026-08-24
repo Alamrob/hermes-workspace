@@ -337,6 +337,47 @@ describe('Paperclip commercial automation', () => {
     assert.match(assignments[3].instruction, /INDEPENDENT SHADOW QA/)
   })
 
+  it('dispatches ALA-45 as the fixed official-site extraction batch without expanding authority', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-45', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const dispatched = await automation(paperclip, broker).tick()
+    assert.equal(dispatched.issue, 'ALA-45')
+    const order = broker.orders[0] as any
+    assert.equal(order.idempotency_key, 'paperclip:ALA-45:commercial-v14')
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.budget_limit.maximum, 0.5)
+    assert.equal(order.volume_limits.maximum_accounts, 10)
+    assert.equal(order.volume_limits.maximum_contacts, 0)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    assert.equal(order.contact_policy.contact_permitted, false)
+    assert.equal(order.dry_run, true)
+    const assignments = broker.plans[0].assignments
+    assert.deepEqual(
+      assignments.map((assignment) => assignment.profile_id),
+      [
+        'market-account-intelligence',
+        'contact-data-steward',
+        'qualification-prioritization',
+        'commercial-qa-compliance',
+      ],
+    )
+    assert.equal(assignments[0].maximum_api_calls, 12)
+    assert.ok(assignments.slice(1).every((assignment) => assignment.maximum_api_calls === 6))
+    assert.ok(assignments.every((assignment) => assignment.max_attempts === 1))
+    assert.match(assignments[0].instruction, /Do not call web_search/)
+    assert.match(assignments[0].instruction, /Call web_extract exactly once for each/)
+    assert.match(assignments[0].instruction, /https:\/\/www\.buk\.cl\//)
+    assert.match(assignments[0].instruction, /https:\/\/camlogistic\.cl\//)
+    assert.match(assignments[0].instruction, /https:\/\/www\.cubuq\.cl\//)
+    assert.doesNotMatch(assignments[0].instruction, /fass\.cl/)
+    assert.match(assignments[1].instruction, /Use only the market dependency artifact and call no tool/)
+    assert.match(assignments[1].instruction, /Preserve any failed extraction as an unresolved slot/)
+    assert.match(assignments[2].instruction, /THIRTY COMPACT SHADOW DECISIONS/)
+    assert.match(assignments[3].instruction, /INDEPENDENT SHADOW QA/)
+  })
+
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),
