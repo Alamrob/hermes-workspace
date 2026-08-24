@@ -365,6 +365,8 @@ describe('Paperclip commercial automation', () => {
     )
     assert.equal(assignments[0].maximum_api_calls, 12)
     assert.ok(assignments.slice(1).every((assignment) => assignment.maximum_api_calls === 6))
+    assert.equal(assignments[0].maximum_tokens, 250_000)
+    assert.ok(assignments.slice(1).every((assignment) => assignment.maximum_tokens === 125_000))
     assert.ok(assignments.every((assignment) => assignment.max_attempts === 1))
     assert.match(assignments[0].instruction, /Do not call web_search/)
     assert.match(assignments[0].instruction, /Call web_extract exactly once for each/)
@@ -376,6 +378,32 @@ describe('Paperclip commercial automation', () => {
     assert.match(assignments[1].instruction, /Preserve any failed extraction as an unresolved slot/)
     assert.match(assignments[2].instruction, /THIRTY COMPACT SHADOW DECISIONS/)
     assert.match(assignments[3].instruction, /INDEPENDENT SHADOW QA/)
+  })
+
+  it('continues from terminal ALA-45 to the bounded ALA-46 ledger retry', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-45', 'backlog'), issue('ALA-46', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const service = automation(paperclip, broker)
+    const first = await service.tick()
+    assert.equal(first.issue, 'ALA-45')
+    broker.execution = { mission_id: first.mission_id!, status: 'failed', assignments: [] }
+    const blocked = await service.tick()
+    assert.equal(blocked.status, 'blocked')
+    assert.equal(blocked.issue, 'ALA-45')
+    broker.execution = null
+    const successor = await service.tick()
+    assert.equal(successor.status, 'dispatched')
+    assert.equal(successor.issue, 'ALA-46')
+    assert.equal(broker.orders.at(-1)?.idempotency_key, 'paperclip:ALA-46:commercial-v14')
+    const assignments = broker.plans.at(-1)!.assignments
+    assert.equal(assignments[0].maximum_tokens, 250_000)
+    assert.ok(assignments.slice(1).every((assignment) => assignment.maximum_tokens === 125_000))
+    assert.ok(assignments.every((assignment) => assignment.usage_value_reservation_usd === 0.1))
+    assert.equal(assignments[0].maximum_api_calls, 12)
+    assert.ok(assignments.every((assignment) => assignment.max_attempts === 1))
+    assert.match(assignments[0].instruction, /TASK ALA-46/)
   })
 
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
