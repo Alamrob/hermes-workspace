@@ -34,6 +34,7 @@ integration('PostgreSQL 17 versioned migration runner', () => {
           '013_variable_usage_reservations',
           '014_variable_usage_constraint',
           '015_shadow_human_review',
+          '016_usage_source_not_null',
         ].map(async (version) => ({
           version,
           sql: await readFile(
@@ -50,7 +51,7 @@ integration('PostgreSQL 17 versioned migration runner', () => {
             `SELECT count(*)::int AS count FROM control.schema_migrations`,
           )
         ).rows[0].count,
-        11,
+        16,
       )
       const rollback006 = await readFile(
         new URL('../migrations/006_sales_read_models.rollback.sql', import.meta.url),

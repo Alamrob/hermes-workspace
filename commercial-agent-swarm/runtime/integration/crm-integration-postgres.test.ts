@@ -33,6 +33,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '013_variable_usage_reservations',
         '014_variable_usage_constraint',
         '015_shadow_human_review',
+        '016_usage_source_not_null',
       ]
       await runVersionedMigrations(
         pool,

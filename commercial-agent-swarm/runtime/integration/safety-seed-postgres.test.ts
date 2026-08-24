@@ -42,6 +42,7 @@ integration('PostgreSQL simulation safety seed', { concurrency: 1 }, () => {
         '013_variable_usage_reservations',
         '014_variable_usage_constraint',
         '015_shadow_human_review',
+        '016_usage_source_not_null',
       ].map(async (version) => ({
         version,
         sql: await readFile(
@@ -139,7 +140,7 @@ integration('PostgreSQL simulation safety seed', { concurrency: 1 }, () => {
           `SELECT count(*)::int AS count FROM control.schema_migrations`,
         )
       ).rows[0].count,
-      11,
+      16,
     )
 
     const rollback = await readFile(

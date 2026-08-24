@@ -3,6 +3,7 @@ import type {
   PaperclipAutomationPort,
   PaperclipComment,
   PaperclipIssue,
+  ShadowReviewGate,
 } from './commercial-automation.js'
 import type { AssignmentPlan } from './assignment-plan.js'
 import type { MissionExecution } from './dispatch-queue.js'
@@ -104,6 +105,16 @@ export class BrokerHttpClient implements BrokerAutomationPort {
     if (!value) throw new Error('BROKER_HTTP_404')
     return value
   }
+  async getShadowReviewGate(reviewId: string): Promise<ShadowReviewGate> {
+    const value = await this.request(
+      `/internal/v1/shadow-gates/${uuid(reviewId)}`,
+      'GET',
+      undefined,
+      await this.internalBearer(),
+      [200],
+    )
+    return parseShadowReviewGate(value, reviewId)
+  }
 
   private async request(path: string, method: string, body: unknown, bearer: string, statuses: number[], notFoundIsNull = false): Promise<unknown> {
     const controller = new AbortController()
@@ -124,6 +135,32 @@ export class BrokerHttpClient implements BrokerAutomationPort {
       clearTimeout(timer)
     }
   }
+}
+
+function parseShadowReviewGate(value: unknown, reviewId: string): ShadowReviewGate {
+  if (!record(value)) throw new Error('BROKER_RESPONSE_INVALID')
+  const expected = [
+    'review_id','mission_id','status','completed_decisions','expected_decisions',
+    'concordance_percent','evidence_completeness_percent','shadow_gate',
+    'production_gate','external_actions','eligible','observed_at',
+  ].sort()
+  if (Object.keys(value).sort().some((key, index) => key !== expected[index]) || Object.keys(value).length !== expected.length)
+    throw new Error('BROKER_RESPONSE_INVALID')
+  const percent = (candidate: unknown) => candidate === null || (typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0 && candidate <= 100)
+  if (
+    value.review_id !== reviewId || typeof value.mission_id !== 'string' || !UUID.test(value.mission_id) ||
+    !['open','completed'].includes(String(value.status)) || !Number.isSafeInteger(value.completed_decisions) ||
+    Number(value.completed_decisions) < 0 || Number(value.completed_decisions) > 30 || value.expected_decisions !== 30 ||
+    !percent(value.concordance_percent) || !percent(value.evidence_completeness_percent) ||
+    !['pending','passed','failed'].includes(String(value.shadow_gate)) || value.production_gate !== 'blocked' ||
+    value.external_actions !== 0 || typeof value.eligible !== 'boolean' ||
+    typeof value.observed_at !== 'string' || !Number.isFinite(Date.parse(value.observed_at))
+  ) throw new Error('BROKER_RESPONSE_INVALID')
+  const derivedEligible = value.status === 'completed' && value.completed_decisions === 30 &&
+    Number(value.concordance_percent) >= 90 && Number(value.evidence_completeness_percent) >= 95 &&
+    value.shadow_gate === 'passed' && value.production_gate === 'blocked' && value.external_actions === 0
+  if (value.eligible !== derivedEligible) throw new Error('BROKER_RESPONSE_INVALID')
+  return value as unknown as ShadowReviewGate
 }
 
 function parseIssue(value: unknown): PaperclipIssue {

@@ -47,6 +47,7 @@ export async function loadMigrationSources() {
       '013_variable_usage_reservations',
       '014_variable_usage_constraint',
       '015_shadow_human_review',
+      '016_usage_source_not_null',
     ].map(async (version) => ({
       version,
       sql: await readFile(

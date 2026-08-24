@@ -48,14 +48,18 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       mission_id: mission,
       trace_id: '223e4567-e89b-42d3-a456-426614174900',
       idempotency_key: 'dispatch-mission',
+      allowed_actions: ['research.public_sources'],
+      prohibited_actions: ['prospect.contact'],
+      approved_channels: ['public_web'],
+      approved_tools: ['hermes.web'],
+      autonomy_level: 'A1',
+      dry_run: true,
+      metadata: { a3_enabled: false },
       created_at: '2026-08-16T08:00:00Z',
       expires_at: '2099-08-16T08:00:00Z',
       budget_limit: { currency: 'USD', maximum: 1 },
     })
-    const storedPayload = {
-      ...payload,
-      a3_enabled: payload.autonomy_level === 'A3',
-    }
+    const storedPayload = { ...payload, a3_enabled: false }
     await a.query(`SELECT control.save_mission($1,$2,$3::jsonb)`, [
       mission,
       'dispatch-mission',
@@ -185,7 +189,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
     )
     assert.equal(row.rows[0]['?column?'], true)
     assert.equal(row.rows[0].child_timeout_seconds, 30)
-    assert.equal(row.rows[0].usage_value_consumed_usd, '0.100000')
+    assert.equal(row.rows[0].usage_value_consumed_usd, '0.020000')
     await first.fail(
       id,
       claims[0] ? 'worker-a' : 'worker-b',
@@ -226,7 +230,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
     )
     assert.deepEqual(state.rows[0], {
       status: 'usage_unknown',
-      usage_value_consumed_usd: '0.100000',
+      usage_value_consumed_usd: '0.020000',
       error: 'LEASE_EXPIRED_USAGE_UNKNOWN',
     })
   })

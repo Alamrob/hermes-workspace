@@ -10,6 +10,7 @@ import { validateWorkOrder } from '../src/work-orders.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
+const missionTraceIds = new Map<string, string>()
 
 integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, () => {
   const database = `usage_budget_${randomUUID().replaceAll('-', '')}`
@@ -38,6 +39,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       '013_variable_usage_reservations',
       '014_variable_usage_constraint',
       '015_shadow_human_review',
+      '016_usage_source_not_null',
     ]
     await runVersionedMigrations(leftPool, await Promise.all(versions.map(async (version) => ({
       version,
@@ -375,20 +377,29 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
 
 async function saveMission(pool: Pool, key: string, maximum: number): Promise<string> {
   const missionId = randomUUID()
+  const traceId = randomUUID()
   const payload = validateWorkOrder({
-    ...validWorkOrder(), mission_id: missionId, trace_id: randomUUID(),
+    ...validWorkOrder(), mission_id: missionId, trace_id: traceId,
     idempotency_key: `mission-${key}`, created_at: '2026-08-16T08:00:00Z',
     expires_at: '2099-08-16T09:00:00Z', budget_limit: { currency: 'USD', maximum },
+    allowed_actions: ['research.public_sources'],
+    prohibited_actions: ['prospect.contact'],
+    approved_channels: ['public_web'],
+    approved_tools: ['hermes.web'],
+    autonomy_level: 'A1',
+    dry_run: true,
   })
   await pool.query(`SELECT control.save_mission($1,$2,$3::jsonb)`, [
-    missionId, `mission-${key}`, JSON.stringify({ ...payload, a3_enabled: true }),
+    missionId, `mission-${key}`, JSON.stringify({ ...payload, a3_enabled: false }),
   ])
+  missionTraceIds.set(missionId, traceId)
   return missionId
 }
 
 function job(missionId: string, key: string, reservation = 0.1): EnqueueJob {
   return {
-    job_id: randomUUID(), mission_id: missionId, trace_id: randomUUID(),
+    job_id: randomUUID(), mission_id: missionId,
+    trace_id: missionTraceIds.get(missionId) ?? (() => { throw new Error('MISSION_TRACE_NOT_FOUND') })(),
     idempotency_key: key, profile_id: 'market-account-intelligence',
     instruction: 'Analyze only supplied evidence.', evidence: 'untrusted evidence',
     dependencies: [], usage_value_reservation_usd: reservation,

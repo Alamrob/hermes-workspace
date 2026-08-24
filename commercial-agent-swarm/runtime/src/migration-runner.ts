@@ -17,6 +17,7 @@ const EXPECTED_MIGRATIONS = [
   '013_variable_usage_reservations',
   '014_variable_usage_constraint',
   '015_shadow_human_review',
+  '016_usage_source_not_null',
 ] as const
 
 export interface MigrationSource {
@@ -66,21 +67,27 @@ export async function runVersionedMigrations(
 ): Promise<void> {
   const migrations = validateMigrationSet(sources)
   const client = await pool.connect()
+  let failure: unknown
   try {
     await client.query(
       `SELECT pg_advisory_lock(hashtext('proptimiza-commercial-migrations'))`,
     )
     for (const migration of migrations)
       await applyMigration(client, migration)
-  } finally {
-    try {
-      await client.query(
-        `SELECT pg_advisory_unlock(hashtext('proptimiza-commercial-migrations'))`,
-      )
-    } finally {
-      client.release()
-    }
+  } catch (error) {
+    failure = error
+    await client.query('ROLLBACK').catch(() => undefined)
   }
+  try {
+    await client.query(
+      `SELECT pg_advisory_unlock(hashtext('proptimiza-commercial-migrations'))`,
+    )
+  } catch (error) {
+    if (!failure) failure = error
+  } finally {
+    client.release()
+  }
+  if (failure) throw failure
 }
 
 async function applyMigration(

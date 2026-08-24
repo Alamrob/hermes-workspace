@@ -213,6 +213,34 @@ export class BrokerApplication {
       const review = await this.options.repository.getShadowReview(route.id!)
       return review ? { status: 200, body: review } : { status: 404, body: { error: 'not_found' } }
     }
+    if (route.action === 'getShadowReviewGate') {
+      requireBearer(request.headers?.authorization, this.options.authentication.internal)
+      const review = await this.options.repository.getShadowReview(route.id!)
+      if (!review) return { status: 404, body: { error: 'not_found' } }
+      const eligible = review.status === 'completed' &&
+        review.completedDecisionCount === review.expectedDecisionCount &&
+        (review.concordancePercent ?? -1) >= 90 &&
+        (review.evidenceCompletenessPercent ?? -1) >= 95 &&
+        review.shadowGate === 'passed' && review.productionGate === 'blocked' &&
+        review.externalActions === 0
+      return {
+        status: 200,
+        body: {
+          review_id: review.id,
+          mission_id: review.missionId,
+          status: review.status,
+          completed_decisions: review.completedDecisionCount,
+          expected_decisions: review.expectedDecisionCount,
+          concordance_percent: review.concordancePercent,
+          evidence_completeness_percent: review.evidenceCompletenessPercent,
+          shadow_gate: review.shadowGate,
+          production_gate: review.productionGate,
+          external_actions: review.externalActions,
+          eligible,
+          observed_at: review.completedAt ?? review.provenance.observedAt,
+        },
+      }
+    }
     if (route.action === 'recordShadowDecision') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       const input = validateShadowDecisionRequest(request.body, route)
@@ -350,6 +378,9 @@ function matchRoute(method: string, path: string): Route | null {
   const shadowReview = /^\/internal\/v1\/shadow-reviews\/([^/]+)$/.exec(path)
   if (method === 'GET' && shadowReview)
     return { action: 'getShadowReview', auditAction: 'shadow_review.get', id: shadowReview[1] }
+  const shadowGate = /^\/internal\/v1\/shadow-gates\/([^/]+)$/.exec(path)
+  if (method === 'GET' && shadowGate)
+    return { action: 'getShadowReviewGate', auditAction: 'shadow_review.gate.get', id: shadowGate[1] }
   const shadowDecision = /^\/internal\/v1\/shadow-reviews\/([^/]+)\/decisions\/(\d+)\/(icp_fit|evidence_sufficiency|outreach_eligibility)$/.exec(path)
   if (method === 'PUT' && shadowDecision)
     return {

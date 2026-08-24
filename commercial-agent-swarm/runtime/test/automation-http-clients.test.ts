@@ -53,6 +53,35 @@ describe('commercial automation HTTP boundaries', () => {
     const client = new PaperclipHttpClient('http://paperclip:3100', company, async () => 'p'.repeat(32), async () => new Response(oversized, { status: 200 }))
     await assert.rejects(() => client.listIssues(), /PAPERCLIP_UNAVAILABLE/)
   })
+
+  it('reads only the closed shadow gate projection with the internal bearer', async () => {
+    let request: { url: string; authorization: string } | null = null
+    const client = new BrokerHttpClient(
+      'http://broker:8080',
+      async () => 'c'.repeat(32),
+      async () => 'i'.repeat(32),
+      async (input, init) => {
+        request = {
+          url: String(input),
+          authorization: (init?.headers as Record<string, string>).authorization,
+        }
+        return new Response(JSON.stringify({
+          review_id: 'a1500000-0000-4500-8500-000000000050',
+          mission_id: 'a1500000-0000-4500-8500-000000000051',
+          status: 'completed', completed_decisions: 30, expected_decisions: 30,
+          concordance_percent: 90, evidence_completeness_percent: 95,
+          shadow_gate: 'passed', production_gate: 'blocked', external_actions: 0,
+          eligible: true, observed_at: '2026-08-24T12:00:00.000Z',
+        }), { status: 200 })
+      },
+    )
+    const gate = await client.getShadowReviewGate('a1500000-0000-4500-8500-000000000050')
+    assert.equal(gate.eligible, true)
+    assert.deepEqual(request, {
+      url: 'http://broker:8080/internal/v1/shadow-gates/a1500000-0000-4500-8500-000000000050',
+      authorization: `Bearer ${'i'.repeat(32)}`,
+    })
+  })
 })
 
 function environment(): Record<string, string | undefined> {

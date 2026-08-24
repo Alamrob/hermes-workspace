@@ -45,6 +45,23 @@ class BrokerFake implements BrokerAutomationPort {
   async getExecution(missionId: string) {
     return this.execution ?? { mission_id: missionId, status: 'queued', assignments: [] }
   }
+  gateEligible = false
+  async getShadowReviewGate(reviewId: string) {
+    return {
+      review_id: reviewId,
+      mission_id: 'a1500000-0000-4500-8500-000000000050',
+      status: this.gateEligible ? 'completed' as const : 'open' as const,
+      completed_decisions: this.gateEligible ? 30 : 0,
+      expected_decisions: 30 as const,
+      concordance_percent: this.gateEligible ? 100 : null,
+      evidence_completeness_percent: this.gateEligible ? 100 : null,
+      shadow_gate: this.gateEligible ? 'passed' as const : 'pending' as const,
+      production_gate: 'blocked' as const,
+      external_actions: 0 as const,
+      eligible: this.gateEligible,
+      observed_at: '2026-08-21T18:00:00.000Z',
+    }
+  }
 }
 
 function automation(paperclip: PaperclipFake, broker: BrokerFake, mode: 'observe' | 'dispatch' = 'dispatch') {
@@ -557,6 +574,36 @@ describe('Paperclip commercial automation', () => {
       assert.equal(assignment.max_attempts, 1)
     }
     assert.doesNotMatch(assignments[4].instruction, /RUNTIME_OUTPUT_CONTRACT_JSON=/)
+  })
+
+  it('keeps ALA-51 inert until the 30-decision human gate passes, then dispatches only bounded A1 research', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-51', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    assert.deepEqual(await automation(paperclip, broker).tick(), {
+      status: 'idle', issue: null, mission_id: null, external_actions: 0,
+    })
+    assert.equal(broker.orders.length, 0)
+    assert.equal(broker.plans.length, 0)
+
+    broker.gateEligible = true
+    const dispatched = await automation(paperclip, broker).tick()
+    assert.equal(dispatched.status, 'dispatched')
+    assert.equal(dispatched.issue, 'ALA-51')
+    const order = broker.orders[0] as any
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.dry_run, true)
+    assert.equal(order.volume_limits.maximum_accounts, 10)
+    assert.equal(order.volume_limits.maximum_contacts, 0)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    assert.equal(order.contact_policy.contact_permitted, false)
+    assert.equal(order.metadata.shadow_review_gate_id, 'a1500000-0000-4500-8500-000000000050')
+    assert.deepEqual(
+      broker.plans[0].assignments.map((assignment) => assignment.profile_id),
+      ['market-account-intelligence', 'contact-data-steward', 'qualification-prioritization', 'commercial-qa-compliance'],
+    )
+    assert.match(broker.plans[0].assignments[0].instruction, /POST-HUMAN-GATE ACCOUNT DISCOVERY/)
   })
 
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {

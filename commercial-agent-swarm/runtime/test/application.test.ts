@@ -529,6 +529,40 @@ describe('broker application routes', () => {
     assert.equal('business_context' in mission, false)
   })
 
+  it('exposes a minimal fail-closed human shadow gate only to the internal capability', async () => {
+    const state = setup()
+    state.repository.getShadowReview = async () => ({
+      id: 'a1500000-0000-4500-8500-000000000050',
+      missionId: 'a1500000-0000-4500-8500-000000000051',
+      projectId: 'proptimiza', title: 'ALA-50 review', status: 'completed',
+      expectedDecisionCount: 30, completedDecisionCount: 30, version: 31,
+      concordancePercent: 90, evidenceCompletenessPercent: 95,
+      shadowGate: 'passed', productionGate: 'blocked', externalActions: 0,
+      reviewerId: 'director', completedAt: '2026-08-24T12:00:00.000Z',
+      sourceArtifactSha256: 'a'.repeat(64), qaArtifactSha256: 'b'.repeat(64),
+      accounts: [],
+      provenance: {
+        source: 'control-broker',
+        sourceId: 'shadow-review:a1500000-0000-4500-8500-000000000050',
+        observedAt: '2026-08-24T12:00:00.000Z', synthetic: false,
+      },
+    })
+    const path = '/internal/v1/shadow-gates/a1500000-0000-4500-8500-000000000050'
+    assert.equal((await state.app.handle({ method: 'GET', path })).status, 401)
+    const response = await state.app.handle({ method: 'GET', path, headers: headers('internal-token') })
+    assert.deepEqual(response, {
+      status: 200,
+      body: {
+        review_id: 'a1500000-0000-4500-8500-000000000050',
+        mission_id: 'a1500000-0000-4500-8500-000000000051',
+        status: 'completed', completed_decisions: 30, expected_decisions: 30,
+        concordance_percent: 90, evidence_completeness_percent: 95,
+        shadow_gate: 'passed', production_gate: 'blocked', external_actions: 0,
+        eligible: true, observed_at: '2026-08-24T12:00:00.000Z',
+      },
+    })
+  })
+
   it('queues an idempotent internal-only assignment DAG and exposes its execution state', async () => {
     const state = setup('either', false, false)
     const order = signedInternalWorkOrder()
