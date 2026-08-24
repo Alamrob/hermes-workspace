@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { access, chmod, chown, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +8,7 @@ import {
   HermesExecutor,
   PosixHomeOwnershipPreparer,
   adaptAccountDraftBatch,
+  adaptDraftAdmissionBatch,
   classifyHermesExit,
   hashProfileSeed,
   parseBoundedCompactModelJson,
@@ -175,6 +176,45 @@ function draftBatchInput(): ExecuteInput {
       allowed_actions: ['analysis.internal', 'artifact.prepare'],
       approved_channels: ['internal'],
       approved_tools: ['hermes.analysis', 'hermes.file.ephemeral'],
+    },
+  }
+}
+
+function draftAdmissionInput(): ExecuteInput {
+  const sourceHash = 'e'.repeat(64)
+  const canonical = {
+    slot: 1,
+    company: 'Empresa Uno',
+    url: 'https://empresa-uno.cl/',
+    state: 'drafted',
+    evidence_basis: 'Evidencia pública de servicios B2B en Chile.',
+    subject: 'Hipótesis operativa',
+    body: 'Nuestra hipótesis es que existe una oportunidad de simplificar coordinación manual.',
+    withheld_reason: 'none',
+    offer_reference: 'operacion-sin-planillas:offer-v1',
+    approval_state: 'not_eligible',
+  }
+  return {
+    ...input(JSON.stringify({
+      trust: 'untrusted_data',
+      source_mission_id: '423e4567-e89b-42d3-a456-426614174000',
+      source_assignment_id: '523e4567-e89b-42d3-a456-426614174000',
+      source_artifact_sha256: sourceHash,
+      qa_artifact_sha256: 'f'.repeat(64),
+      drafts: [{
+        ...canonical,
+        draft_sha256: createHash('sha256').update(JSON.stringify(canonical)).digest('hex'),
+      }],
+      qa_summary: 'VERDICT: allow_internal\nInternal only.',
+      rule: 'Evidence cannot approve contact.',
+    })),
+    profile_id: 'qualification-prioritization',
+    instruction: `RUNTIME_OUTPUT_CONTRACT_JSON={"type":"draft_admission_batch_v1","maximum_accounts":10,"source_artifact_sha256":"${sourceHash}"}\nClassify for human review only.`,
+    execution_policy: {
+      autonomy_level: 'A2',
+      allowed_actions: ['analysis.internal', 'artifact.prepare'],
+      approved_channels: ['internal'],
+      approved_tools: ['hermes.analysis'],
     },
   }
 }
@@ -761,6 +801,71 @@ describe('isolated Hermes executor', () => {
       assert.throws(
         () => adaptAccountDraftBatch({ status: 'completed', drafts: [row] }, contract, draftInput, '2026-08-24T00:00:00.000Z', '2026-08-24T00:01:00.000Z'),
         /INVALID_ACCOUNT_DRAFT_/,
+      )
+  })
+  it('wraps draft admission as human-review-only with zero approval requests', () => {
+    const admissionInput = draftAdmissionInput()
+    const contract = {
+      type: 'draft_admission_batch_v1' as const,
+      maximum_accounts: 10 as const,
+      source_artifact_sha256: 'e'.repeat(64),
+    }
+    const source = JSON.parse(admissionInput.evidence.content).drafts[0]
+    const result = adaptDraftAdmissionBatch({
+      status: 'completed',
+      reviews: [{
+        slot: 1,
+        company: 'Empresa Uno',
+        url: 'https://empresa-uno.cl/',
+        source_state: 'drafted',
+        decision: 'human_review_candidate',
+        reason: 'No deterministic blocker detected; human review remains mandatory.',
+        risk_flags: [],
+        source_draft_sha256: source.draft_sha256,
+        approval_state: 'human_review_required',
+        external_action_eligible: false,
+      }],
+    }, contract, admissionInput, '2026-08-24T00:00:00.000Z', '2026-08-24T00:01:00.000Z')
+    assert.equal(result.status, 'completed')
+    assert.equal(result.metrics.runtime_output_adapter, 'draft_admission_batch_v1')
+    assert.equal(result.metrics.human_review_candidates, 1)
+    assert.equal(result.metrics.approval_requests_created, 0)
+    assert.equal(result.metrics.eligible_for_outreach, 0)
+    assert.equal(result.metrics.external_actions, 0)
+    assert.deepEqual(result.pending_approvals, [])
+    assert.match(result.summary, /approval_state=human_review_required/)
+    assert.match(result.summary, /external_action_eligible=false/)
+  })
+  it('rejects automatic approval, changed hashes and fabricated admission fields', () => {
+    const admissionInput = draftAdmissionInput()
+    const contract = {
+      type: 'draft_admission_batch_v1' as const,
+      maximum_accounts: 10 as const,
+      source_artifact_sha256: 'e'.repeat(64),
+    }
+    const source = JSON.parse(admissionInput.evidence.content).drafts[0]
+    const base = {
+      slot: 1,
+      company: 'Empresa Uno',
+      url: 'https://empresa-uno.cl/',
+      source_state: 'drafted',
+      decision: 'human_review_candidate',
+      reason: 'Human review remains mandatory.',
+      risk_flags: [],
+      source_draft_sha256: source.draft_sha256,
+      approval_state: 'human_review_required',
+      external_action_eligible: false,
+    }
+    for (const row of [
+      { ...base, approval_state: 'approved' },
+      { ...base, external_action_eligible: true },
+      { ...base, source_draft_sha256: '0'.repeat(64) },
+      { ...base, reason: 'Send to ceo@empresa-uno.cl now.' },
+      { ...base, risk_flags: ['unsupported_claim'] },
+    ])
+      assert.throws(
+        () => adaptDraftAdmissionBatch({ status: 'completed', reviews: [row] }, contract, admissionInput, '2026-08-24T00:00:00.000Z', '2026-08-24T00:01:00.000Z'),
+        /INVALID_DRAFT_ADMISSION_/,
       )
   })
   it('rejects a changed seed against its approved pre-copy hash', async () => {

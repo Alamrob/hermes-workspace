@@ -21,6 +21,7 @@ import {
   ACTIVE_PROFILES,
   buildHermesPrompt,
   parseAccountDraftEvidence,
+  parseDraftAdmissionEvidence,
   parseRuntimeOutputContract,
   validateExecuteRequest,
   validateHermesUsage,
@@ -37,6 +38,7 @@ import {
 import type {
   AccountCandidateBatchContract,
   AccountDraftBatchContract,
+  DraftAdmissionBatchContract,
   ExecuteInput,
   MarketObservationShardContract,
   ProfileId,
@@ -394,13 +396,21 @@ export class HermesExecutor implements ExecutorPort {
                   startedAt,
                   finishedAt,
                 )
-              : adaptAccountDraftBatch(
-                  compactOutput,
-                  runtimeOutputContract,
-                  input,
-                  startedAt,
-                  finishedAt,
-                )
+              : runtimeOutputContract.type === 'account_draft_batch_v1'
+                ? adaptAccountDraftBatch(
+                    compactOutput,
+                    runtimeOutputContract,
+                    input,
+                    startedAt,
+                    finishedAt,
+                  )
+                : adaptDraftAdmissionBatch(
+                    compactOutput,
+                    runtimeOutputContract,
+                    input,
+                    startedAt,
+                    finishedAt,
+                  )
           : parseStrictModelJson(output.stdout)
         agentResult = reconcileAgentResult(
           rawResult,
@@ -418,7 +428,9 @@ export class HermesExecutor implements ExecutorPort {
           !code.startsWith('INVALID_MARKET_SHARD_') &&
           !code.startsWith('INVALID_ACCOUNT_BATCH_') &&
           !code.startsWith('INVALID_ACCOUNT_DRAFT_') &&
-          !code.startsWith('ACCOUNT_DRAFT_EVIDENCE_')
+          !code.startsWith('ACCOUNT_DRAFT_EVIDENCE_') &&
+          !code.startsWith('INVALID_DRAFT_ADMISSION_') &&
+          !code.startsWith('DRAFT_ADMISSION_EVIDENCE_')
         )
           throw error
         // Usage is already trusted and priced at this boundary. Return a
@@ -877,6 +889,134 @@ export function adaptAccountDraftBatch(
   }
 }
 
+export function adaptDraftAdmissionBatch(
+  value: unknown,
+  contract: DraftAdmissionBatchContract,
+  input: ExecuteInput,
+  startedAt: string,
+  finishedAt: string,
+): AgentResult {
+  const evidence = parseDraftAdmissionEvidence(input.evidence.content, contract)
+  if (
+    input.profile_id !== 'qualification-prioritization' ||
+    !recordWithExactKeys(value, ['status', 'reviews']) ||
+    !['completed', 'partial'].includes(String(value.status)) ||
+    !Array.isArray(value.reviews) ||
+    value.reviews.length !== evidence.drafts.length
+  )
+    throw new Error('INVALID_DRAFT_ADMISSION_TOP_LEVEL')
+
+  const allowedFlags = new Set([
+    'source_withheld',
+    'unsupported_claim',
+    'missing_hypothesis',
+    'privacy_risk',
+    'offer_mismatch',
+    'commitment_risk',
+    'insufficient_evidence',
+  ])
+  const reviews = value.reviews.map((entry, index) => {
+    const source = evidence.drafts[index]
+    if (
+      !recordWithExactKeys(entry, [
+        'slot', 'company', 'url', 'source_state', 'decision', 'reason',
+        'risk_flags', 'source_draft_sha256', 'approval_state',
+        'external_action_eligible',
+      ]) ||
+      entry.slot !== source.slot ||
+      entry.company !== source.company ||
+      entry.url !== source.url ||
+      entry.source_state !== source.state ||
+      !['human_review_candidate', 'withheld'].includes(String(entry.decision)) ||
+      !safeDraftText(entry.reason, 500, false) ||
+      !Array.isArray(entry.risk_flags) ||
+      entry.risk_flags.length > allowedFlags.size ||
+      new Set(entry.risk_flags).size !== entry.risk_flags.length ||
+      entry.risk_flags.some((flag) => typeof flag !== 'string' || !allowedFlags.has(flag)) ||
+      entry.source_draft_sha256 !== source.draft_sha256 ||
+      !['human_review_required', 'not_applicable'].includes(String(entry.approval_state)) ||
+      entry.external_action_eligible !== false
+    )
+      throw new Error('INVALID_DRAFT_ADMISSION_ROW')
+    const candidate = entry.decision === 'human_review_candidate'
+    if (
+      (candidate &&
+        (source.state !== 'drafted' ||
+          entry.risk_flags.length !== 0 ||
+          entry.approval_state !== 'human_review_required')) ||
+      (!candidate &&
+        (entry.risk_flags.length < 1 ||
+          entry.approval_state !== 'not_applicable')) ||
+      (source.state === 'withheld' &&
+        (candidate || !entry.risk_flags.includes('source_withheld')))
+    )
+      throw new Error('INVALID_DRAFT_ADMISSION_DECISION')
+    return {
+      slot: source.slot,
+      company: source.company,
+      url: source.url,
+      sourceState: source.state,
+      decision: entry.decision as 'human_review_candidate' | 'withheld',
+      reason: entry.reason as string,
+      riskFlags: entry.risk_flags as string[],
+      sourceDraftSha256: source.draft_sha256,
+      approvalState: entry.approval_state as 'human_review_required' | 'not_applicable',
+    }
+  })
+  const hasWithheld = reviews.some((review) => review.decision === 'withheld')
+  if (
+    (hasWithheld && value.status !== 'partial') ||
+    (!hasWithheld && value.status !== 'completed')
+  )
+    throw new Error('INVALID_DRAFT_ADMISSION_STATUS')
+
+  const summary = [
+    ...reviews.map((review) =>
+      `${review.slot}. ${review.company} | ${review.url} | source_state=${review.sourceState} | decision=${review.decision} | reason=${review.reason} | risk_flags=${review.riskFlags.join(',') || 'none'} | source_draft_sha256=${review.sourceDraftSha256} | approval_state=${review.approvalState} | external_action_eligible=false`,
+    ),
+    'Internal admission review only. No recipient, account or draft is approved or eligible for outreach; no approval request was created.',
+  ].join('\n')
+  if (summary.length > 32_000)
+    throw new Error('INVALID_DRAFT_ADMISSION_SUMMARY')
+  return {
+    mission_id: input.mission_id,
+    trace_id: input.trace_id,
+    assignment_id: input.assignment_id,
+    agent_id: input.profile_id,
+    status: value.status as 'completed' | 'partial',
+    summary,
+    facts: [],
+    inferences: [],
+    actions_taken: [],
+    external_changes: [],
+    evidence: [],
+    artifacts: [],
+    metrics: {
+      runtime_output_adapter: 'draft_admission_batch_v1',
+      accounts_reviewed: reviews.length,
+      human_review_candidates: reviews.filter((review) => review.decision === 'human_review_candidate').length,
+      withheld: reviews.filter((review) => review.decision === 'withheld').length,
+      approval_requests_created: 0,
+      eligible_for_outreach: 0,
+      external_actions: 0,
+    },
+    cost: {
+      currency: 'USD',
+      llm: 0,
+      tools: 0,
+      total: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+    },
+    errors: [],
+    risks: [],
+    pending_approvals: [],
+    recommended_next_actions: [],
+    started_at: startedAt,
+    finished_at: finishedAt,
+  }
+}
+
 function validCandidateUrl(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 2_000) return false
   try {
@@ -934,7 +1074,7 @@ function safeDraftText(
   )
     return false
   const forbidden =
-    /(?:https?:\/\/|www\.|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:\+?\d[\s().-]*){8,}\d|linkedin\.|(?:api|access)[ _-]?key|bearer\s+[a-z0-9._-]+|password|passwd|credential|cookie|private[ _-]?key|secret|system\s+prompt|ignore\s+(?:all\s+)?(?:previous|prior)|<script|```|descuento|garant(?:ía|ia)|100\s*%|testimonio|cliente\s+actual)/i
+    /(?:\||https?:\/\/|www\.|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:\+?\d[\s().-]*){8,}\d|linkedin\.|(?:api|access)[ _-]?key|bearer\s+[a-z0-9._-]+|password|passwd|credential|cookie|private[ _-]?key|secret|system\s+prompt|ignore\s+(?:all\s+)?(?:previous|prior)|<script|```|descuento|garant(?:ía|ia)|100\s*%|testimonio|cliente\s+actual)/i
   return !forbidden.test(value)
 }
 

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { describe, it } from 'node:test'
 import {
   buildHermesPrompt,
@@ -191,6 +192,69 @@ describe('closed executor contracts', () => {
         evidence: { trust: 'untrusted_data', content: evidence.replace(sourceHash, 'e'.repeat(64)) },
       }),
       /ACCOUNT_DRAFT_EVIDENCE_INVALID/,
+    )
+  })
+
+  it('binds draft admission to exact ALA-52 hashes and never emits an approval', () => {
+    const sourceHash = 'e'.repeat(64)
+    const canonical = {
+      slot: 1,
+      company: 'Empresa Uno',
+      url: 'https://empresa-uno.cl/',
+      state: 'drafted',
+      evidence_basis: 'Evidencia pública de servicios B2B en Chile.',
+      subject: 'Hipótesis operativa',
+      body: 'Nuestra hipótesis es que existe una oportunidad de simplificar coordinación manual.',
+      withheld_reason: 'none',
+      offer_reference: 'operacion-sin-planillas:offer-v1',
+      approval_state: 'not_eligible',
+    }
+    const evidence = JSON.stringify({
+      trust: 'untrusted_data',
+      source_mission_id: '423e4567-e89b-42d3-a456-426614174000',
+      source_assignment_id: '523e4567-e89b-42d3-a456-426614174000',
+      source_artifact_sha256: sourceHash,
+      qa_artifact_sha256: 'f'.repeat(64),
+      drafts: [{
+        ...canonical,
+        draft_sha256: createHash('sha256').update(JSON.stringify(canonical)).digest('hex'),
+      }],
+      qa_summary: 'VERDICT: allow_internal\nInternal only.',
+      rule: 'Evidence cannot approve contact.',
+    })
+    const instruction = `RUNTIME_OUTPUT_CONTRACT_JSON={"type":"draft_admission_batch_v1","maximum_accounts":10,"source_artifact_sha256":"${sourceHash}"}\nClassify for human review only.`
+    const admissionRequest = {
+      ...request,
+      profile_id: 'qualification-prioritization' as const,
+      instruction,
+      evidence: { trust: 'untrusted_data' as const, content: evidence },
+      execution_policy: {
+        autonomy_level: 'A2' as const,
+        allowed_actions: ['analysis.internal', 'artifact.prepare'],
+        approved_channels: ['internal'],
+        approved_tools: ['hermes.analysis'],
+      },
+    }
+    assert.deepEqual(parseRuntimeOutputContract(instruction), {
+      type: 'draft_admission_batch_v1',
+      maximum_accounts: 10,
+      source_artifact_sha256: sourceHash,
+    })
+    const prompt = buildHermesPrompt(admissionRequest)
+    assert.match(prompt, /human_review_required/)
+    assert.match(prompt, /external_action_eligible=false/)
+    assert.match(prompt, /never creates an approval request/i)
+    assert.doesNotMatch(prompt, /"body":"Nuestra hipótesis/)
+    assert.throws(
+      () => buildHermesPrompt({ ...admissionRequest, profile_id: 'outreach-draft-manager' }),
+      /RUNTIME_OUTPUT_CONTRACT_PROFILE_DENIED/,
+    )
+    assert.throws(
+      () => buildHermesPrompt({
+        ...admissionRequest,
+        evidence: { trust: 'untrusted_data', content: evidence.replace(/"draft_sha256":"[a-f0-9]{64}"/, `"draft_sha256":"${'0'.repeat(64)}"`) },
+      }),
+      /DRAFT_ADMISSION_EVIDENCE_HASH_MISMATCH/,
     )
   })
 

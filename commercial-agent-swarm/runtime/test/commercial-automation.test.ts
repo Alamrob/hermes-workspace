@@ -610,7 +610,7 @@ describe('Paperclip commercial automation', () => {
 
   it('dispatches ALA-52 only from signed completed ALA-51 evidence and keeps every draft internal and ineligible', async () => {
     const paperclip = new PaperclipFake([
-      issue('ALA-36', 'done'), issue('ALA-51', 'backlog'), issue('ALA-52', 'backlog'),
+      issue('ALA-36', 'done'), issue('ALA-51', 'backlog'), issue('ALA-52', 'backlog'), issue('ALA-53', 'backlog'),
     ])
     const broker = new BrokerFake()
     broker.gateEligible = true
@@ -666,11 +666,74 @@ describe('Paperclip commercial automation', () => {
     assert.match(draftPlan.assignments[0].evidence, /"approved_accounts"/)
     assert.match(draftPlan.assignments[1].instruction, /approval_state=not_eligible/)
     assert.doesNotMatch(draftPlan.assignments[0].instruction, /mail\.send|send this email/i)
+
+    const draftAssignment = draftPlan.assignments[0]
+    const draftQaAssignment = draftPlan.assignments[1]
+    broker.executions.set(ala52.mission_id!, {
+      mission_id: ala52.mission_id!,
+      status: 'completed',
+      assignments: [
+        {
+          assignment_id: draftAssignment.assignment_id,
+          profile_id: draftAssignment.profile_id,
+          status: 'succeeded', attempts: 1, max_attempts: 1,
+          artifact_sha256: 'e'.repeat(64),
+          result_envelope: envelope(
+            'outreach-draft-manager',
+            '1. Empresa Uno | https://empresa-uno.cl/ | state=drafted | evidence_basis=Evidencia pública de servicios B2B en Chile. | subject=Hipótesis operativa | body=Nuestra hipótesis es que existe una oportunidad de simplificar coordinación manual. | approval_state=not_eligible\nInternal drafts only. No account is eligible for outreach.',
+            { runtime_output_adapter: 'account_draft_batch_v1', external_actions: 0, eligible_for_outreach: 0 },
+          ),
+          error: null,
+        },
+        {
+          assignment_id: draftQaAssignment.assignment_id,
+          profile_id: draftQaAssignment.profile_id,
+          status: 'succeeded', attempts: 1, max_attempts: 1,
+          artifact_sha256: 'f'.repeat(64),
+          result_envelope: envelope('commercial-qa-compliance', 'VERDICT: allow_internal\nDrafts remain internal and ineligible.', { external_actions: 0, eligible_for_outreach: 0 }),
+          error: null,
+        },
+      ],
+    })
+    assert.equal((await service.tick()).status, 'review_ready')
+    paperclip.values.find((item) => item.identifier === 'ALA-52')!.status = 'done'
+
+    const ala53 = await service.tick()
+    assert.equal(ala53.status, 'dispatched')
+    assert.equal(ala53.issue, 'ALA-53')
+    const admissionOrder = broker.orders.at(-1) as any
+    assert.equal(admissionOrder.autonomy_level, 'A2')
+    assert.deepEqual(admissionOrder.approved_channels, ['internal'])
+    assert.deepEqual(admissionOrder.approved_tools, ['hermes.analysis'])
+    assert.equal(admissionOrder.contact_policy.contact_permitted, false)
+    assert.equal(admissionOrder.volume_limits.maximum_contacts, 0)
+    assert.equal(admissionOrder.volume_limits.maximum_external_actions, 0)
+    assert.equal(admissionOrder.approval_token, null)
+    const admissionPlan = broker.plans.at(-1)!
+    assert.deepEqual(admissionPlan.assignments.map((item) => item.profile_id), [
+      'qualification-prioritization', 'commercial-qa-compliance',
+    ])
+    assert.match(admissionPlan.assignments[0].instruction, /^RUNTIME_OUTPUT_CONTRACT_JSON=\{"type":"draft_admission_batch_v1","maximum_accounts":10,"source_artifact_sha256":"e{64}"\}/)
+    assert.match(admissionPlan.assignments[0].instruction, /external_action_eligible=false/)
+    assert.match(admissionPlan.assignments[0].evidence, /"draft_sha256":"[a-f0-9]{64}"/)
+    assert.match(admissionPlan.assignments[1].instruction, /approval_requests_created=0/)
+    assert.doesNotMatch(admissionPlan.assignments[0].instruction, /mail\.send|request approval token/i)
   })
 
   it('does not trust ALA-51 done status without its signed terminal evidence', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-51', 'done'), issue('ALA-52', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    assert.deepEqual(await automation(paperclip, broker).tick(), {
+      status: 'idle', issue: null, mission_id: null, external_actions: 0,
+    })
+    assert.equal(broker.orders.length, 0)
+  })
+
+  it('does not trust ALA-52 done status without its signed terminal evidence', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-52', 'done'), issue('ALA-53', 'backlog'),
     ])
     const broker = new BrokerFake()
     assert.deepEqual(await automation(paperclip, broker).tick(), {
