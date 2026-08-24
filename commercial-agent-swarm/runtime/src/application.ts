@@ -23,6 +23,7 @@ import {
   type AssignmentPlan,
 } from './assignment-plan.js'
 import type { DispatchQueuePort } from './dispatch-queue.js'
+import type { ShadowDecisionDimension, ShadowDecisionValue } from './shadow-review.js'
 
 export interface ApplicationRequest {
   method: string
@@ -54,6 +55,7 @@ interface ApplicationOptions {
     connector: string
     internal: string
     instructionInbox: string
+    shadowReview: string
     approvalGateways: Record<
       ApprovalChannel,
       { bearer: string; actors: string[] }
@@ -202,6 +204,44 @@ export class BrokerApplication {
       requireBearer(request.headers?.authorization, this.options.authentication.internal)
       return { status: 200, body: await this.options.repository.getPortfolioReadModel() }
     }
+    if (route.action === 'listShadowReviews') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      return { status: 200, body: await this.options.repository.listShadowReviews() }
+    }
+    if (route.action === 'getShadowReview') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const review = await this.options.repository.getShadowReview(route.id!)
+      return review ? { status: 200, body: review } : { status: 404, body: { error: 'not_found' } }
+    }
+    if (route.action === 'recordShadowDecision') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const input = validateShadowDecisionRequest(request.body, route)
+      return {
+        status: 200,
+        body: await this.options.repository.recordShadowDecision({
+          ...input,
+          reviewId: route.id!,
+          accountSlot: route.slot!,
+          dimension: route.dimension!,
+          requestSha256: hashAction({
+            review_id: route.id!, account_slot: route.slot!,
+            dimension: route.dimension!, ...input,
+          }),
+        }),
+      }
+    }
+    if (route.action === 'completeShadowReview') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const input = validateShadowCompletionRequest(request.body)
+      return {
+        status: 200,
+        body: await this.options.repository.completeShadowReview({
+          ...input,
+          reviewId: route.id!,
+          requestSha256: hashAction({ review_id: route.id!, ...input }),
+        }),
+      }
+    }
     if (route.action === 'requestApproval') {
       requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
       return { status: 201, body: await this.options.approvals.request(request.body) }
@@ -296,6 +336,8 @@ type Route = {
   auditAction: string
   id?: string
   channel?: ApprovalChannel
+  slot?: number
+  dimension?: ShadowDecisionDimension
 }
 
 function matchRoute(method: string, path: string): Route | null {
@@ -303,6 +345,23 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/readyz') return { action: 'ready', auditAction: 'ready' }
   if (method === 'GET' && path === '/internal/v1/read-model/portfolio')
     return { action: 'getPortfolioReadModel', auditAction: 'read_model.portfolio' }
+  if (method === 'GET' && path === '/internal/v1/shadow-reviews')
+    return { action: 'listShadowReviews', auditAction: 'shadow_review.list' }
+  const shadowReview = /^\/internal\/v1\/shadow-reviews\/([^/]+)$/.exec(path)
+  if (method === 'GET' && shadowReview)
+    return { action: 'getShadowReview', auditAction: 'shadow_review.get', id: shadowReview[1] }
+  const shadowDecision = /^\/internal\/v1\/shadow-reviews\/([^/]+)\/decisions\/(\d+)\/(icp_fit|evidence_sufficiency|outreach_eligibility)$/.exec(path)
+  if (method === 'PUT' && shadowDecision)
+    return {
+      action: 'recordShadowDecision',
+      auditAction: 'shadow_review.decision.record',
+      id: shadowDecision[1],
+      slot: Number(shadowDecision[2]),
+      dimension: shadowDecision[3] as ShadowDecisionDimension,
+    }
+  const shadowComplete = /^\/internal\/v1\/shadow-reviews\/([^/]+)\/complete$/.exec(path)
+  if (method === 'POST' && shadowComplete)
+    return { action: 'completeShadowReview', auditAction: 'shadow_review.complete', id: shadowComplete[1] }
   if (method === 'POST' && path === '/v1/work-orders') return { action: 'createWorkOrder', auditAction: 'work_order.create' }
   if (method === 'POST' && path === '/v1/instruction-requests')
     return { action: 'createInstructionRequest', auditAction: 'instruction_request.create' }
@@ -568,6 +627,71 @@ function string(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+function validateShadowDecisionRequest(
+  value: unknown,
+  route: { slot?: number; dimension?: ShadowDecisionDimension },
+): {
+  humanValue: ShadowDecisionValue
+  rationale: string
+  evidenceUrl: string
+  expectedVersion: number
+  actorId: string
+  idempotencyKey: string
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new ValidationError(['shadow decision must be an object'])
+  const record = value as Record<string, unknown>
+  const allowed = new Set(['human_value','rationale','evidence_url','expected_version','actor_id','idempotency_key'])
+  const dimension = route.dimension
+  const humanValue = string(record.human_value)
+  let evidenceUrl: URL
+  try { evidenceUrl = new URL(string(record.evidence_url)) }
+  catch { throw new ValidationError(['shadow decision is invalid']) }
+  const valueAllowed = dimension === 'icp_fit'
+    ? ['yes','no','unknown'].includes(humanValue)
+    : dimension === 'evidence_sufficiency'
+      ? ['sufficient','insufficient'].includes(humanValue)
+      : ['yes','no'].includes(humanValue)
+  if (
+    Object.keys(record).some((field) => !allowed.has(field)) ||
+    !Number.isSafeInteger(route.slot) || route.slot! < 1 || route.slot! > 10 ||
+    !valueAllowed || string(record.rationale).trim().length < 3 ||
+    string(record.rationale).trim().length > 1000 || evidenceUrl.protocol !== 'https:' ||
+    !Number.isSafeInteger(record.expected_version) || Number(record.expected_version) < 0 ||
+    !/^[A-Za-z0-9._:@+-]{3,254}$/.test(string(record.actor_id)) ||
+    !/^[A-Za-z0-9._:-]{8,128}$/.test(string(record.idempotency_key))
+  ) throw new ValidationError(['shadow decision is invalid'])
+  return {
+    humanValue: humanValue as ShadowDecisionValue,
+    rationale: string(record.rationale).trim(),
+    evidenceUrl: evidenceUrl.toString(),
+    expectedVersion: Number(record.expected_version),
+    actorId: string(record.actor_id),
+    idempotencyKey: string(record.idempotency_key),
+  }
+}
+
+function validateShadowCompletionRequest(value: unknown): {
+  expectedVersion: number
+  actorId: string
+  idempotencyKey: string
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new ValidationError(['shadow completion must be an object'])
+  const record = value as Record<string, unknown>
+  const allowed = new Set(['expected_version','actor_id','idempotency_key'])
+  if (Object.keys(record).some((field) => !allowed.has(field)) ||
+      !Number.isSafeInteger(record.expected_version) || Number(record.expected_version) < 0 ||
+      !/^[A-Za-z0-9._:@+-]{3,254}$/.test(string(record.actor_id)) ||
+      !/^[A-Za-z0-9._:-]{8,128}$/.test(string(record.idempotency_key)))
+    throw new ValidationError(['shadow completion is invalid'])
+  return {
+    expectedVersion: Number(record.expected_version),
+    actorId: string(record.actor_id),
+    idempotencyKey: string(record.idempotency_key),
+  }
+}
+
 function resolveApprovalChannel(
   authorization: string | undefined,
   gateways: Record<ApprovalChannel, { bearer: string; actors: string[] }>,
@@ -631,10 +755,15 @@ function publicFailure(error: unknown): {
   }
   if (
     error instanceof Error &&
-    ['IDEMPOTENCY_CONFLICT', 'INSTRUCTION_IDEMPOTENCY_CONFLICT', 'EXECUTION_IN_PROGRESS', 'APPROVAL_GRANT_CONFLICT'].includes(
+    ['IDEMPOTENCY_CONFLICT', 'INSTRUCTION_IDEMPOTENCY_CONFLICT', 'EXECUTION_IN_PROGRESS', 'APPROVAL_GRANT_CONFLICT', 'SHADOW_REVIEW_IDEMPOTENCY_CONFLICT', 'SHADOW_REVIEW_VERSION_CONFLICT', 'SHADOW_REVIEW_NOT_OPEN'].includes(
       error.message,
     )
   )
     return { status: 409, error: error.message }
+  if (
+    error instanceof Error &&
+    ['SHADOW_REVIEW_DECISION_INVALID','SHADOW_REVIEW_COMPLETION_INVALID','SHADOW_REVIEW_INCOMPLETE','SHADOW_REVIEW_DECISION_NOT_FOUND'].includes(error.message)
+  )
+    return { status: 400, error: error.message }
   return { status: 500, error: 'internal_error' }
 }

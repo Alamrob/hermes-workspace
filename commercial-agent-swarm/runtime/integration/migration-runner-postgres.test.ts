@@ -30,6 +30,10 @@ integration('PostgreSQL 17 versioned migration runner', () => {
           '009_internal_automation',
           '010_instruction_inbox',
           '011_go_native_usage_ledger',
+          '012_dependency_terminalization',
+          '013_variable_usage_reservations',
+          '014_variable_usage_constraint',
+          '015_shadow_human_review',
         ].map(async (version) => ({
           version,
           sql: await readFile(

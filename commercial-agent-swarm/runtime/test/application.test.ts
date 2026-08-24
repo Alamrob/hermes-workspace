@@ -116,6 +116,7 @@ function setup(mode: ApprovalMode = 'either', ambiguousGateways = false, a3Admis
         workOrders: { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' } },
         controlPlane: 'control-plane-token', connector: 'connector-token', internal: 'internal-token',
         instructionInbox: 'instruction-inbox-token',
+        shadowReview: 'shadow-review-token',
         approvalGateways: {
           sales: { bearer: 'sales-approval-token', actors: ['sales-director'] },
           telegram: { bearer: ambiguousGateways ? 'sales-approval-token' : 'telegram-approval-token', actors: ['telegram-user-1'] },

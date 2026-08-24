@@ -15,6 +15,13 @@ import {
   validatePortfolioReadModel,
   type PortfolioReadModel,
 } from './portfolio-read-model.js'
+import {
+  validateShadowReview,
+  validateShadowReviewList,
+  type CompleteShadowReviewInput,
+  type RecordShadowDecisionInput,
+  type ShadowReview,
+} from './shadow-review.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -196,6 +203,38 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       [input.missionId, input.channel],
     )
     return result.rows[0]?.active === true
+  }
+
+  async listShadowReviews(): Promise<ShadowReview[]> {
+    const result = await this.pool.query<{ reviews: unknown }>(
+      'SELECT control.list_shadow_reviews() AS reviews',
+    )
+    return validateShadowReviewList(result.rows[0]?.reviews)
+  }
+
+  async getShadowReview(id: string): Promise<ShadowReview | null> {
+    const result = await this.pool.query<{ review: unknown }>(
+      'SELECT control.get_shadow_review($1::uuid) AS review',
+      [id],
+    )
+    const review = result.rows[0]?.review
+    return review === null || review === undefined ? null : validateShadowReview(review)
+  }
+
+  async recordShadowDecision(input: RecordShadowDecisionInput): Promise<ShadowReview> {
+    const result = await this.pool.query<{ review: unknown }>(
+      'SELECT control.record_shadow_review_decision($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS review',
+      [input.reviewId,input.accountSlot,input.dimension,input.humanValue,input.rationale,input.evidenceUrl,input.expectedVersion,input.actorId,input.idempotencyKey,input.requestSha256],
+    )
+    return validateShadowReview(result.rows[0]?.review)
+  }
+
+  async completeShadowReview(input: CompleteShadowReviewInput): Promise<ShadowReview> {
+    const result = await this.pool.query<{ review: unknown }>(
+      'SELECT control.complete_shadow_review($1::uuid,$2,$3,$4,$5) AS review',
+      [input.reviewId,input.expectedVersion,input.actorId,input.idempotencyKey,input.requestSha256],
+    )
+    return validateShadowReview(result.rows[0]?.review)
   }
 
   async createInstructionRequest(

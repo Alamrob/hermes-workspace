@@ -16,6 +16,7 @@ const EXPECTED_MIGRATIONS = [
   '012_dependency_terminalization',
   '013_variable_usage_reservations',
   '014_variable_usage_constraint',
+  '015_shadow_human_review',
 ] as const
 
 export interface MigrationSource {

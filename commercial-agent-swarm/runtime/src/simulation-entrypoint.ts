@@ -22,6 +22,7 @@ const APPLICATION_FILES = [
   'CONNECTOR_BEARER_FILE',
   'INTERNAL_BEARER_FILE',
   'INSTRUCTION_INBOX_BEARER_FILE',
+  'SHADOW_REVIEW_BEARER_FILE',
   'APPROVAL_HMAC_SECRET_FILE',
 ] as const
 const RAW_SECRETS = [
@@ -37,6 +38,7 @@ const RAW_SECRETS = [
   'CONNECTOR_BEARER',
   'INTERNAL_BEARER',
   'INSTRUCTION_INBOX_BEARER',
+  'SHADOW_REVIEW_BEARER',
   'APPROVAL_HMAC_SECRET',
   'CUSTOM_API_KEY',
   'OPENCODE_GO_API_KEY',
@@ -66,6 +68,7 @@ export interface ApplicationSecrets {
   connector: string
   internal: string
   instructionInbox: string
+  shadowReview: string
   approvalHmac: string
 }
 
@@ -206,6 +209,10 @@ export async function readApplicationSecrets(
     internal: await readGroupSecretFile(files.INTERNAL_BEARER_FILE, config.secretGid),
     instructionInbox: await readGroupSecretFile(
       files.INSTRUCTION_INBOX_BEARER_FILE,
+      config.secretGid,
+    ),
+    shadowReview: await readGroupSecretFile(
+      files.SHADOW_REVIEW_BEARER_FILE,
       config.secretGid,
     ),
     approvalHmac: await readGroupSecretFile(files.APPROVAL_HMAC_SECRET_FILE, config.secretGid),

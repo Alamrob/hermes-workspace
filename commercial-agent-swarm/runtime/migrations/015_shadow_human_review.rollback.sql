@@ -1,0 +1,11 @@
+BEGIN;
+DROP FUNCTION IF EXISTS control.complete_shadow_review(uuid,integer,text,text,text);
+DROP FUNCTION IF EXISTS control.record_shadow_review_decision(uuid,integer,text,text,text,text,integer,text,text,text);
+DROP FUNCTION IF EXISTS control.list_shadow_reviews();
+DROP FUNCTION IF EXISTS control.get_shadow_review(uuid);
+DROP FUNCTION IF EXISTS control.build_shadow_review(uuid);
+DROP TABLE IF EXISTS control.shadow_review_commands;
+DROP TABLE IF EXISTS control.shadow_review_decisions;
+DROP TABLE IF EXISTS control.shadow_review_accounts;
+DROP TABLE IF EXISTS control.shadow_review_sessions;
+COMMIT;

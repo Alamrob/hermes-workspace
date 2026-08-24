@@ -1,5 +1,10 @@
 import type { ApprovalAction } from './approvals.js'
 import { inMemoryPortfolioReadModel, type PortfolioReadModel } from './portfolio-read-model.js'
+import type {
+  CompleteShadowReviewInput,
+  RecordShadowDecisionInput,
+  ShadowReview,
+} from './shadow-review.js'
 
 interface ApprovalRecord {
   approval_id: string
@@ -24,6 +29,10 @@ export interface ApprovalGrantRecord extends ApprovalRecord {
 export interface RuntimeRepository {
   ready(): Promise<boolean>
   getPortfolioReadModel(): Promise<PortfolioReadModel>
+  listShadowReviews(): Promise<ShadowReview[]>
+  getShadowReview(id: string): Promise<ShadowReview | null>
+  recordShadowDecision(input: RecordShadowDecisionInput): Promise<ShadowReview>
+  completeShadowReview(input: CompleteShadowReviewInput): Promise<ShadowReview>
   saveMission(record: MissionRecord): Promise<void>
   createInstructionRequest(record: InstructionRequestRecord): Promise<InstructionRequestResult>
   getMission(id: string): Promise<MissionRecord | null>
@@ -205,6 +214,15 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
       this.killSwitches.has(`mission:${input.missionId}`) ||
       this.killSwitches.has(`channel:${input.channel}`)
     )
+  }
+
+  async listShadowReviews(): Promise<ShadowReview[]> { return [] }
+  async getShadowReview(_id: string): Promise<ShadowReview | null> { return null }
+  async recordShadowDecision(_input: RecordShadowDecisionInput): Promise<ShadowReview> {
+    throw new Error('SHADOW_REVIEW_NOT_FOUND')
+  }
+  async completeShadowReview(_input: CompleteShadowReviewInput): Promise<ShadowReview> {
+    throw new Error('SHADOW_REVIEW_NOT_FOUND')
   }
 
   async createInstructionRequest(
