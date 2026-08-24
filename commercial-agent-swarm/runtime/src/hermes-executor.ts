@@ -79,7 +79,9 @@ export function classifyHermesExit(
     return 'HERMES_PROVIDER_ACCESS_REJECTED'
   if (/HTTP\s*429|rate.?limit|quota|credit|balance/i.test(diagnostic))
     return 'HERMES_PROVIDER_CAPACITY_REJECTED'
-  if (/model.{0,40}(?:not found|unsupported|unknown)|HTTP\s*404/i.test(diagnostic))
+  if (
+    /model.{0,40}(?:not found|unsupported|unknown)|HTTP\s*404/i.test(diagnostic)
+  )
     return 'HERMES_PROVIDER_MODEL_REJECTED'
   if (
     /HTTP\s*400|bad request|invalid_request|max_tokens|reasoning_effort|thinking/i.test(
@@ -249,6 +251,10 @@ export class HermesExecutor implements ExecutorPort {
     if (request.execution_timeout_ms !== this.options.timeoutMs)
       throw new Error('HERMES_TIMEOUT_HANDSHAKE_MISMATCH')
     assertExecutionAuthority(request, this.options.externalResearchEnabled)
+    // Validate and close the complete model prompt before reading the provider
+    // key or marking execution as uncertain. A malformed runtime contract is a
+    // proven pre-spawn failure and must release its usage reservation promptly.
+    const hermesPrompt = buildHermesPrompt(request)
     const pricingNow = (this.options.pricingClock ?? (() => new Date()))()
     ;(this.options.pricingPreflight ?? assertOpenCodeGoExecutionPreflight)(
       request.reservation,
@@ -267,10 +273,9 @@ export class HermesExecutor implements ExecutorPort {
       input.profile_id,
       input.reservation,
     )
-    const customApiKey = await (this.options.readCustomApiKey ?? readGroupSecretFile)(
-      this.options.customApiKeyFile,
-      this.options.expectedSecretGid ?? 10000,
-    )
+    const customApiKey = await (
+      this.options.readCustomApiKey ?? readGroupSecretFile
+    )(this.options.customApiKeyFile, this.options.expectedSecretGid ?? 10000)
     const home = await mkdtemp(join(this.options.temporaryRoot, 'hermes-home-'))
     const cwd = await mkdtemp(join(this.options.temporaryRoot, 'hermes-run-'))
     try {
@@ -301,7 +306,7 @@ export class HermesExecutor implements ExecutorPort {
           '-p',
           input.profile_id,
           '-z',
-          buildHermesPrompt(request),
+          hermesPrompt,
           '--usage-file',
           usageFile,
         ],
@@ -347,11 +352,7 @@ export class HermesExecutor implements ExecutorPort {
           error instanceof Error &&
           error.message === 'HERMES_USAGE_UNKNOWN'
         ) {
-          const classified = classifyHermesExit(
-            1,
-            output.stdout,
-            output.stderr,
-          )
+          const classified = classifyHermesExit(1, output.stdout, output.stderr)
           if (classified !== 'HERMES_EXIT_1') throw new Error(classified)
         }
         throw error
@@ -478,11 +479,7 @@ export class HermesExecutor implements ExecutorPort {
  */
 export function parseStrictModelJson(output: string): unknown {
   const trimmed = output.trim()
-  if (
-    trimmed.length < 2 ||
-    trimmed.length > 262_144 ||
-    trimmed.includes('\0')
-  )
+  if (trimmed.length < 2 || trimmed.length > 262_144 || trimmed.includes('\0'))
     throw new Error('INVALID_EXECUTOR_ENVELOPE')
 
   const wholeFence = /^```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```$/.exec(trimmed)
@@ -516,11 +513,7 @@ export function parseStrictModelJson(output: string): unknown {
  */
 export function parseBoundedCompactModelJson(output: string): unknown {
   const trimmed = output.trim()
-  if (
-    trimmed.length < 2 ||
-    trimmed.length > 32_768 ||
-    trimmed.includes('\0')
-  )
+  if (trimmed.length < 2 || trimmed.length > 32_768 || trimmed.includes('\0'))
     throw new Error('INVALID_EXECUTOR_ENVELOPE')
   try {
     return JSON.parse(trimmed) as unknown
@@ -606,8 +599,7 @@ export function adaptMarketObservationShard(
     ),
     'Coverage is a fixed, non-exhaustive shadow cohort. No account is eligible for outreach.',
   ].join('\n')
-  if (summary.length > 32_000)
-    throw new Error('INVALID_MARKET_SHARD_SUMMARY')
+  if (summary.length > 32_000) throw new Error('INVALID_MARKET_SHARD_SUMMARY')
   return {
     mission_id: input.mission_id,
     trace_id: input.trace_id,
@@ -714,7 +706,8 @@ export function adaptAccountCandidateBatch(
     (value.status === 'completed' &&
       (candidates.length !== contract.maximum_accounts || hasUnresolved)) ||
     (value.status === 'partial' &&
-      candidates.length === contract.maximum_accounts && !hasUnresolved)
+      candidates.length === contract.maximum_accounts &&
+      !hasUnresolved)
   )
     throw new Error('INVALID_ACCOUNT_BATCH_STATUS')
 
@@ -725,8 +718,7 @@ export function adaptAccountCandidateBatch(
     ),
     'Coverage is a bounded, non-exhaustive post-human-gate cohort. No account is eligible for outreach.',
   ].join('\n')
-  if (summary.length > 32_000)
-    throw new Error('INVALID_ACCOUNT_BATCH_SUMMARY')
+  if (summary.length > 32_000) throw new Error('INVALID_ACCOUNT_BATCH_SUMMARY')
   return {
     mission_id: input.mission_id,
     trace_id: input.trace_id,
@@ -743,7 +735,9 @@ export function adaptAccountCandidateBatch(
     metrics: {
       runtime_output_adapter: 'account_candidate_batch_v1',
       accounts_reviewed: candidates.length,
-      unresolved_accounts: candidates.filter((item) => item.state === 'unresolved').length,
+      unresolved_accounts: candidates.filter(
+        (item) => item.state === 'unresolved',
+      ).length,
       duplicate_domains: 0,
       eligible_for_outreach: 0,
       external_actions: 0,
@@ -849,8 +843,7 @@ export function adaptAccountDraftBatch(
     ),
     'Internal drafts only. No account, draft, recipient or channel is approved or eligible for outreach.',
   ].join('\n')
-  if (summary.length > 32_000)
-    throw new Error('INVALID_ACCOUNT_DRAFT_SUMMARY')
+  if (summary.length > 32_000) throw new Error('INVALID_ACCOUNT_DRAFT_SUMMARY')
   return {
     mission_id: input.mission_id,
     trace_id: input.trace_id,
@@ -867,8 +860,10 @@ export function adaptAccountDraftBatch(
     metrics: {
       runtime_output_adapter: 'account_draft_batch_v1',
       accounts_reviewed: drafts.length,
-      drafts_prepared: drafts.filter((draft) => draft.state === 'drafted').length,
-      drafts_withheld: drafts.filter((draft) => draft.state === 'withheld').length,
+      drafts_prepared: drafts.filter((draft) => draft.state === 'drafted')
+        .length,
+      drafts_withheld: drafts.filter((draft) => draft.state === 'withheld')
+        .length,
       eligible_for_outreach: 0,
       external_actions: 0,
     },
@@ -919,22 +914,35 @@ export function adaptDraftAdmissionBatch(
     const source = evidence.drafts[index]
     if (
       !recordWithExactKeys(entry, [
-        'slot', 'company', 'url', 'source_state', 'decision', 'reason',
-        'risk_flags', 'source_draft_sha256', 'approval_state',
+        'slot',
+        'company',
+        'url',
+        'source_state',
+        'decision',
+        'reason',
+        'risk_flags',
+        'source_draft_sha256',
+        'approval_state',
         'external_action_eligible',
       ]) ||
       entry.slot !== source.slot ||
       entry.company !== source.company ||
       entry.url !== source.url ||
       entry.source_state !== source.state ||
-      !['human_review_candidate', 'withheld'].includes(String(entry.decision)) ||
+      !['human_review_candidate', 'withheld'].includes(
+        String(entry.decision),
+      ) ||
       !safeDraftText(entry.reason, 500, false) ||
       !Array.isArray(entry.risk_flags) ||
       entry.risk_flags.length > allowedFlags.size ||
       new Set(entry.risk_flags).size !== entry.risk_flags.length ||
-      entry.risk_flags.some((flag) => typeof flag !== 'string' || !allowedFlags.has(flag)) ||
+      entry.risk_flags.some(
+        (flag) => typeof flag !== 'string' || !allowedFlags.has(flag),
+      ) ||
       entry.source_draft_sha256 !== source.draft_sha256 ||
-      !['human_review_required', 'not_applicable'].includes(String(entry.approval_state)) ||
+      !['human_review_required', 'not_applicable'].includes(
+        String(entry.approval_state),
+      ) ||
       entry.external_action_eligible !== false
     )
       throw new Error('INVALID_DRAFT_ADMISSION_ROW')
@@ -960,7 +968,9 @@ export function adaptDraftAdmissionBatch(
       reason: entry.reason as string,
       riskFlags: entry.risk_flags as string[],
       sourceDraftSha256: source.draft_sha256,
-      approvalState: entry.approval_state as 'human_review_required' | 'not_applicable',
+      approvalState: entry.approval_state as
+        | 'human_review_required'
+        | 'not_applicable',
     }
   })
   const hasWithheld = reviews.some((review) => review.decision === 'withheld')
@@ -971,8 +981,9 @@ export function adaptDraftAdmissionBatch(
     throw new Error('INVALID_DRAFT_ADMISSION_STATUS')
 
   const summary = [
-    ...reviews.map((review) =>
-      `${review.slot}. ${review.company} | ${review.url} | source_state=${review.sourceState} | decision=${review.decision} | reason=${review.reason} | risk_flags=${review.riskFlags.join(',') || 'none'} | source_draft_sha256=${review.sourceDraftSha256} | approval_state=${review.approvalState} | external_action_eligible=false`,
+    ...reviews.map(
+      (review) =>
+        `${review.slot}. ${review.company} | ${review.url} | source_state=${review.sourceState} | decision=${review.decision} | reason=${review.reason} | risk_flags=${review.riskFlags.join(',') || 'none'} | source_draft_sha256=${review.sourceDraftSha256} | approval_state=${review.approvalState} | external_action_eligible=false`,
     ),
     'Internal admission review only. No recipient, account or draft is approved or eligible for outreach; no approval request was created.',
   ].join('\n')
@@ -994,8 +1005,11 @@ export function adaptDraftAdmissionBatch(
     metrics: {
       runtime_output_adapter: 'draft_admission_batch_v1',
       accounts_reviewed: reviews.length,
-      human_review_candidates: reviews.filter((review) => review.decision === 'human_review_candidate').length,
-      withheld: reviews.filter((review) => review.decision === 'withheld').length,
+      human_review_candidates: reviews.filter(
+        (review) => review.decision === 'human_review_candidate',
+      ).length,
+      withheld: reviews.filter((review) => review.decision === 'withheld')
+        .length,
       approval_requests_created: 0,
       eligible_for_outreach: 0,
       external_actions: 0,
@@ -1096,7 +1110,7 @@ export type ModelOutputDiagnostics = {
 export function modelOutputDiagnostics(output: string): ModelOutputDiagnostics {
   const trimmed = output.trim()
   let fenceCount = 0
-  for (let index = 0; index < output.length;) {
+  for (let index = 0; index < output.length; ) {
     const next = output.indexOf('```', index)
     if (next < 0) break
     fenceCount += 1
@@ -1115,7 +1129,9 @@ export function modelOutputDiagnostics(output: string): ModelOutputDiagnostics {
     output_fence_count: fenceCount,
     output_starts_with_object: trimmed.startsWith('{'),
     output_ends_with_object: trimmed.endsWith('}'),
-    output_whole_json_fence: /^```(?:json)?[\t ]*\r?\n[\s\S]*\r?\n```$/.test(trimmed),
+    output_whole_json_fence: /^```(?:json)?[\t ]*\r?\n[\s\S]*\r?\n```$/.test(
+      trimmed,
+    ),
     output_raw_json_parseable: rawJsonParseable,
   }
 }
@@ -1207,7 +1223,8 @@ function runtimeValidationFailure(
     assignment_id: input.assignment_id,
     agent_id: input.profile_id,
     status: 'failed',
-    summary: 'Hermes completed the inference, but the deterministic runtime rejected the model output contract.',
+    summary:
+      'Hermes completed the inference, but the deterministic runtime rejected the model output contract.',
     facts: [],
     inferences: [],
     actions_taken: [],
@@ -1229,7 +1246,8 @@ function runtimeValidationFailure(
         message: 'Model output was rejected without storing its content.',
         recoverable: false,
         attempts: 1,
-        next_safe_step: 'Review the trusted prompt and schema before authorizing a new execution.',
+        next_safe_step:
+          'Review the trusted prompt and schema before authorizing a new execution.',
       },
     ],
     risks: [],
@@ -1266,14 +1284,14 @@ export class NodeProcessRunner implements ProcessRunner {
             ]
           : invocation.args,
         {
-        env: invocation.env,
-        ...(isolatedChild
-          ? {}
-          : { uid: invocation.uid, gid: invocation.gid }),
-        shell: false,
-        detached: true,
-        cwd: invocation.cwd,
-        stdio: ['ignore', 'pipe', 'pipe'],
+          env: invocation.env,
+          ...(isolatedChild
+            ? {}
+            : { uid: invocation.uid, gid: invocation.gid }),
+          shell: false,
+          detached: true,
+          cwd: invocation.cwd,
+          stdio: ['ignore', 'pipe', 'pipe'],
         },
       )
       const stdout: Array<Buffer> = []
