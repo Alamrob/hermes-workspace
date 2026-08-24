@@ -178,6 +178,17 @@ describe('runtime persistence composition', () => {
         capability: 'commercial_work_order_ingestor',
       },
     ])
+    assert.equal(
+      expectedFunctionSets.some(
+        (functions) =>
+          functions.includes('control.list_instruction_requests()') &&
+          functions.includes('control.get_instruction_request(uuid)') &&
+          functions.includes(
+            'control.review_instruction_request(uuid,text,text,text,timestamp with time zone,text,text,text,uuid,text,jsonb)',
+          ),
+      ),
+      true,
+    )
     await assert.rejects(
       verifyProductionDatabasePrincipals([
         {

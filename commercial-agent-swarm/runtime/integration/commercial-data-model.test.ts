@@ -58,6 +58,10 @@ const SHADOW_HUMAN_REVIEW_MIGRATION = new URL(
   '../migrations/015_shadow_human_review.sql',
   import.meta.url,
 )
+const CODEX_INSTRUCTION_REVIEW_MIGRATION = new URL(
+  '../migrations/019_codex_instruction_review.sql',
+  import.meta.url,
+)
 const integration = ADMIN_URL ? describe : describe.skip
 
 integration('commercial catalog/control/mail data model', () => {
@@ -549,6 +553,9 @@ integration('commercial catalog/control/mail data model', () => {
       await readFile(DEPENDENCY_TERMINALIZATION_MIGRATION, 'utf8'),
     )
     await pool.query(await readFile(SHADOW_HUMAN_REVIEW_MIGRATION, 'utf8'))
+    await pool.query(
+      await readFile(CODEX_INSTRUCTION_REVIEW_MIGRATION, 'utf8'),
+    )
     const suffix = randomUUID().replaceAll('-', ''),
       password = `test_${suffix}`,
       names = {

@@ -194,6 +194,9 @@ const EXPECTED_FUNCTIONS: Record<
   commercial_work_order_ingestor: [
     'control.save_mission(uuid,text,jsonb)',
     'control.create_instruction_request(uuid,text,text,text,text,text,text,text,text,timestamp with time zone,timestamp with time zone,jsonb)',
+    'control.list_instruction_requests()',
+    'control.get_instruction_request(uuid)',
+    'control.review_instruction_request(uuid,text,text,text,timestamp with time zone,text,text,text,uuid,text,jsonb)',
   ],
   commercial_approver: [
     'control.get_pending_approval(uuid)',
