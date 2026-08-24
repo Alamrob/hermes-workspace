@@ -421,9 +421,33 @@ describe('Paperclip commercial automation', () => {
 
     const commentCount = paperclip.comments.get('issue-ala-31')!.length
     const updateCount = paperclip.updates.length
-    assert.deepEqual(await service.tick(), reconciled)
+    assert.deepEqual(await service.tick(), {
+      status: 'idle', issue: null, mission_id: null, external_actions: 0,
+    })
     assert.equal(paperclip.comments.get('issue-ala-31')!.length, commentCount)
     assert.equal(paperclip.updates.length, updateCount)
+  })
+
+  it('continues past a signed review-ready marker to dispatch an explicit later workflow', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-44', 'backlog'), issue('ALA-45', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const service = automation(paperclip, broker)
+    const first = await service.tick()
+    assert.equal(first.issue, 'ALA-44')
+    broker.execution = {
+      mission_id: first.mission_id!, status: 'completed', assignments: [
+        { assignment_id: 'market', profile_id: 'market-account-intelligence', status: 'succeeded', attempts: 1, max_attempts: 1, artifact_sha256: 'a'.repeat(64), result_envelope: {}, error: null },
+        { assignment_id: 'qa', profile_id: 'commercial-qa-compliance', status: 'succeeded', attempts: 1, max_attempts: 1, artifact_sha256: 'b'.repeat(64), result_envelope: {}, error: null },
+      ],
+    }
+    assert.equal((await service.tick()).status, 'review_ready')
+    broker.execution = null
+    const successor = await service.tick()
+    assert.equal(successor.status, 'dispatched')
+    assert.equal(successor.issue, 'ALA-45')
+    assert.equal(broker.orders.at(-1)?.metadata?.paperclip_issue_identifier, 'ALA-45')
   })
 
   it('repairs a mission accepted before the signed Paperclip marker without creating a duplicate order', async () => {
