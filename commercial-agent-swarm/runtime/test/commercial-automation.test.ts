@@ -427,6 +427,65 @@ describe('Paperclip commercial automation', () => {
     assert.match(assignments[0].instruction, /TASK ALA-47/)
   })
 
+  it('continues from terminal ALA-47 to ALA-48 with four bounded market shards and one QA consolidation', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-47', 'backlog'), issue('ALA-48', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const service = automation(paperclip, broker)
+    const first = await service.tick()
+    assert.equal(first.issue, 'ALA-47')
+    broker.execution = { mission_id: first.mission_id!, status: 'failed', assignments: [] }
+    assert.equal((await service.tick()).status, 'blocked')
+    broker.execution = null
+    const successor = await service.tick()
+    assert.equal(successor.status, 'dispatched')
+    assert.equal(successor.issue, 'ALA-48')
+    assert.equal(broker.orders.at(-1)?.idempotency_key, 'paperclip:ALA-48:commercial-v14')
+
+    const assignments = broker.plans.at(-1)!.assignments
+    assert.equal(assignments.length, 5)
+    assert.deepEqual(
+      assignments.map((assignment) => assignment.profile_id),
+      [
+        'market-account-intelligence',
+        'market-account-intelligence',
+        'market-account-intelligence',
+        'market-account-intelligence',
+        'commercial-qa-compliance',
+      ],
+    )
+    assert.ok(assignments.every((assignment) => assignment.maximum_tokens === 75_000))
+    assert.ok(assignments.every((assignment) => assignment.usage_value_reservation_usd === 0.1))
+    assert.ok(assignments.every((assignment) => assignment.max_attempts === 1))
+    assert.deepEqual(assignments.slice(0, 4).map((assignment) => assignment.maximum_api_calls), [5, 5, 4, 4])
+
+    const shardUrls = assignments.slice(0, 4).flatMap((assignment) => {
+      const evidence = JSON.parse(assignment.evidence) as { approved_urls: string[] }
+      return evidence.approved_urls
+    })
+    assert.equal(shardUrls.length, 10)
+    assert.equal(new Set(shardUrls).size, 10)
+    assert.deepEqual(shardUrls, [
+      'https://www.buk.cl/',
+      'https://camlogistic.cl/',
+      'https://www.transtecnica.cl/',
+      'https://www.transportnetwork.cl/',
+      'https://www.akiva.cl/',
+      'https://www.recibelo.cl/',
+      'https://joint.cl/',
+      'https://www.pulsorrhh.cl/',
+      'https://youhr.cl/',
+      'https://www.cubuq.cl/',
+    ])
+    const qa = assignments[4]
+    assert.deepEqual(qa.depends_on, assignments.slice(0, 4).map((assignment) => assignment.assignment_id))
+    assert.match(qa.instruction, /exactly ten ordered company slots/i)
+    assert.match(qa.instruction, /exactly thirty categorical decision values/i)
+    assert.match(qa.instruction, /decision_slots=30/)
+    assert.match(qa.instruction, /eligible_for_outreach=0/)
+  })
+
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),
