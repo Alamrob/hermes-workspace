@@ -35,6 +35,8 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '015_shadow_human_review',
         '016_usage_source_not_null',
         '017_external_action_kill_switch_projection',
+        '018_sales_mission_draft_projection',
+        '019_codex_instruction_review',
       ]
       await runVersionedMigrations(
         pool,
@@ -90,7 +92,8 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
       await pool.query(`SET ROLE commercial_runtime`)
       const portfolio = (await pool.query(`SELECT control.get_portfolio_read_model() AS model`)).rows[0].model
       assert.equal(portfolio.portfolio.length, 26)
-      assert.equal(portfolio.projects.length, 0)
+      assert.equal(portfolio.projects.length, 1)
+      assert.equal(portfolio.projects[0].id, 'operacion-sin-planillas')
       assert.deepEqual(portfolio.costs, [])
       assert.equal(portfolio.portfolio.find((item: any) => item.id === 'wspro').name, 'WSPro')
       assert.equal(portfolio.control.killSwitch, true)

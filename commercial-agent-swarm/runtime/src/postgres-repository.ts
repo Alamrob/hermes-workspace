@@ -8,6 +8,9 @@ import type {
   MissionRecord,
   InstructionRequestRecord,
   InstructionRequestResult,
+  InstructionRequestView,
+  InstructionReviewInput,
+  InstructionReviewResult,
   RuntimeRepository,
   WebhookEventRecord,
 } from './repository.js'
@@ -264,6 +267,47 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     return created
   }
 
+  async listInstructionRequests(): Promise<InstructionRequestView[]> {
+    const result = await this.ingestorPool.query<{ requests: unknown }>(
+      'SELECT control.list_instruction_requests() AS requests',
+    )
+    return validateInstructionRequestViews(result.rows[0]?.requests)
+  }
+
+  async getInstructionRequest(id: string): Promise<InstructionRequestView | null> {
+    const result = await this.ingestorPool.query<{ request: unknown }>(
+      'SELECT control.get_instruction_request($1::uuid) AS request',
+      [id],
+    )
+    const request = result.rows[0]?.request
+    return request === null || request === undefined
+      ? null
+      : validateInstructionRequestView(request)
+  }
+
+  async reviewInstructionRequest(input: InstructionReviewInput): Promise<InstructionReviewResult> {
+    const result = await this.ingestorPool.query<{ result: unknown }>(
+      `SELECT control.review_instruction_request(
+        $1::uuid,$2,$3,$4,$5::timestamptz,$6,$7,$8,
+        $9::uuid,$10,$11::jsonb
+      ) AS result`,
+      [
+        input.requestId,
+        input.decision,
+        input.actorId,
+        input.reason,
+        input.reviewedAt,
+        input.idempotencyKey,
+        input.expectedInstructionSha256,
+        input.reviewRequestSha256,
+        input.mission?.mission_id ?? null,
+        input.mission?.idempotency_key ?? null,
+        input.mission ? JSON.stringify(input.mission) : null,
+      ],
+    )
+    return validateInstructionReviewResult(result.rows[0]?.result)
+  }
+
   async externalActionsBlocked(): Promise<boolean> {
     const result = await this.pool.query<{ blocked: boolean }>(
       'SELECT control.external_actions_blocked() AS blocked',
@@ -364,6 +408,57 @@ function approvalFromRow(
     token: row.token,
     consumed_at: row.consumed_at ? iso(row.consumed_at) : null,
   }
+}
+
+function validateInstructionRequestViews(value: unknown): InstructionRequestView[] {
+  if (!Array.isArray(value)) throw new Error('INSTRUCTION_REQUEST_LIST_INVALID')
+  return value.map(validateInstructionRequestView)
+}
+
+function validateInstructionRequestView(value: unknown): InstructionRequestView {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('INSTRUCTION_REQUEST_INVALID')
+  const item = value as Record<string, unknown>
+  if (
+    typeof item.request_id !== 'string' ||
+    typeof item.idempotency_key !== 'string' ||
+    item.project_id !== 'proptimiza' ||
+    typeof item.title !== 'string' ||
+    typeof item.instruction !== 'string' ||
+    typeof item.instruction_sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(item.instruction_sha256) ||
+    typeof item.requested_by !== 'string' ||
+    !['workspace','sales'].includes(String(item.source)) ||
+    !['pending_codex_review','approved','rejected','converted'].includes(String(item.status)) ||
+    !['A0','A1','A2'].includes(String(item.autonomy_ceiling)) ||
+    item.requires_codex_review !== true ||
+    item.external_actions_allowed !== false ||
+    typeof item.created_at !== 'string' || !Number.isFinite(Date.parse(item.created_at)) ||
+    typeof item.expires_at !== 'string' || !Number.isFinite(Date.parse(item.expires_at)) ||
+    !item.metadata || typeof item.metadata !== 'object' || Array.isArray(item.metadata) ||
+    (item.reviewed_by !== null && typeof item.reviewed_by !== 'string') ||
+    (item.reviewed_at !== null && (typeof item.reviewed_at !== 'string' || !Number.isFinite(Date.parse(item.reviewed_at)))) ||
+    (item.review_reason !== null && typeof item.review_reason !== 'string') ||
+    (item.converted_mission_id !== null && typeof item.converted_mission_id !== 'string')
+  ) throw new Error('INSTRUCTION_REQUEST_INVALID')
+  return structuredClone(value) as InstructionRequestView
+}
+
+function validateInstructionReviewResult(value: unknown): InstructionReviewResult {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('INSTRUCTION_REVIEW_RESULT_INVALID')
+  const result = value as Record<string, unknown>
+  if (
+    typeof result.request_id !== 'string' ||
+    !['rejected','converted'].includes(String(result.status)) ||
+    typeof result.reviewed_by !== 'string' ||
+    typeof result.reviewed_at !== 'string' || !Number.isFinite(Date.parse(result.reviewed_at)) ||
+    typeof result.review_reason !== 'string' ||
+    (result.converted_mission_id !== null && typeof result.converted_mission_id !== 'string') ||
+    typeof result.replayed !== 'boolean' ||
+    result.external_actions_allowed !== false
+  ) throw new Error('INSTRUCTION_REVIEW_RESULT_INVALID')
+  return structuredClone(value) as InstructionReviewResult
 }
 
 function iso(value: Date | string): string {

@@ -35,6 +35,9 @@ export interface RuntimeRepository {
   completeShadowReview(input: CompleteShadowReviewInput): Promise<ShadowReview>
   saveMission(record: MissionRecord): Promise<void>
   createInstructionRequest(record: InstructionRequestRecord): Promise<InstructionRequestResult>
+  listInstructionRequests(): Promise<InstructionRequestView[]>
+  getInstructionRequest(id: string): Promise<InstructionRequestView | null>
+  reviewInstructionRequest(input: InstructionReviewInput): Promise<InstructionReviewResult>
   getMission(id: string): Promise<MissionRecord | null>
   isMissionA3Enabled(id: string): Promise<boolean>
   deliveryPolicyAllows(action: ApprovalAction): Promise<boolean>
@@ -73,13 +76,47 @@ export interface InstructionRequestResult {
   request_id: string
   project_id: 'proptimiza'
   title: string
-  status: 'pending_codex_review'
+  status: 'pending_codex_review' | 'rejected' | 'converted'
   autonomy_ceiling: 'A0' | 'A1' | 'A2'
   requires_codex_review: true
   external_actions_allowed: false
   created_at: string
   expires_at: string
   created: boolean
+}
+
+export interface InstructionRequestView extends Omit<InstructionRequestRecord, 'metadata'> {
+  status: 'pending_codex_review' | 'approved' | 'rejected' | 'converted'
+  requires_codex_review: true
+  external_actions_allowed: false
+  metadata: Record<string, unknown>
+  reviewed_by: string | null
+  reviewed_at: string | null
+  review_reason: string | null
+  converted_mission_id: string | null
+}
+
+export interface InstructionReviewInput {
+  requestId: string
+  decision: 'reject' | 'convert'
+  actorId: string
+  reason: string
+  reviewedAt: string
+  idempotencyKey: string
+  expectedInstructionSha256: string
+  reviewRequestSha256: string
+  mission: MissionRecord | null
+}
+
+export interface InstructionReviewResult {
+  request_id: string
+  status: 'rejected' | 'converted'
+  reviewed_by: string
+  reviewed_at: string
+  review_reason: string
+  converted_mission_id: string | null
+  replayed: boolean
+  external_actions_allowed: false
 }
 
 export interface WebhookEventRecord {
@@ -103,6 +140,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly killSwitches = new Set<string>()
   private readonly missions = new Map<string, MissionRecord>()
   private readonly instructionRequests = new Map<string, InstructionRequestRecord>()
+  private readonly instructionReviews = new Map<string, InstructionReviewInput>()
   private readonly webhookEvents = new Map<string, WebhookEventRecord>()
   private readonly externalActions = new Map<string, { action_hash: string; channel: string; receipt_id?: string; approval_id?: string }>()
 
@@ -240,10 +278,43 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
         current.autonomy_ceiling !== record.autonomy_ceiling
       )
         throw new Error('INSTRUCTION_IDEMPOTENCY_CONFLICT')
-      return instructionResult(current, false)
+      return instructionResult(current, false, this.instructionReviews.get(current.request_id))
     }
     this.instructionRequests.set(record.idempotency_key, structuredClone(record))
     return instructionResult(record, true)
+  }
+
+  async listInstructionRequests(): Promise<InstructionRequestView[]> {
+    return [...this.instructionRequests.values()]
+      .map((record) => instructionView(record, this.instructionReviews.get(record.request_id)))
+      .sort((left, right) => left.created_at.localeCompare(right.created_at))
+  }
+
+  async getInstructionRequest(id: string): Promise<InstructionRequestView | null> {
+    const record = [...this.instructionRequests.values()].find((candidate) => candidate.request_id === id)
+    return record ? instructionView(record, this.instructionReviews.get(id)) : null
+  }
+
+  async reviewInstructionRequest(input: InstructionReviewInput): Promise<InstructionReviewResult> {
+    const record = [...this.instructionRequests.values()].find((candidate) => candidate.request_id === input.requestId)
+    if (!record) throw new Error('INSTRUCTION_REQUEST_NOT_FOUND')
+    const current = this.instructionReviews.get(input.requestId)
+    if (current) {
+      if (current.idempotencyKey !== input.idempotencyKey || current.reviewRequestSha256 !== input.reviewRequestSha256)
+        throw new Error('INSTRUCTION_REVIEW_CONFLICT')
+      return instructionReviewResult(current, true)
+    }
+    if (record.instruction_sha256 !== input.expectedInstructionSha256)
+      throw new Error('INSTRUCTION_REVIEW_CONFLICT')
+    if (Date.parse(record.expires_at) <= Date.parse(input.reviewedAt))
+      throw new Error('INSTRUCTION_REQUEST_EXPIRED')
+    if (input.decision === 'convert' && !input.mission)
+      throw new Error('INSTRUCTION_REVIEW_INVALID')
+    if (input.decision === 'reject' && input.mission)
+      throw new Error('INSTRUCTION_REVIEW_INVALID')
+    if (input.mission) this.missions.set(input.mission.mission_id, structuredClone(input.mission))
+    this.instructionReviews.set(input.requestId, structuredClone(input))
+    return instructionReviewResult(input, false)
   }
 
   async externalActionsBlocked(): Promise<boolean> {
@@ -288,17 +359,50 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
 function instructionResult(
   record: InstructionRequestRecord,
   created: boolean,
+  review?: InstructionReviewInput,
 ): InstructionRequestResult {
   return {
     request_id: record.request_id,
     project_id: record.project_id,
     title: record.title,
-    status: 'pending_codex_review',
+    status: review ? (review.decision === 'convert' ? 'converted' : 'rejected') : 'pending_codex_review',
     autonomy_ceiling: record.autonomy_ceiling,
     requires_codex_review: true,
     external_actions_allowed: false,
     created_at: record.created_at,
     expires_at: record.expires_at,
     created,
+  }
+}
+
+function instructionView(
+  record: InstructionRequestRecord,
+  review?: InstructionReviewInput,
+): InstructionRequestView {
+  return {
+    ...structuredClone(record),
+    status: review ? (review.decision === 'convert' ? 'converted' : 'rejected') : 'pending_codex_review',
+    requires_codex_review: true,
+    external_actions_allowed: false,
+    reviewed_by: review?.actorId ?? null,
+    reviewed_at: review?.reviewedAt ?? null,
+    review_reason: review?.reason ?? null,
+    converted_mission_id: review?.mission?.mission_id ?? null,
+  }
+}
+
+function instructionReviewResult(
+  input: InstructionReviewInput,
+  replayed: boolean,
+): InstructionReviewResult {
+  return {
+    request_id: input.requestId,
+    status: input.decision === 'convert' ? 'converted' : 'rejected',
+    reviewed_by: input.actorId,
+    reviewed_at: input.reviewedAt,
+    review_reason: input.reason,
+    converted_mission_id: input.mission?.mission_id ?? null,
+    replayed,
+    external_actions_allowed: false,
   }
 }

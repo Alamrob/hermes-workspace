@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { describe, it } from 'node:test'
 import { BrokerApplication } from '../src/application.js'
 import { ApprovalBroker, type ApprovalAction, type TelegramTransport } from '../src/approvals.js'
@@ -218,6 +219,30 @@ function instructionRequest() {
   }
 }
 
+function instructionConversionOrder() {
+  const request = instructionRequest()
+  const order = signedInternalWorkOrder()
+  order.offer_id = 'operacion-sin-planillas'
+  order.requested_by = 'codex-auditor'
+  order.idempotency_key = `instruction:${request.request_id}:v1`
+  order.allowed_actions = ['analysis.internal', 'research.public.read']
+  order.approved_tools = ['hermes.analysis', 'hermes.web']
+  order.expires_at = request.expires_at
+  ;(order as unknown as { metadata: Record<string, unknown> }).metadata = {
+    instruction_request_id: request.request_id,
+    instruction_sha256: instructionSha256(),
+  }
+  order.authority.signature = signWorkOrder(
+    order as never,
+    'test-control-key-with-at-least-32-bytes',
+  )
+  return order
+}
+
+function instructionSha256() {
+  return createHash('sha256').update(instructionRequest().instruction, 'utf8').digest('hex')
+}
+
 function mailAction(): ApprovalAction {
   return {
     mission_id: validWorkOrder().mission_id,
@@ -294,6 +319,93 @@ describe('broker application routes', () => {
     })
     assert.equal(conflict.status, 409)
     assert.deepEqual(conflict.body, { error: 'INSTRUCTION_IDEMPOTENCY_CONFLICT' })
+  })
+
+  it('lists A0 requests for Codex and atomically converts a signed bounded work order', async () => {
+    const state = setup()
+    const request = instructionRequest()
+    const created = await state.app.handle({
+      method: 'POST', path: '/v1/instruction-requests',
+      headers: headers('instruction-inbox-token'), body: request,
+    })
+    assert.equal(created.status, 201)
+    const expectedSha = (created.body as any).request_id === request.request_id
+      ? instructionSha256()
+      : ''
+    assert.equal((await state.app.handle({
+      method: 'GET', path: '/v1/instruction-requests',
+    })).status, 401)
+    const listed = await state.app.handle({
+      method: 'GET', path: '/v1/instruction-requests',
+      headers: headers('control-plane-token'),
+    })
+    assert.equal(listed.status, 200)
+    assert.equal((listed.body as any).requests.length, 1)
+    assert.equal((listed.body as any).requests[0].instruction_sha256, expectedSha)
+    assert.equal((listed.body as any).external_actions_allowed, false)
+
+    const body = {
+      decision: 'convert',
+      actor_id: 'codex-auditor',
+      reason: 'La solicitud está dentro del ICP aprobado y queda limitada a investigación pública A1.',
+      reviewed_at: NOW.toISOString(),
+      idempotency_key: 'codex-review:workspace-instruction-0001',
+      expected_instruction_sha256: expectedSha,
+      work_order: instructionConversionOrder(),
+    }
+    const converted = await state.app.handle({
+      method: 'POST', path: `/v1/instruction-requests/${request.request_id}/decision`,
+      headers: headers('control-plane-token'), body,
+    })
+    assert.equal(converted.status, 201)
+    assert.equal((converted.body as any).status, 'converted')
+    assert.equal((converted.body as any).external_actions_allowed, false)
+    assert.equal((await state.repository.getMission(body.work_order.mission_id))?.a3_enabled, false)
+    const replay = await state.app.handle({
+      method: 'POST', path: `/v1/instruction-requests/${request.request_id}/decision`,
+      headers: headers('control-plane-token'), body,
+    })
+    assert.equal(replay.status, 200)
+    assert.equal((replay.body as any).replayed, true)
+    assert.equal(state.audit.events.at(-1)?.external_action, false)
+  })
+
+  it('rejects unbound conversion, over-ceiling autonomy, and conflicting review replay', async () => {
+    const state = setup()
+    const request = instructionRequest()
+    await state.app.handle({
+      method: 'POST', path: '/v1/instruction-requests',
+      headers: headers('instruction-inbox-token'), body: request,
+    })
+    const expectedSha = instructionSha256()
+    const invalidOrder = instructionConversionOrder()
+    invalidOrder.autonomy_level = 'A2'
+    invalidOrder.authority.signature = signWorkOrder(invalidOrder as never, 'test-control-key-with-at-least-32-bytes')
+    assert.equal((await state.app.handle({
+      method: 'POST', path: `/v1/instruction-requests/${request.request_id}/decision`,
+      headers: headers('control-plane-token'),
+      body: {
+        decision: 'convert', actor_id: 'codex-auditor', reason: 'Este intento excede el techo aprobado y debe fallar cerrado.',
+        reviewed_at: NOW.toISOString(), idempotency_key: 'codex-review:invalid-autonomy-0001',
+        expected_instruction_sha256: expectedSha, work_order: invalidOrder,
+      },
+    })).status, 403)
+    const rejection = {
+      decision: 'reject', actor_id: 'codex-auditor',
+      reason: 'La solicitud no contiene evidencia suficiente para transformarse en una misión.',
+      reviewed_at: NOW.toISOString(), idempotency_key: 'codex-review:reject-request-0001',
+      expected_instruction_sha256: expectedSha, work_order: null,
+    }
+    assert.equal((await state.app.handle({
+      method: 'POST', path: `/v1/instruction-requests/${request.request_id}/decision`,
+      headers: headers('control-plane-token'), body: rejection,
+    })).status, 201)
+    const conflict = await state.app.handle({
+      method: 'POST', path: `/v1/instruction-requests/${request.request_id}/decision`,
+      headers: headers('control-plane-token'),
+      body: { ...rejection, reason: `${rejection.reason} Cambio conflictivo.` },
+    })
+    assert.equal(conflict.status, 409)
   })
 
   it('creates only an A0 Sales mission draft that remains pending Codex review', async () => {

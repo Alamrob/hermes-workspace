@@ -16,7 +16,8 @@ import {
   type WorkOrderAuthConfig,
   verifyWorkOrder,
 } from './security.js'
-import { ValidationError, validateWorkOrder } from './work-orders.js'
+import { ValidationError, validateWorkOrder, type WorkOrder } from './work-orders.js'
+import type { InstructionRequestView, MissionRecord } from './repository.js'
 import {
   AssignmentPlanError,
   validateAssignmentPlan,
@@ -156,6 +157,56 @@ export class BrokerApplication {
         },
       })
       return { status: result.created ? 201 : 200, body: result }
+    }
+    if (route.action === 'listInstructionRequests') {
+      requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
+      return {
+        status: 200,
+        body: {
+          requests: await this.options.repository.listInstructionRequests(),
+          external_actions_allowed: false,
+          observed_at: this.now().toISOString(),
+        },
+      }
+    }
+    if (route.action === 'reviewInstructionRequest') {
+      requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
+      const input = validateInstructionReviewRequest(request.body, this.now())
+      const current = await this.options.repository.getInstructionRequest(route.id!)
+      if (!current) return { status: 404, body: { error: 'not_found' } }
+      let mission: MissionRecord | null = null
+      if (input.decision === 'convert') {
+        const workOrder = validateWorkOrder(input.workOrder)
+        verifyWorkOrder(workOrder, this.options.authentication.workOrders, this.now())
+        assertInstructionWorkOrder(current, workOrder)
+        mission = {
+          ...workOrder,
+          mission_id: workOrder.mission_id,
+          autonomy_level: workOrder.autonomy_level,
+          a3_enabled: false,
+        }
+      }
+      const result = await this.options.repository.reviewInstructionRequest({
+        requestId: route.id!,
+        decision: input.decision,
+        actorId: input.actorId,
+        reason: input.reason,
+        reviewedAt: input.reviewedAt,
+        idempotencyKey: input.idempotencyKey,
+        expectedInstructionSha256: input.expectedInstructionSha256,
+        reviewRequestSha256: hashAction({
+          request_id: route.id!,
+          decision: input.decision,
+          actor_id: input.actorId,
+          reason: input.reason,
+          reviewed_at: input.reviewedAt,
+          idempotency_key: input.idempotencyKey,
+          expected_instruction_sha256: input.expectedInstructionSha256,
+          work_order: input.workOrder,
+        }),
+        mission,
+      })
+      return { status: result.replayed ? 200 : 201, body: result }
     }
     if (route.action === 'createSalesMissionDraft') {
       requireBearer(
@@ -450,6 +501,11 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'POST' && path === '/v1/work-orders') return { action: 'createWorkOrder', auditAction: 'work_order.create' }
   if (method === 'POST' && path === '/v1/instruction-requests')
     return { action: 'createInstructionRequest', auditAction: 'instruction_request.create' }
+  if (method === 'GET' && path === '/v1/instruction-requests')
+    return { action: 'listInstructionRequests', auditAction: 'instruction_request.list' }
+  const instructionReview = /^\/v1\/instruction-requests\/([^/]+)\/decision$/.exec(path)
+  if (method === 'POST' && instructionReview)
+    return { action: 'reviewInstructionRequest', auditAction: 'instruction_request.review', id: instructionReview[1] }
   if (method === 'POST' && path === '/internal/v1/sales/mission-drafts')
     return { action: 'createSalesMissionDraft', auditAction: 'sales.mission_draft.create' }
   if (method === 'POST' && path === '/v1/approvals/requests') return { action: 'requestApproval', auditAction: 'approval.request' }
@@ -773,6 +829,89 @@ function validateSalesMissionDraftRequest(
   }
 }
 
+function validateInstructionReviewRequest(
+  value: unknown,
+  now: Date,
+): {
+  decision: 'reject' | 'convert'
+  actorId: 'codex-auditor'
+  reason: string
+  reviewedAt: string
+  idempotencyKey: string
+  expectedInstructionSha256: string
+  workOrder: unknown | null
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new ValidationError(['instruction review must be an object'])
+  const record = value as Record<string, unknown>
+  const allowed = new Set([
+    'decision','actor_id','reason','reviewed_at','idempotency_key',
+    'expected_instruction_sha256','work_order',
+  ])
+  const decision = string(record.decision)
+  const reason = string(record.reason).trim()
+  const reviewed = Date.parse(string(record.reviewed_at))
+  const idempotencyKey = string(record.idempotency_key)
+  const expectedInstructionSha256 = string(record.expected_instruction_sha256)
+  const secretPattern = /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk|oc_sk)-[A-Za-z0-9_-]{16,}|\bBearer\s+[A-Za-z0-9._~-]{20,}/i
+  if (
+    Object.keys(record).some((field) => !allowed.has(field)) ||
+    !['reject','convert'].includes(decision) ||
+    record.actor_id !== 'codex-auditor' ||
+    reason.length < 10 || reason.length > 1000 || secretPattern.test(reason) ||
+    !Number.isFinite(reviewed) || Math.abs(reviewed - now.getTime()) > 300_000 ||
+    !/^codex-review:[A-Za-z0-9._:-]{8,180}$/.test(idempotencyKey) ||
+    !/^[a-f0-9]{64}$/.test(expectedInstructionSha256) ||
+    (decision === 'reject' && record.work_order !== null) ||
+    (decision === 'convert' && (record.work_order === null || typeof record.work_order !== 'object' || Array.isArray(record.work_order)))
+  ) throw new ValidationError(['instruction review is invalid'])
+  return {
+    decision: decision as 'reject' | 'convert',
+    actorId: 'codex-auditor',
+    reason,
+    reviewedAt: new Date(reviewed).toISOString(),
+    idempotencyKey,
+    expectedInstructionSha256,
+    workOrder: record.work_order ?? null,
+  }
+}
+
+function assertInstructionWorkOrder(
+  request: InstructionRequestView,
+  workOrder: WorkOrder,
+): void {
+  assertInternalExecutionMission(workOrder, workOrder.trace_id)
+  const autonomyRank = { A0: 0, A1: 1, A2: 2 } as const
+  const metadata = workOrder.metadata
+  const budget = workOrder.budget_limit as Record<string, unknown>
+  const volume = workOrder.volume_limits as Record<string, unknown>
+  const allowedActions = stringSet(workOrder.allowed_actions)
+  const approvedChannels = stringSet(workOrder.approved_channels)
+  const approvedTools = stringSet(workOrder.approved_tools)
+  const allowedActionSet = new Set(['analysis.internal','research.public.read','artifact.prepare'])
+  const allowedChannelSet = new Set(['none','internal','public_web'])
+  const allowedToolSet = new Set(['hermes.analysis','hermes.web','hermes.file.ephemeral'])
+  if (
+    workOrder.project_id !== request.project_id ||
+    workOrder.offer_id !== 'operacion-sin-planillas' ||
+    workOrder.autonomy_level === 'A3' || workOrder.autonomy_level === 'A4' ||
+    autonomyRank[workOrder.autonomy_level] > autonomyRank[request.autonomy_ceiling] ||
+    workOrder.approval_token !== null ||
+    workOrder.requested_by !== 'codex-auditor' ||
+    !metadata || metadata.instruction_request_id !== request.request_id ||
+    metadata.instruction_sha256 !== request.instruction_sha256 ||
+    Date.parse(String(workOrder.expires_at)) > Date.parse(request.expires_at) ||
+    budget.currency !== 'USD' || typeof budget.maximum !== 'number' || budget.maximum > 0.5 ||
+    typeof volume.maximum_accounts !== 'number' || volume.maximum_accounts > 10 ||
+    volume.maximum_contacts !== 0 || volume.maximum_external_actions !== 0 ||
+    !allowedActions || [...allowedActions].some((action) => !allowedActionSet.has(action)) ||
+    !approvedChannels || [...approvedChannels].some((channel) => !allowedChannelSet.has(channel)) ||
+    !approvedTools || [...approvedTools].some((tool) => !allowedToolSet.has(tool)) ||
+    (workOrder.autonomy_level === 'A0' && (approvedChannels.has('public_web') || approvedTools.has('hermes.web'))) ||
+    (workOrder.autonomy_level === 'A1' && !allowedActions.has('research.public.read'))
+  ) throw new AuthenticationError('INSTRUCTION_CONVERSION_POLICY_REQUIRED')
+}
+
 function string(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
@@ -872,6 +1011,7 @@ function publicFailure(error: unknown): {
       'FORBIDDEN',
       'A3_ADMISSION_DISABLED',
       'INTERNAL_EXECUTION_POLICY_REQUIRED',
+      'INSTRUCTION_CONVERSION_POLICY_REQUIRED',
     ])
     return {
       status: 403,
@@ -905,14 +1045,14 @@ function publicFailure(error: unknown): {
   }
   if (
     error instanceof Error &&
-    ['IDEMPOTENCY_CONFLICT', 'INSTRUCTION_IDEMPOTENCY_CONFLICT', 'EXECUTION_IN_PROGRESS', 'APPROVAL_GRANT_CONFLICT', 'SHADOW_REVIEW_IDEMPOTENCY_CONFLICT', 'SHADOW_REVIEW_VERSION_CONFLICT', 'SHADOW_REVIEW_NOT_OPEN'].includes(
+    ['IDEMPOTENCY_CONFLICT', 'INSTRUCTION_IDEMPOTENCY_CONFLICT', 'INSTRUCTION_REVIEW_CONFLICT', 'EXECUTION_IN_PROGRESS', 'APPROVAL_GRANT_CONFLICT', 'SHADOW_REVIEW_IDEMPOTENCY_CONFLICT', 'SHADOW_REVIEW_VERSION_CONFLICT', 'SHADOW_REVIEW_NOT_OPEN'].includes(
       error.message,
     )
   )
     return { status: 409, error: error.message }
   if (
     error instanceof Error &&
-    ['SHADOW_REVIEW_DECISION_INVALID','SHADOW_REVIEW_COMPLETION_INVALID','SHADOW_REVIEW_INCOMPLETE','SHADOW_REVIEW_DECISION_NOT_FOUND'].includes(error.message)
+    ['INSTRUCTION_REVIEW_INVALID','INSTRUCTION_REQUEST_EXPIRED','SHADOW_REVIEW_DECISION_INVALID','SHADOW_REVIEW_COMPLETION_INVALID','SHADOW_REVIEW_INCOMPLETE','SHADOW_REVIEW_DECISION_NOT_FOUND'].includes(error.message)
   )
     return { status: 400, error: error.message }
   return { status: 500, error: 'internal_error' }

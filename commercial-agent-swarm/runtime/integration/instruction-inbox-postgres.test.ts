@@ -85,10 +85,7 @@ integration('PostgreSQL 17 instruction inbox', () => {
     const model = (await client.query(
       'SELECT control.get_portfolio_read_model() AS model',
     )).rows[0].model
-    assert.equal(model.missionDrafts.length, 1)
-    assert.equal(model.missionDrafts[0].id, requestId)
-    assert.equal(model.missionDrafts[0].status, 'submitted')
-    assert.equal('instruction' in model.missionDrafts[0], false)
+    assert.equal(model.missionDrafts.length, 0)
     await client.query('RESET ROLE')
     } finally {
       await client.query('RESET ROLE').catch(() => undefined)
@@ -97,6 +94,14 @@ integration('PostgreSQL 17 instruction inbox', () => {
   })
 
   it('rolls back the inbox without weakening the external kill switch', async () => {
+    await pool.query(await readFile(
+      new URL('../migrations/019_codex_instruction_review.rollback.sql', import.meta.url),
+      'utf8',
+    ))
+    await pool.query(await readFile(
+      new URL('../migrations/018_sales_mission_draft_projection.rollback.sql', import.meta.url),
+      'utf8',
+    ))
     const rollback = await readFile(
       new URL('../migrations/010_instruction_inbox.rollback.sql', import.meta.url),
       'utf8',
