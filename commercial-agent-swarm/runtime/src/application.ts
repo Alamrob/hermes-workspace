@@ -55,6 +55,7 @@ interface ApplicationOptions {
     connector: string
     internal: string
     instructionInbox: string
+    salesCommands: string
     shadowReview: string
     approvalGateways: Record<
       ApprovalChannel,
@@ -155,6 +156,51 @@ export class BrokerApplication {
         },
       })
       return { status: result.created ? 201 : 200, body: result }
+    }
+    if (route.action === 'createSalesMissionDraft') {
+      requireBearer(
+        request.headers?.authorization,
+        this.options.authentication.salesCommands,
+      )
+      const draft = validateSalesMissionDraftRequest(request.body, this.now())
+      const result = await this.options.repository.createInstructionRequest({
+        request_id: draft.request_id,
+        idempotency_key: draft.idempotency_key,
+        project_id: 'proptimiza',
+        title: draft.title,
+        instruction: draft.title,
+        instruction_sha256: createHash('sha256')
+          .update(draft.title, 'utf8')
+          .digest('hex'),
+        requested_by: draft.requested_by,
+        source: 'sales',
+        autonomy_ceiling: 'A0',
+        created_at: draft.created_at,
+        expires_at: draft.expires_at,
+        metadata: {
+          trust_classification: 'authenticated_sales_command',
+          interface: 'sales-control-center',
+          offer_id: 'operacion-sin-planillas',
+          execution_eligible: false,
+          codex_review_required: true,
+        },
+      })
+      return {
+        status: result.created ? 201 : 200,
+        body: {
+          id: result.request_id,
+          projectId: 'operacion-sin-planillas',
+          portfolioId: result.project_id,
+          title: result.title,
+          status: 'submitted',
+          provenance: {
+            source: 'control-broker',
+            sourceId: `instruction:${result.request_id}`,
+            observedAt: this.now().toISOString(),
+            synthetic: false,
+          },
+        },
+      }
     }
     if (route.action === 'getMissionExecution') {
       requireBearer(request.headers?.authorization, this.options.authentication.internal)
@@ -404,6 +450,8 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'POST' && path === '/v1/work-orders') return { action: 'createWorkOrder', auditAction: 'work_order.create' }
   if (method === 'POST' && path === '/v1/instruction-requests')
     return { action: 'createInstructionRequest', auditAction: 'instruction_request.create' }
+  if (method === 'POST' && path === '/internal/v1/sales/mission-drafts')
+    return { action: 'createSalesMissionDraft', auditAction: 'sales.mission_draft.create' }
   if (method === 'POST' && path === '/v1/approvals/requests') return { action: 'requestApproval', auditAction: 'approval.request' }
   if (method === 'POST' && path === '/v1/mail/send') return { action: 'sendMail', auditAction: 'mail.send' }
   const mission = /^\/v1\/missions\/([^/]+)$/.exec(path)
@@ -671,6 +719,55 @@ function validateInstructionRequest(
     requested_by: requestedBy,
     source: record.source,
     autonomy_ceiling: record.autonomy_ceiling as 'A0' | 'A1' | 'A2',
+    created_at: new Date(created).toISOString(),
+    expires_at: new Date(expires).toISOString(),
+  }
+}
+
+function validateSalesMissionDraftRequest(
+  value: unknown,
+  now: Date,
+): {
+  request_id: string
+  idempotency_key: string
+  title: string
+  requested_by: string
+  created_at: string
+  expires_at: string
+} {
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw new ValidationError(['sales mission draft must be an object'])
+  const record = value as Record<string, unknown>
+  const allowed = new Set([
+    'request_id','idempotency_key','project_id','offer_id','title',
+    'requested_by','created_at','expires_at',
+  ])
+  const requestId = string(record.request_id)
+  const idempotencyKey = string(record.idempotency_key)
+  const title = string(record.title).trim()
+  const requestedBy = string(record.requested_by)
+  const created = Date.parse(string(record.created_at))
+  const expires = Date.parse(string(record.expires_at))
+  const secretPattern = /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk|oc_sk)-[A-Za-z0-9_-]{16,}|\bBearer\s+[A-Za-z0-9._~-]{20,}/i
+  if (
+    Object.keys(record).some((field) => !allowed.has(field)) ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId) ||
+    !/^sales:[A-Za-z0-9._:-]{8,122}$/.test(idempotencyKey) ||
+    record.project_id !== 'proptimiza' ||
+    record.offer_id !== 'operacion-sin-planillas' ||
+    title.length < 3 || title.length > 160 ||
+    /[\u0000-\u001f\u007f]/.test(title) || secretPattern.test(title) ||
+    !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$/.test(requestedBy) ||
+    !Number.isFinite(created) || !Number.isFinite(expires) ||
+    created < now.getTime() - 300_000 || created > now.getTime() + 300_000 ||
+    expires <= created || expires > created + 7 * 86_400_000
+  )
+    throw new ValidationError(['sales mission draft is invalid'])
+  return {
+    request_id: requestId,
+    idempotency_key: idempotencyKey,
+    title,
+    requested_by: requestedBy,
     created_at: new Date(created).toISOString(),
     expires_at: new Date(expires).toISOString(),
   }

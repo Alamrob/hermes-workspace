@@ -81,7 +81,21 @@ export function inMemoryPortfolioReadModel(input: {
         synthetic: false,
       },
     })),
-    projects: [], missions: [], missionDrafts: [], approvals: [], qa: [],
+    projects: [{
+      id: 'operacion-sin-planillas',
+      portfolioId: 'proptimiza',
+      name: 'Operación Sin Planillas',
+      offer: 'Automatización operacional controlada para empresas chilenas de servicios.',
+      icp: 'Empresas chilenas B2B de servicios con 10 a 100 empleados y operaciones manuales en Excel, WhatsApp y correo.',
+      priceClpFrom: 1_800_000,
+      stage: 'validation',
+      provenance: {
+        source: 'control-broker',
+        sourceId: 'catalog:proptimiza:operacion-sin-planillas:offer-v1:icp-v1',
+        observedAt,
+        synthetic: false,
+      },
+    }], missions: [], missionDrafts: [], approvals: [], qa: [],
     agents: [], experiments: [], costs: [], audit: [],
     control: { killSwitch: input.killSwitchActive },
   }

@@ -116,6 +116,7 @@ function setup(mode: ApprovalMode = 'either', ambiguousGateways = false, a3Admis
         workOrders: { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' } },
         controlPlane: 'control-plane-token', connector: 'connector-token', internal: 'internal-token',
         instructionInbox: 'instruction-inbox-token',
+        salesCommands: 'sales-command-token',
         shadowReview: 'shadow-review-token',
         approvalGateways: {
           sales: { bearer: 'sales-approval-token', actors: ['sales-director'] },
@@ -293,6 +294,74 @@ describe('broker application routes', () => {
     })
     assert.equal(conflict.status, 409)
     assert.deepEqual(conflict.body, { error: 'INSTRUCTION_IDEMPOTENCY_CONFLICT' })
+  })
+
+  it('creates only an A0 Sales mission draft that remains pending Codex review', async () => {
+    const state = setup()
+    const body = {
+      request_id: '623e4567-e89b-42d3-a456-426614174000',
+      idempotency_key: 'sales:mission-draft-0001',
+      project_id: 'proptimiza',
+      offer_id: 'operacion-sin-planillas',
+      title: 'Revisar evidencia de operación manual',
+      requested_by: 'proptimizaspa@gmail.com',
+      created_at: NOW.toISOString(),
+      expires_at: new Date(NOW.getTime() + 86_400_000).toISOString(),
+    }
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/internal/v1/sales/mission-drafts', body,
+    })).status, 401)
+    const created = await state.app.handle({
+      method: 'POST', path: '/internal/v1/sales/mission-drafts',
+      headers: headers('sales-command-token'), body,
+    })
+    assert.equal(created.status, 201)
+    assert.deepEqual(created.body, {
+      id: body.request_id,
+      projectId: 'operacion-sin-planillas',
+      portfolioId: 'proptimiza',
+      title: body.title,
+      status: 'submitted',
+      provenance: {
+        source: 'control-broker',
+        sourceId: `instruction:${body.request_id}`,
+        observedAt: NOW.toISOString(),
+        synthetic: false,
+      },
+    })
+    const replay = await state.app.handle({
+      method: 'POST', path: '/internal/v1/sales/mission-drafts',
+      headers: headers('sales-command-token'), body,
+    })
+    assert.equal(replay.status, 200)
+    assert.equal(state.audit.events.at(-1)?.external_action, false)
+  })
+
+  it('rejects Sales drafts that expand scope, autonomy, project, or contain secrets', async () => {
+    const state = setup()
+    const valid = {
+      request_id: '623e4567-e89b-42d3-a456-426614174000',
+      idempotency_key: 'sales:mission-draft-0001',
+      project_id: 'proptimiza',
+      offer_id: 'operacion-sin-planillas',
+      title: 'Revisar evidencia de operación manual',
+      requested_by: 'proptimizaspa@gmail.com',
+      created_at: NOW.toISOString(),
+      expires_at: new Date(NOW.getTime() + 86_400_000).toISOString(),
+    }
+    for (const body of [
+      { ...valid, autonomy_ceiling: 'A2' },
+      { ...valid, project_id: 'vendia' },
+      { ...valid, offer_id: 'otra-oferta' },
+      { ...valid, title: `Usa sk-${'a'.repeat(32)}` },
+      { ...valid, expires_at: new Date(NOW.getTime() + 8 * 86_400_000).toISOString() },
+    ]) {
+      const response = await state.app.handle({
+        method: 'POST', path: '/internal/v1/sales/mission-drafts',
+        headers: headers('sales-command-token'), body,
+      })
+      assert.equal(response.status, 400)
+    }
   })
 
   it('rejects an unsigned work order before it can create a mission', async () => {
@@ -724,7 +793,22 @@ describe('broker application routes', () => {
       'qa', 'agents', 'experiments', 'costs', 'audit', 'control',
     ])
     assert.equal(body.portfolio.length, 26)
-    assert.equal(body.projects.length, 0)
+    assert.deepEqual(body.projects, [{
+      id: 'operacion-sin-planillas',
+      portfolioId: 'proptimiza',
+      name: 'Operación Sin Planillas',
+      offer: 'Automatización operacional controlada para empresas chilenas de servicios.',
+      icp: 'Empresas chilenas B2B de servicios con 10 a 100 empleados y operaciones manuales en Excel, WhatsApp y correo.',
+      priceClpFrom: 1_800_000,
+      stage: 'validation',
+      provenance: {
+        source: 'control-broker',
+        sourceId: 'catalog:proptimiza:operacion-sin-planillas:offer-v1:icp-v1',
+        observedAt: body.projects[0].provenance.observedAt,
+        synthetic: false,
+      },
+    }])
+    assert.equal(Number.isFinite(Date.parse(body.projects[0].provenance.observedAt)), true)
     assert.equal(body.portfolio.find((item: any) => item.id === 'wspro').name, 'WSPro')
     assert.equal(body.portfolio.find((item: any) => item.id === 'xg-systems').activatable, false)
     assert.deepEqual(body.costs, [])

@@ -50,7 +50,9 @@ describe('versioned Sales read-model contracts', () => {
     assert.deepEqual(validatePortfolioReadModel(model), model)
     assert.equal(INITIAL_PROJECT_INVENTORY.length, 26)
     assert.equal(model.portfolio.length, 26)
-    assert.equal(model.projects.length, 0)
+    assert.deepEqual(model.projects.map((project: any) => [project.id, project.portfolioId]), [
+      ['operacion-sin-planillas', 'proptimiza'],
+    ])
     assert.equal(model.portfolio.find((item) => item.id === 'wspro')?.name, 'WSPro')
     assert.throws(
       () => validatePortfolioReadModel({ ...model, revenue: 42 }),
