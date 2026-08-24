@@ -21,6 +21,7 @@ describe('versioned migration runner', () => {
       { version: '014_variable_usage_constraint', sql: 'SELECT 14;' },
       { version: '015_shadow_human_review', sql: 'SELECT 15;' },
       { version: '016_usage_source_not_null', sql: 'SELECT 16;' },
+      { version: '017_external_action_kill_switch_projection', sql: 'SELECT 17;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -44,6 +45,7 @@ describe('versioned migration runner', () => {
         '014_variable_usage_constraint',
         '015_shadow_human_review',
         '016_usage_source_not_null',
+        '017_external_action_kill_switch_projection',
       ],
     )
     assert.equal(

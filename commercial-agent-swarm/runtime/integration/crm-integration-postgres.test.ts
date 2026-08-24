@@ -34,6 +34,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '014_variable_usage_constraint',
         '015_shadow_human_review',
         '016_usage_source_not_null',
+        '017_external_action_kill_switch_projection',
       ]
       await runVersionedMigrations(
         pool,
@@ -92,7 +93,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
       assert.equal(portfolio.projects.length, 0)
       assert.deepEqual(portfolio.costs, [])
       assert.equal(portfolio.portfolio.find((item: any) => item.id === 'wspro').name, 'WSPro')
-      assert.equal(typeof portfolio.control.killSwitch, 'boolean')
+      assert.equal(portfolio.control.killSwitch, true)
       await pool.query(`RESET ROLE`)
       await pool.query(`SET ROLE commercial_crm_sync`)
       const crmSummary = (await pool.query(`SELECT integration.get_crm_summary() AS model`)).rows[0].model
