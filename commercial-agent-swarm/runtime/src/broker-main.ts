@@ -3,7 +3,10 @@ import { ApprovalBroker } from './approvals.js'
 import { ApprovalModeCoordinator } from './approval-mode.js'
 import { BrokerApplication } from './application.js'
 import { MailService } from './mail.js'
-import { createBrokerExternalTransports } from './integration-factories.js'
+import {
+  createBrokerExternalTransports,
+  createExternalActionBrokerClientFromEnvironment,
+} from './integration-factories.js'
 import { createRuntimePersistence } from './production.js'
 import { createBrokerHttpServer } from './server.js'
 import { createBrokerDispatcher } from './runtime-entrypoints.js'
@@ -38,7 +41,14 @@ export async function startSimulationBroker(
       config.a3AdmissionEnabled,
     )
 
-    const externalTransports = createBrokerExternalTransports(environment)
+    const externalClient = createExternalActionBrokerClientFromEnvironment(environment)
+    const externalTransports = createBrokerExternalTransports(environment, {
+      killSwitch: {
+        isActive: (input) => persistence.repository.isKillSwitchActive(input),
+      },
+      hostinger: externalClient,
+      telegram: externalClient,
+    })
     const approvals = new ApprovalBroker({
       repository: persistence.repository,
       hmacSecret: secrets.approvalHmac,

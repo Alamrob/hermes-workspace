@@ -529,6 +529,23 @@ describe('broker application routes', () => {
     assert.equal('business_context' in mission, false)
   })
 
+  it('exposes an authenticated read-only kill-switch check for deterministic sidecars', async () => {
+    const state = setup()
+    const body = { mission_id: '11111111-1111-4111-8111-111111111111', channel: 'email' }
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/internal/v1/safety/kill-switch', body,
+    })).status, 401)
+    assert.deepEqual(await state.app.handle({
+      method: 'POST', path: '/internal/v1/safety/kill-switch',
+      headers: headers('internal-token'), body,
+    }), { status: 200, body: { active: false } })
+    await state.repository.activateKillSwitch('mission', body.mission_id)
+    assert.deepEqual(await state.app.handle({
+      method: 'POST', path: '/internal/v1/safety/kill-switch',
+      headers: headers('internal-token'), body,
+    }), { status: 200, body: { active: true } })
+  })
+
   it('exposes a minimal fail-closed human shadow gate only to the internal capability', async () => {
     const state = setup()
     state.repository.getShadowReview = async () => ({

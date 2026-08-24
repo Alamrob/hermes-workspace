@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import { DisabledExternalMailTransport } from '../src/disabled-transports.js'
 import {
   createBrokerExternalTransports,
+  createExternalActionBrokerClientFromEnvironment,
   createOpenCodeUsageProbeFromEnvironment,
 } from '../src/integration-factories.js'
 
@@ -26,6 +27,77 @@ describe('disabled-default integration factories', () => {
     assert.throws(
       () => createBrokerExternalTransports({ NODE_ENV: 'production', TELEGRAM_APPROVAL_ENABLED: 'true' }),
       /TELEGRAM_PORT_REQUIRED/,
+    )
+  })
+
+  it('constructs the sidecar client only from a distinct file-backed capability', async () => {
+    let reads = 0
+    const fetchImpl: typeof fetch = async (input, init) => {
+      assert.equal(String(input), 'http://external-action-broker:8091/internal/v1/mail/block-status')
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${'s'.repeat(64)}`)
+      return new Response(JSON.stringify({ blocked: false }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const client = createExternalActionBrokerClientFromEnvironment(
+      {
+        NODE_ENV: 'production',
+        HOSTINGER_MAIL_ENABLED: 'true',
+        EXTERNAL_ACTION_BROKER_URL: 'http://external-action-broker:8091',
+        EXTERNAL_ACTION_BROKER_BEARER_FILE: '/run/secrets/external-action-broker-bearer',
+        BROKER_INTERNAL_BEARER_FILE: '/run/secrets/broker-internal-bearer',
+      },
+      {
+        readBearer: async (path, gid) => {
+          reads += 1
+          assert.equal(path, '/run/secrets/external-action-broker-bearer')
+          assert.equal(gid, 10001)
+          return 's'.repeat(64)
+        },
+        fetch: fetchImpl,
+      },
+    )
+    assert.ok(client)
+    assert.equal(reads, 0)
+    assert.equal(await client.isBlocked({
+      mailbox: 'ventas@proptimiza.com',
+      recipient: 'contacto@proptimiza.com',
+    }), false)
+    assert.equal(reads, 1)
+  })
+
+  it('rejects raw, reused, missing and alternate sidecar authority', () => {
+    const enabled = {
+      NODE_ENV: 'production', HOSTINGER_MAIL_ENABLED: 'true',
+      EXTERNAL_ACTION_BROKER_URL: 'http://external-action-broker:8091',
+      EXTERNAL_ACTION_BROKER_BEARER_FILE: '/run/secrets/external-action-broker-bearer',
+      BROKER_INTERNAL_BEARER_FILE: '/run/secrets/broker-internal-bearer',
+    }
+    assert.throws(
+      () => createExternalActionBrokerClientFromEnvironment({
+        ...enabled, EXTERNAL_ACTION_BROKER_BEARER: 'raw-secret',
+      }),
+      /RAW_BEARER_FORBIDDEN/,
+    )
+    assert.throws(
+      () => createExternalActionBrokerClientFromEnvironment({
+        ...enabled,
+        EXTERNAL_ACTION_BROKER_BEARER_FILE: '/run/secrets/broker-internal-bearer',
+      }),
+      /SECRET_REUSE/,
+    )
+    assert.throws(
+      () => createExternalActionBrokerClientFromEnvironment({
+        ...enabled, EXTERNAL_ACTION_BROKER_BEARER_FILE: undefined,
+      }),
+      /BEARER_FILE_INVALID/,
+    )
+    assert.throws(
+      () => createExternalActionBrokerClientFromEnvironment({
+        ...enabled, EXTERNAL_ACTION_BROKER_URL: 'http://attacker.invalid:8091',
+      }),
+      /URL_INVALID/,
     )
   })
 

@@ -1,6 +1,7 @@
 import type { TelegramTransport } from './approvals.js'
 import { ProxyAgent, fetch as undiciFetch } from 'undici'
 import { DisabledExternalMailTransport } from './disabled-transports.js'
+import { ExternalActionBrokerClient } from './external-action-broker-client.js'
 import {
   FeatureGatedHostingerMailTransport,
   FeatureGatedTelegramApprovalTransport,
@@ -19,6 +20,8 @@ type Environment = Record<string, string | undefined>
 // executor supervisor or its child.
 export const OPENCODE_USAGE_SERVICE_GID = 10001
 export const OPENCODE_USAGE_PROXY_URL = 'http://egress-proxy:3128'
+export const EXTERNAL_ACTION_BROKER_SERVICE_GID = 10001
+export const EXTERNAL_ACTION_BROKER_URL = 'http://external-action-broker:8091'
 
 interface KillSwitchPort {
   isActive(input: { missionId: string; channel: string }): Promise<boolean>
@@ -27,6 +30,7 @@ interface KillSwitchPort {
 interface HostingerPort {
   isBlocked(input: { mailbox: string; recipient: string }): Promise<boolean>
   sendInternal(input: {
+    missionId: string
     mailbox: 'ventas@proptimiza.com'
     recipient: 'contacto@proptimiza.com'
     subject: string
@@ -114,6 +118,36 @@ export function createOpenCodeUsageProbeFromEnvironment(
   }
 }
 
+export function createExternalActionBrokerClientFromEnvironment(
+  environment: Environment,
+  dependencies: {
+    readBearer?: (path: string, expectedGid: number) => Promise<string>
+    fetch?: typeof fetch
+  } = {},
+): ExternalActionBrokerClient | undefined {
+  const hostingerEnabled = flag(environment, 'HOSTINGER_MAIL_ENABLED')
+  const telegramEnabled = flag(environment, 'TELEGRAM_APPROVAL_ENABLED')
+  if (!hostingerEnabled && !telegramEnabled) return undefined
+  if (environment.NODE_ENV !== 'production')
+    throw new Error('EXTERNAL_ACTION_BROKER_ENVIRONMENT_INVALID')
+  if (environment.EXTERNAL_ACTION_BROKER_BEARER?.trim())
+    throw new Error('EXTERNAL_ACTION_BROKER_RAW_BEARER_FORBIDDEN')
+  const bearerFile = externalActionSecretPath(
+    environment.EXTERNAL_ACTION_BROKER_BEARER_FILE,
+  )
+  if (bearerFile === environment.BROKER_INTERNAL_BEARER_FILE?.trim())
+    throw new Error('EXTERNAL_ACTION_BROKER_SECRET_REUSE')
+  const baseUrl = environment.EXTERNAL_ACTION_BROKER_URL?.trim()
+  if (baseUrl !== EXTERNAL_ACTION_BROKER_URL)
+    throw new Error('EXTERNAL_ACTION_BROKER_URL_INVALID')
+  const readBearer = dependencies.readBearer ?? readGroupSecretFile
+  return new ExternalActionBrokerClient({
+    baseUrl,
+    readBearer: () => readBearer(bearerFile, EXTERNAL_ACTION_BROKER_SERVICE_GID),
+    fetch: dependencies.fetch,
+  })
+}
+
 function createProxyFetch(proxyUrl: typeof OPENCODE_USAGE_PROXY_URL): typeof fetch {
   const dispatcher = new ProxyAgent(proxyUrl)
   return ((input: Parameters<typeof fetch>[0], init?: RequestInit) =>
@@ -134,5 +168,12 @@ function secretPath(value: string | undefined): string {
   const path = value?.trim()
   if (!path || !path.startsWith('/run/secrets/') || path.includes('..'))
     throw new Error('OPENCODE_USAGE_TOKEN_FILE_INVALID')
+  return path
+}
+
+function externalActionSecretPath(value: string | undefined): string {
+  const path = value?.trim()
+  if (!path || !path.startsWith('/run/secrets/') || path.includes('..'))
+    throw new Error('EXTERNAL_ACTION_BROKER_BEARER_FILE_INVALID')
   return path
 }

@@ -9,6 +9,7 @@ interface KillSwitchPort {
 interface HostingerMailPort {
   isBlocked(input: { mailbox: string; recipient: string }): Promise<boolean>
   sendInternal(input: {
+    missionId: string
     mailbox: 'ventas@proptimiza.com'
     recipient: 'contacto@proptimiza.com'
     subject: string
@@ -53,6 +54,7 @@ export class FeatureGatedHostingerMailTransport implements MailTransport {
     )
       throw new Error('HOSTINGER_RECIPIENT_BLOCKED')
     const receipt = await this.options.hostinger.sendInternal({
+      missionId: action.mission_id,
       mailbox: 'ventas@proptimiza.com',
       recipient: 'contacto@proptimiza.com',
       subject: action.subject,

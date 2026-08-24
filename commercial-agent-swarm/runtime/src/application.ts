@@ -165,6 +165,14 @@ export class BrokerApplication {
         body: await this.options.dispatchQueue.getMissionExecution(route.id!),
       }
     }
+    if (route.action === 'checkKillSwitch') {
+      requireBearer(request.headers?.authorization, this.options.authentication.internal)
+      const input = validateKillSwitchCheck(request.body)
+      return {
+        status: 200,
+        body: { active: await this.options.repository.isKillSwitchActive(input) },
+      }
+    }
     if (route.action === 'createAssignments') {
       requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
       const plan = validateAssignmentPlan(request.body)
@@ -414,6 +422,8 @@ function matchRoute(method: string, path: string): Route | null {
       auditAction: 'mission.execution.get',
       id: execution[1],
     }
+  if (method === 'POST' && path === '/internal/v1/safety/kill-switch')
+    return { action: 'checkKillSwitch', auditAction: 'safety.kill_switch.check' }
   const decision = /^\/v1\/approvals\/([^/]+)\/decision$/.exec(path)
   if (method === 'POST' && decision)
     return {
@@ -433,6 +443,18 @@ function missionIdFrom(request: ApplicationRequest): string | null {
 function redactMission(mission: Record<string, unknown>): Record<string, unknown> {
   const { authority: _authority, approval_token: _approvalToken, business_context: _context, ...safe } = mission
   return safe
+}
+
+function validateKillSwitchCheck(value: unknown): { missionId: string; channel: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new ValidationError(['kill switch check must be an object'])
+  const record = value as Record<string, unknown>
+  if (JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(['channel', 'mission_id']) ||
+      typeof record.mission_id !== 'string' ||
+      !/^(?:\*|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.test(record.mission_id) ||
+      typeof record.channel !== 'string' || !/^(?:email|telegram|internal|\*)$/.test(record.channel))
+    throw new ValidationError(['kill switch check is invalid'])
+  return { missionId: record.mission_id, channel: record.channel }
 }
 
 function assertInternalExecutionMission(
