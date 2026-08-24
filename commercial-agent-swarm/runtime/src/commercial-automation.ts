@@ -282,6 +282,7 @@ const WORKFLOWS: Workflow[] = [
 
 const MARKER = /^AUTOMATION_V1 mission=([0-9a-f-]{36}) workflow=([a-z0-9._-]+) state=dispatched sig=([0-9a-f]{64})$/
 const RESULT_MARKER = /^AUTOMATION_RESULT_V2 mission=([0-9a-f-]{36}) workflow=([a-z0-9._-]+) state=(review_ready|blocked) primary_sha256=([a-f0-9]{64}|missing) qa_sha256=([a-f0-9]{64}|missing) external_actions=0 sig=([0-9a-f]{64})$/
+const LEGACY_WORKFLOW_VERSION = 'commercial-v14'
 
 export class CommercialAutomation {
   private running = false
@@ -315,6 +316,11 @@ export class CommercialAutomation {
       if (issue.status === 'done' || issue.status === 'cancelled') continue
 
       const comments = await this.options.paperclip.listComments(issue.id)
+      if (
+        issue.identifier !== 'ALA-51' &&
+        this.workflowVersion !== LEGACY_WORKFLOW_VERSION &&
+        this.hasTerminalMarker(issue.id, comments, LEGACY_WORKFLOW_VERSION)
+      ) continue
       const marker = comments
         .filter((comment) => comment.authorType === 'system' || comment.authorType === 'user')
         .map((comment) => MARKER.exec(comment.body))
@@ -479,7 +485,7 @@ export class CommercialAutomation {
 
   private validResultMarker(issueId: string, match: RegExpExecArray): boolean {
     const expected = Buffer.from(
-      this.resultMarkerSignature(issueId, match[1], match[3] as 'review_ready' | 'blocked', match[4], match[5]),
+      this.resultMarkerSignature(issueId, match[1], match[3] as 'review_ready' | 'blocked', match[4], match[5], match[2]),
       'hex',
     )
     const actual = Buffer.from(match[6], 'hex')
@@ -492,10 +498,34 @@ export class CommercialAutomation {
     state: 'review_ready' | 'blocked',
     primarySha256: string,
     qaSha256: string,
+    workflowVersion = this.workflowVersion,
   ): string {
     return createHmac('sha256', this.options.authority.secret)
-      .update(`${issueId}\n${missionId}\n${this.workflowVersion}\n${state}\n${primarySha256}\n${qaSha256}`)
+      .update(`${issueId}\n${missionId}\n${workflowVersion}\n${state}\n${primarySha256}\n${qaSha256}`)
       .digest('hex')
+  }
+
+  private hasTerminalMarker(
+    issueId: string,
+    comments: PaperclipComment[],
+    workflowVersion: string,
+  ): boolean {
+    const trusted = comments.filter(
+      (comment) => comment.authorType === 'system' || comment.authorType === 'user',
+    )
+    const dispatches = trusted
+      .map((comment) => MARKER.exec(comment.body))
+      .filter((match): match is RegExpExecArray => Boolean(
+        match?.[2] === workflowVersion &&
+        this.validMarker(issueId, match[1], match[2], match[3]),
+      ))
+    return dispatches.some((dispatch) => trusted
+      .map((comment) => RESULT_MARKER.exec(comment.body))
+      .some((terminal) => Boolean(
+        terminal?.[1] === dispatch[1] &&
+        terminal[2] === workflowVersion &&
+        this.validResultMarker(issueId, terminal),
+      )))
   }
 
   private async reconcile(issue: PaperclipIssue, missionId: string): Promise<AutomationTickResult> {

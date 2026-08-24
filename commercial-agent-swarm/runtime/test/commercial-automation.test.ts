@@ -65,7 +65,12 @@ class BrokerFake implements BrokerAutomationPort {
   }
 }
 
-function automation(paperclip: PaperclipFake, broker: BrokerFake, mode: 'observe' | 'dispatch' = 'dispatch') {
+function automation(
+  paperclip: PaperclipFake,
+  broker: BrokerFake,
+  mode: 'observe' | 'dispatch' = 'dispatch',
+  workflowVersion?: string,
+) {
   return new CommercialAutomation({
     paperclip,
     broker,
@@ -77,6 +82,7 @@ function automation(paperclip: PaperclipFake, broker: BrokerFake, mode: 'observe
       secret: 'test-control-key-with-at-least-32-bytes',
     },
     now: () => new Date('2026-08-21T18:00:00.000Z'),
+    workflowVersion,
   })
 }
 
@@ -610,6 +616,25 @@ describe('Paperclip commercial automation', () => {
     assert.match(broker.plans[0].assignments[2].instruction, /9 COMPACT INTERNAL DECISIONS/)
     assert.match(broker.plans[0].assignments[3].instruction, /one to 3 slots/)
     assert.match(broker.plans[0].assignments[0].instruction, /POST-HUMAN-GATE ACCOUNT DISCOVERY/)
+  })
+
+  it('honors signed v14 terminal history while allowing only ALA-51 to recover under v15', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-37', 'backlog'), issue('ALA-51', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const legacy = automation(paperclip, broker, 'dispatch', 'commercial-v14')
+    const oldDispatch = await legacy.tick()
+    assert.equal(oldDispatch.issue, 'ALA-37')
+    broker.execution = { mission_id: oldDispatch.mission_id!, status: 'failed', assignments: [] }
+    assert.equal((await legacy.tick()).status, 'blocked')
+
+    broker.execution = null
+    broker.gateEligible = true
+    const recovered = await automation(paperclip, broker).tick()
+    assert.equal(recovered.status, 'dispatched')
+    assert.equal(recovered.issue, 'ALA-51')
+    assert.equal(broker.orders.at(-1)?.metadata?.workflow_version, 'commercial-v15')
   })
 
   it('dispatches ALA-52 only from signed completed ALA-51 evidence and keeps every draft internal and ineligible', async () => {
