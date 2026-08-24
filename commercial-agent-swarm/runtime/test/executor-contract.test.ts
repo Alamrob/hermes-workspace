@@ -111,6 +111,31 @@ describe('closed executor contracts', () => {
       )
   })
 
+  it('builds a closed dynamic account-candidate prompt with a fixed maximum and country', () => {
+    const instruction =
+      'RUNTIME_OUTPUT_CONTRACT_JSON={"type":"account_candidate_batch_v1","maximum_accounts":10,"country":"CL"}\nDiscover a bounded cohort.'
+    assert.deepEqual(parseRuntimeOutputContract(instruction), {
+      type: 'account_candidate_batch_v1',
+      maximum_accounts: 10,
+      country: 'CL',
+    })
+    const prompt = buildHermesPrompt({ ...request, instruction })
+    assert.match(prompt, /at most ten distinct Chilean B2B service-company candidates/)
+    assert.match(prompt, /Never reuse a corporate domain/)
+    assert.match(prompt, /"type":"account_candidate_batch_v1"/)
+    assert.doesNotMatch(prompt, /NESTED_ITEM_CONTRACTS_JSON/)
+
+    for (const malformed of [
+      'RUNTIME_OUTPUT_CONTRACT_JSON={"type":"account_candidate_batch_v1","maximum_accounts":11,"country":"CL"}\nTask',
+      'RUNTIME_OUTPUT_CONTRACT_JSON={"type":"account_candidate_batch_v1","maximum_accounts":10,"country":"US"}\nTask',
+      'RUNTIME_OUTPUT_CONTRACT_JSON={"type":"account_candidate_batch_v1","maximum_accounts":10,"country":"CL","extra":true}\nTask',
+    ])
+      assert.throws(
+        () => parseRuntimeOutputContract(malformed),
+        /RUNTIME_OUTPUT_CONTRACT_INVALID/,
+      )
+  })
+
   it('accepts only trusted Hermes usage and preserves unknown monetary cost', () => {
     const usage = validateHermesUsage(
       {

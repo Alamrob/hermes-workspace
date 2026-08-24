@@ -603,6 +603,7 @@ describe('Paperclip commercial automation', () => {
       broker.plans[0].assignments.map((assignment) => assignment.profile_id),
       ['market-account-intelligence', 'contact-data-steward', 'qualification-prioritization', 'commercial-qa-compliance'],
     )
+    assert.match(broker.plans[0].assignments[0].instruction, /^RUNTIME_OUTPUT_CONTRACT_JSON=\{"type":"account_candidate_batch_v1","maximum_accounts":10,"country":"CL"\}/)
     assert.match(broker.plans[0].assignments[0].instruction, /POST-HUMAN-GATE ACCOUNT DISCOVERY/)
   })
 

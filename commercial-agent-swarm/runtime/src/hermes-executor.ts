@@ -34,6 +34,7 @@ import {
   EXECUTOR_NO_PROXY,
 } from './runtime-config.js'
 import type {
+  AccountCandidateBatchContract,
   ExecuteInput,
   MarketObservationShardContract,
   ProfileId,
@@ -372,13 +373,21 @@ export class HermesExecutor implements ExecutorPort {
           request.instruction,
         )
         const rawResult = runtimeOutputContract
-          ? adaptMarketObservationShard(
-              parseBoundedCompactModelJson(output.stdout),
-              runtimeOutputContract,
-              input,
-              startedAt,
-              finishedAt,
-            )
+          ? runtimeOutputContract.type === 'market_observation_shard_v1'
+            ? adaptMarketObservationShard(
+                parseBoundedCompactModelJson(output.stdout),
+                runtimeOutputContract,
+                input,
+                startedAt,
+                finishedAt,
+              )
+            : adaptAccountCandidateBatch(
+                parseBoundedCompactModelJson(output.stdout),
+                runtimeOutputContract,
+                input,
+                startedAt,
+                finishedAt,
+              )
           : parseStrictModelJson(output.stdout)
         agentResult = reconcileAgentResult(
           rawResult,
@@ -393,7 +402,8 @@ export class HermesExecutor implements ExecutorPort {
         if (
           !RESULT_VALIDATION_FAILURES.has(code) &&
           !code.startsWith('INVALID_AGENT_RESULT_') &&
-          !code.startsWith('INVALID_MARKET_SHARD_')
+          !code.startsWith('INVALID_MARKET_SHARD_') &&
+          !code.startsWith('INVALID_ACCOUNT_BATCH_')
         )
           throw error
         // Usage is already trusted and priced at this boundary. Return a
@@ -607,6 +617,142 @@ export function adaptMarketObservationShard(
     recommended_next_actions: [],
     started_at: startedAt,
     finished_at: finishedAt,
+  }
+}
+
+export function adaptAccountCandidateBatch(
+  value: unknown,
+  contract: AccountCandidateBatchContract,
+  input: ExecuteInput,
+  startedAt: string,
+  finishedAt: string,
+): AgentResult {
+  if (
+    input.profile_id !== 'market-account-intelligence' ||
+    !recordWithExactKeys(value, ['status', 'accounts']) ||
+    !['completed', 'partial'].includes(String(value.status)) ||
+    !Array.isArray(value.accounts) ||
+    value.accounts.length < 1 ||
+    value.accounts.length > contract.maximum_accounts
+  )
+    throw new Error('INVALID_ACCOUNT_BATCH_TOP_LEVEL')
+
+  const domains = new Set<string>()
+  const candidates = value.accounts.map((entry, index) => {
+    if (
+      !recordWithExactKeys(entry, [
+        'slot',
+        'url',
+        'state',
+        'company',
+        'chile_relevance',
+        'b2b_service',
+        'headcount_evidence',
+        'conflicts',
+        'confidence',
+      ]) ||
+      entry.slot !== index + 1 ||
+      !validCandidateUrl(entry.url) ||
+      !['observed', 'unresolved'].includes(String(entry.state)) ||
+      !safeMarketText(entry.company, 160) ||
+      !safeMarketText(entry.chile_relevance, 500) ||
+      !safeMarketText(entry.b2b_service, 500) ||
+      !safeMarketText(entry.headcount_evidence, 500) ||
+      !safeMarketText(entry.conflicts, 500) ||
+      typeof entry.confidence !== 'number' ||
+      !Number.isFinite(entry.confidence) ||
+      entry.confidence < 0 ||
+      entry.confidence > 1 ||
+      (entry.state === 'unresolved' && entry.confidence > 0.5)
+    )
+      throw new Error('INVALID_ACCOUNT_BATCH_ACCOUNT')
+    const url = new URL(entry.url as string)
+    const domain = url.hostname.toLowerCase().replace(/^www\./, '')
+    if (domains.has(domain)) throw new Error('INVALID_ACCOUNT_BATCH_DUPLICATE')
+    domains.add(domain)
+    return {
+      slot: index + 1,
+      url: entry.url as string,
+      state: entry.state as 'observed' | 'unresolved',
+      company: entry.company as string,
+      chileRelevance: entry.chile_relevance as string,
+      b2bService: entry.b2b_service as string,
+      headcountEvidence: entry.headcount_evidence as string,
+      conflicts: entry.conflicts as string,
+      confidence: entry.confidence as number,
+    }
+  })
+  const hasUnresolved = candidates.some((item) => item.state === 'unresolved')
+  if (
+    (value.status === 'completed' &&
+      (candidates.length !== contract.maximum_accounts || hasUnresolved)) ||
+    (value.status === 'partial' &&
+      candidates.length === contract.maximum_accounts && !hasUnresolved)
+  )
+    throw new Error('INVALID_ACCOUNT_BATCH_STATUS')
+
+  const summary = [
+    ...candidates.map(
+      (item) =>
+        `${item.slot}. ${item.company} | ${item.url} | state=${item.state} | chile_relevance=${item.chileRelevance} | b2b_service=${item.b2bService} | headcount_evidence=${item.headcountEvidence} | conflicts=${item.conflicts} | obtained_at=${finishedAt} | verification_method=public_web | confidence=${item.confidence}`,
+    ),
+    'Coverage is a bounded, non-exhaustive post-human-gate cohort. No account is eligible for outreach.',
+  ].join('\n')
+  if (summary.length > 32_000)
+    throw new Error('INVALID_ACCOUNT_BATCH_SUMMARY')
+  return {
+    mission_id: input.mission_id,
+    trace_id: input.trace_id,
+    assignment_id: input.assignment_id,
+    agent_id: input.profile_id,
+    status: value.status as 'completed' | 'partial',
+    summary,
+    facts: [],
+    inferences: [],
+    actions_taken: [],
+    external_changes: [],
+    evidence: [],
+    artifacts: [],
+    metrics: {
+      runtime_output_adapter: 'account_candidate_batch_v1',
+      accounts_reviewed: candidates.length,
+      unresolved_accounts: candidates.filter((item) => item.state === 'unresolved').length,
+      duplicate_domains: 0,
+      eligible_for_outreach: 0,
+      external_actions: 0,
+    },
+    cost: {
+      currency: 'USD',
+      llm: 0,
+      tools: 0,
+      total: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+    },
+    errors: [],
+    risks: [],
+    pending_approvals: [],
+    recommended_next_actions: [],
+    started_at: startedAt,
+    finished_at: finishedAt,
+  }
+}
+
+function validCandidateUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 2_000) return false
+  try {
+    const url = new URL(value)
+    return (
+      url.protocol === 'https:' &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      url.hostname.includes('.') &&
+      (url.pathname === '/' || url.pathname === '')
+    )
+  } catch {
+    return false
   }
 }
 
