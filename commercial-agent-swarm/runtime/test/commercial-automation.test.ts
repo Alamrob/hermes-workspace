@@ -486,6 +486,44 @@ describe('Paperclip commercial automation', () => {
     assert.match(qa.instruction, /eligible_for_outreach=0/)
   })
 
+  it('continues from terminal ALA-48 to strict-output ALA-49 without expanding authority or budgets', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-48', 'backlog'), issue('ALA-49', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const service = automation(paperclip, broker)
+    const first = await service.tick()
+    assert.equal(first.issue, 'ALA-48')
+    broker.execution = { mission_id: first.mission_id!, status: 'failed', assignments: [] }
+    assert.equal((await service.tick()).status, 'blocked')
+    broker.execution = null
+
+    const successor = await service.tick()
+    assert.equal(successor.status, 'dispatched')
+    assert.equal(successor.issue, 'ALA-49')
+    assert.equal(broker.orders.at(-1)?.idempotency_key, 'paperclip:ALA-49:commercial-v14')
+    const order = broker.orders.at(-1) as any
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.budget_limit.maximum, 0.5)
+    assert.equal(order.volume_limits.maximum_accounts, 10)
+    assert.equal(order.volume_limits.maximum_contacts, 0)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    assert.equal(order.contact_policy.contact_permitted, false)
+    assert.equal(order.dry_run, true)
+
+    const assignments = broker.plans.at(-1)!.assignments
+    assert.equal(assignments.length, 5)
+    assert.ok(assignments.every((assignment) => assignment.maximum_tokens === 75_000))
+    assert.ok(assignments.every((assignment) => assignment.usage_value_reservation_usd === 0.1))
+    assert.ok(assignments.every((assignment) => assignment.max_attempts === 1))
+    for (const assignment of assignments.slice(0, 4)) {
+      assert.match(assignment.instruction, /facts, inferences, actions_taken, external_changes, evidence, artifacts, errors, risks and pending_approvals properties MUST each be the literal empty array \[\]/)
+      assert.match(assignment.instruction, /very first output character MUST be \{/)
+      assert.match(assignment.instruction, /very last output character MUST be \}/)
+      assert.match(assignment.instruction, /exactly one JSON object/)
+    }
+  })
+
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),
