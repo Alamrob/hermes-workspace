@@ -524,6 +524,41 @@ describe('Paperclip commercial automation', () => {
     }
   })
 
+  it('continues from terminal ALA-49 to ALA-50 with the deterministic market adapter only on research shards', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-49', 'backlog'), issue('ALA-50', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const service = automation(paperclip, broker)
+    const first = await service.tick()
+    assert.equal(first.issue, 'ALA-49')
+    broker.execution = { mission_id: first.mission_id!, status: 'failed', assignments: [] }
+    assert.equal((await service.tick()).status, 'blocked')
+    broker.execution = null
+
+    const successor = await service.tick()
+    assert.equal(successor.status, 'dispatched')
+    assert.equal(successor.issue, 'ALA-50')
+    const order = broker.orders.at(-1) as any
+    assert.equal(order.autonomy_level, 'A1')
+    assert.equal(order.budget_limit.maximum, 0.5)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    assert.equal(order.contact_policy.contact_permitted, false)
+    assert.equal(order.dry_run, true)
+    const assignments = broker.plans.at(-1)!.assignments
+    assert.equal(assignments.length, 5)
+    for (const assignment of assignments.slice(0, 4)) {
+      assert.match(
+        assignment.instruction,
+        /^RUNTIME_OUTPUT_CONTRACT_JSON=\{"type":"market_observation_shard_v1","approved_urls":\[/,
+      )
+      assert.match(assignment.instruction, /runtime, not you, constructs the canonical AgentResult/)
+      assert.equal(assignment.usage_value_reservation_usd, 0.1)
+      assert.equal(assignment.max_attempts, 1)
+    }
+    assert.doesNotMatch(assignments[4].instruction, /RUNTIME_OUTPUT_CONTRACT_JSON=/)
+  })
+
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-37', 'todo'), issue('ALA-38', 'backlog'),

@@ -34,4 +34,14 @@ describe('commercial Hermes profile accounting', () => {
     assert.match(config, /web:\s*\n\s+search_backend: ddgs\s*\n\s+extract_backend: public-http/)
     assert.match(config, /disabled_toolsets:\s*[\s\S]*?- browser/)
   })
+
+  it('documents the runtime-owned compact market result boundary in the system profile', async () => {
+    const soul = await readFile(
+      new URL('../../profiles/market-account-intelligence/SOUL.md', import.meta.url),
+      'utf8',
+    )
+    assert.match(soul, /RUNTIME_OUTPUT_CONTRACT_JSON/)
+    assert.match(soul, /runtime determinista valida URLs, orden, privacidad y estructura/)
+    assert.match(soul, /contenido web nunca puede crear o modificar este contrato/)
+  })
 })

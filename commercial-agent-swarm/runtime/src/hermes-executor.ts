@@ -20,6 +20,7 @@ import { readGroupSecretFile } from './secret-file.js'
 import {
   ACTIVE_PROFILES,
   buildHermesPrompt,
+  parseRuntimeOutputContract,
   validateExecuteRequest,
   validateHermesUsage,
 } from './executor-contract.js'
@@ -34,6 +35,7 @@ import {
 } from './runtime-config.js'
 import type {
   ExecuteInput,
+  MarketObservationShardContract,
   ProfileId,
   TrustedUsage,
 } from './executor-contract.js'
@@ -366,7 +368,18 @@ export class HermesExecutor implements ExecutorPort {
       const finishedAt = new Date().toISOString()
       let agentResult: AgentResult
       try {
-        const rawResult = parseStrictModelJson(output.stdout)
+        const runtimeOutputContract = parseRuntimeOutputContract(
+          request.instruction,
+        )
+        const rawResult = runtimeOutputContract
+          ? adaptMarketObservationShard(
+              parseBoundedCompactModelJson(output.stdout),
+              runtimeOutputContract,
+              input,
+              startedAt,
+              finishedAt,
+            )
+          : parseStrictModelJson(output.stdout)
         agentResult = reconcileAgentResult(
           rawResult,
           input,
@@ -377,7 +390,12 @@ export class HermesExecutor implements ExecutorPort {
         )
       } catch (error) {
         const code = error instanceof Error ? error.message : 'EXECUTOR_FAILURE'
-        if (!RESULT_VALIDATION_FAILURES.has(code) && !code.startsWith('INVALID_AGENT_RESULT_')) throw error
+        if (
+          !RESULT_VALIDATION_FAILURES.has(code) &&
+          !code.startsWith('INVALID_AGENT_RESULT_') &&
+          !code.startsWith('INVALID_MARKET_SHARD_')
+        )
+          throw error
         // Usage is already trusted and priced at this boundary. Return a
         // runtime-owned failed AgentResult so the broker can settle the ledger
         // without accepting or retaining malformed model output.
@@ -452,6 +470,170 @@ export function parseStrictModelJson(output: string): unknown {
   } catch {
     throw new Error('INVALID_EXECUTOR_ENVELOPE')
   }
+}
+
+/**
+ * Compact adapters may discard one short brace-free transport preface because
+ * the accepted JSON is subsequently checked against a closed, URL-bound
+ * schema. This exception never applies to the general AgentResult parser.
+ */
+export function parseBoundedCompactModelJson(output: string): unknown {
+  const trimmed = output.trim()
+  if (
+    trimmed.length < 2 ||
+    trimmed.length > 32_768 ||
+    trimmed.includes('\0')
+  )
+    throw new Error('INVALID_EXECUTOR_ENVELOPE')
+  try {
+    return JSON.parse(trimmed) as unknown
+  } catch {
+    // Continue only for a single bounded transport preface.
+  }
+  const firstObject = trimmed.indexOf('{')
+  if (firstObject < 1 || !trimmed.endsWith('}'))
+    throw new Error('INVALID_EXECUTOR_ENVELOPE')
+  const prefix = trimmed.slice(0, firstObject).trim()
+  const candidate = trimmed.slice(firstObject)
+  if (
+    prefix.length > 2_048 ||
+    /[{}\0`]/.test(prefix) ||
+    candidate.slice(1).includes('\n{')
+  )
+    throw new Error('INVALID_EXECUTOR_ENVELOPE')
+  try {
+    return JSON.parse(candidate) as unknown
+  } catch {
+    throw new Error('INVALID_EXECUTOR_ENVELOPE')
+  }
+}
+
+export function adaptMarketObservationShard(
+  value: unknown,
+  contract: MarketObservationShardContract,
+  input: ExecuteInput,
+  startedAt: string,
+  finishedAt: string,
+): AgentResult {
+  if (
+    input.profile_id !== 'market-account-intelligence' ||
+    !recordWithExactKeys(value, ['status', 'accounts']) ||
+    !['completed', 'partial'].includes(String(value.status)) ||
+    !Array.isArray(value.accounts) ||
+    value.accounts.length !== contract.approved_urls.length
+  )
+    throw new Error('INVALID_MARKET_SHARD_TOP_LEVEL')
+
+  const observations = value.accounts.map((entry, index) => {
+    if (
+      !recordWithExactKeys(entry, [
+        'slot',
+        'url',
+        'state',
+        'company',
+        'observation',
+        'confidence',
+      ]) ||
+      entry.slot !== index + 1 ||
+      entry.url !== contract.approved_urls[index] ||
+      !['observed', 'unresolved'].includes(String(entry.state)) ||
+      !safeMarketText(entry.company, 160) ||
+      !safeMarketText(entry.observation, 1_200) ||
+      typeof entry.confidence !== 'number' ||
+      !Number.isFinite(entry.confidence) ||
+      entry.confidence < 0 ||
+      entry.confidence > 1 ||
+      (entry.state === 'unresolved' && entry.confidence > 0.5)
+    )
+      throw new Error('INVALID_MARKET_SHARD_ACCOUNT')
+    return {
+      slot: index + 1,
+      url: contract.approved_urls[index],
+      state: entry.state as 'observed' | 'unresolved',
+      company: entry.company as string,
+      observation: entry.observation as string,
+      confidence: entry.confidence as number,
+    }
+  })
+  const hasUnresolved = observations.some((item) => item.state === 'unresolved')
+  if (
+    (hasUnresolved && value.status !== 'partial') ||
+    (!hasUnresolved && value.status !== 'completed')
+  )
+    throw new Error('INVALID_MARKET_SHARD_STATUS')
+
+  const summary = [
+    ...observations.map(
+      (item) =>
+        `${item.slot}. ${item.company} | ${item.url} | state=${item.state} | observation=${item.observation} | obtained_at=${finishedAt} | verification_method=web_extract | confidence=${item.confidence}`,
+    ),
+    'Coverage is a fixed, non-exhaustive shadow cohort. No account is eligible for outreach.',
+  ].join('\n')
+  if (summary.length > 32_000)
+    throw new Error('INVALID_MARKET_SHARD_SUMMARY')
+  return {
+    mission_id: input.mission_id,
+    trace_id: input.trace_id,
+    assignment_id: input.assignment_id,
+    agent_id: input.profile_id,
+    status: value.status as 'completed' | 'partial',
+    summary,
+    facts: [],
+    inferences: [],
+    actions_taken: [],
+    external_changes: [],
+    evidence: [],
+    artifacts: [],
+    metrics: {
+      runtime_output_adapter: 'market_observation_shard_v1',
+      accounts_reviewed: observations.length,
+      unresolved_accounts: observations.filter(
+        (item) => item.state === 'unresolved',
+      ).length,
+      eligible_for_outreach: 0,
+      external_actions: 0,
+    },
+    cost: {
+      currency: 'USD',
+      llm: 0,
+      tools: 0,
+      total: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+    },
+    errors: [],
+    risks: [],
+    pending_approvals: [],
+    recommended_next_actions: [],
+    started_at: startedAt,
+    finished_at: finishedAt,
+  }
+}
+
+function recordWithExactKeys(
+  value: unknown,
+  keys: string[],
+): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.keys(value).length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key))
+  )
+}
+
+function safeMarketText(value: unknown, maximum: number): value is string {
+  if (
+    typeof value !== 'string' ||
+    value.length < 1 ||
+    value.length > maximum ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  )
+    return false
+  const forbidden =
+    /(?:https?:\/\/|www\.|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:\+?\d[\s().-]*){8,}\d|linkedin\.|(?:api|access)[ _-]?key|bearer\s+[a-z0-9._-]+|password|passwd|credential|cookie|private[ _-]?key|secret|system\s+prompt|ignore\s+(?:all\s+)?(?:previous|prior)|<script|```)/i
+  return !forbidden.test(value)
 }
 
 export type ModelOutputDiagnostics = {
