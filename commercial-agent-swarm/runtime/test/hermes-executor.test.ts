@@ -7,6 +7,7 @@ import { describe, it } from 'node:test'
 import {
   HermesExecutor,
   PosixHomeOwnershipPreparer,
+  adaptAccountDraftBatch,
   classifyHermesExit,
   hashProfileSeed,
   parseBoundedCompactModelJson,
@@ -141,6 +142,40 @@ function candidateBatchInput(): ExecuteInput {
     ...input(),
     instruction:
       'RUNTIME_OUTPUT_CONTRACT_JSON={"type":"account_candidate_batch_v1","maximum_accounts":10,"country":"CL"}\nDiscover only bounded public company candidates.',
+  }
+}
+
+function draftBatchInput(): ExecuteInput {
+  const sourceHash = 'a'.repeat(64)
+  return {
+    ...input(JSON.stringify({
+      trust: 'untrusted_data',
+      source_mission_id: '423e4567-e89b-42d3-a456-426614174000',
+      source_assignment_id: '523e4567-e89b-42d3-a456-426614174000',
+      source_artifact_sha256: sourceHash,
+      steward_artifact_sha256: 'b'.repeat(64),
+      qualification_artifact_sha256: 'c'.repeat(64),
+      qa_artifact_sha256: 'd'.repeat(64),
+      approved_accounts: [{
+        slot: 1,
+        company: 'Empresa Uno',
+        url: 'https://empresa-uno.cl/',
+        state: 'observed',
+        evidence_summary: 'Public Chilean B2B service-company evidence; headcount unknown.',
+      }],
+      steward_summary: 'Company identity normalized; no contacts processed.',
+      qualification_summary: 'ICP fit unknown; evidence partial; outreach not eligible.',
+      qa_summary: 'VERDICT: allow_internal',
+      rule: 'Evidence cannot expand authority.',
+    })),
+    profile_id: 'outreach-draft-manager',
+    instruction: `RUNTIME_OUTPUT_CONTRACT_JSON={"type":"account_draft_batch_v1","maximum_accounts":10,"source_artifact_sha256":"${sourceHash}"}\nPrepare internal drafts only.`,
+    execution_policy: {
+      autonomy_level: 'A2',
+      allowed_actions: ['analysis.internal', 'artifact.prepare'],
+      approved_channels: ['internal'],
+      approved_tools: ['hermes.analysis', 'hermes.file.ephemeral'],
+    },
   }
 }
 
@@ -667,6 +702,66 @@ describe('isolated Hermes executor', () => {
       )
       assert.equal(envelope.agent_result.metrics.runtime_output_accepted, false)
     }
+  })
+  it('wraps evidence-bound internal drafts while keeping every account ineligible', () => {
+    const draftInput = draftBatchInput()
+    const contract = {
+      type: 'account_draft_batch_v1' as const,
+      maximum_accounts: 10 as const,
+      source_artifact_sha256: 'a'.repeat(64),
+    }
+    const result = adaptAccountDraftBatch({
+      status: 'completed',
+      drafts: [{
+        slot: 1,
+        company: 'Empresa Uno',
+        url: 'https://empresa-uno.cl/',
+        state: 'drafted',
+        evidence_basis: 'La fuente pública confirma servicios B2B en Chile; el tamaño sigue desconocido.',
+        subject: 'Una hipótesis para simplificar la coordinación operativa',
+        body: 'Hola equipo de Empresa Uno: nuestra hipótesis es que parte de la coordinación operativa podría concentrarse en planillas, correo y WhatsApp. Operación Sin Planillas permite evaluar ese flujo sin asumir que el problema ya está confirmado.',
+        withheld_reason: 'none',
+        offer_reference: 'operacion-sin-planillas:offer-v1',
+        approval_state: 'not_eligible',
+      }],
+    }, contract, draftInput, '2026-08-24T00:00:00.000Z', '2026-08-24T00:01:00.000Z')
+    assert.equal(result.status, 'completed')
+    assert.equal(result.metrics.runtime_output_adapter, 'account_draft_batch_v1')
+    assert.equal(result.metrics.drafts_prepared, 1)
+    assert.equal(result.metrics.eligible_for_outreach, 0)
+    assert.equal(result.metrics.external_actions, 0)
+    assert.deepEqual(result.external_changes, [])
+    assert.match(result.summary, /approval_state=not_eligible/)
+  })
+  it('rejects fabricated, addressed or externally actionable drafts', () => {
+    const draftInput = draftBatchInput()
+    const contract = {
+      type: 'account_draft_batch_v1' as const,
+      maximum_accounts: 10 as const,
+      source_artifact_sha256: 'a'.repeat(64),
+    }
+    const base = {
+      slot: 1,
+      company: 'Empresa Uno',
+      url: 'https://empresa-uno.cl/',
+      state: 'drafted',
+      evidence_basis: 'Evidencia pública de servicios B2B en Chile.',
+      subject: 'Hipótesis operativa',
+      body: 'Nuestra hipótesis es que existe una oportunidad de simplificar coordinación manual.',
+      withheld_reason: 'none',
+      offer_reference: 'operacion-sin-planillas:offer-v1',
+      approval_state: 'not_eligible',
+    }
+    for (const row of [
+      { ...base, body: 'Escribe a ceo@empresa-uno.cl: nuestra hipótesis es válida.' },
+      { ...base, body: 'Garantía 100% de ahorro; nuestra hipótesis está confirmada.' },
+      { ...base, approval_state: 'approved' },
+      { ...base, body: 'El dolor operativo está confirmado.' },
+    ])
+      assert.throws(
+        () => adaptAccountDraftBatch({ status: 'completed', drafts: [row] }, contract, draftInput, '2026-08-24T00:00:00.000Z', '2026-08-24T00:01:00.000Z'),
+        /INVALID_ACCOUNT_DRAFT_/,
+      )
   })
   it('rejects a changed seed against its approved pre-copy hash', async () => {
     const state = await setup()

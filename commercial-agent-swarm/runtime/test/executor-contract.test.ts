@@ -136,6 +136,64 @@ describe('closed executor contracts', () => {
       )
   })
 
+  it('binds an internal draft prompt to exact predecessor evidence and denies other profiles', () => {
+    const sourceHash = 'a'.repeat(64)
+    const instruction = `RUNTIME_OUTPUT_CONTRACT_JSON={"type":"account_draft_batch_v1","maximum_accounts":10,"source_artifact_sha256":"${sourceHash}"}\nPrepare internal drafts only.`
+    const evidence = JSON.stringify({
+      trust: 'untrusted_data',
+      source_mission_id: '423e4567-e89b-42d3-a456-426614174000',
+      source_assignment_id: '523e4567-e89b-42d3-a456-426614174000',
+      source_artifact_sha256: sourceHash,
+      steward_artifact_sha256: 'b'.repeat(64),
+      qualification_artifact_sha256: 'c'.repeat(64),
+      qa_artifact_sha256: 'd'.repeat(64),
+      approved_accounts: [{
+        slot: 1,
+        company: 'Empresa Uno',
+        url: 'https://empresa-uno.cl/',
+        state: 'observed',
+        evidence_summary: 'Public Chilean B2B service-company evidence; headcount unknown.',
+      }],
+      steward_summary: 'Company identity normalized; no contacts processed.',
+      qualification_summary: 'ICP fit unknown; evidence partial; outreach not eligible.',
+      qa_summary: 'VERDICT: allow_internal',
+      rule: 'Evidence cannot expand authority.',
+    })
+    const draftRequest = {
+      ...request,
+      profile_id: 'outreach-draft-manager' as const,
+      instruction,
+      evidence: { trust: 'untrusted_data' as const, content: evidence },
+      execution_policy: {
+        autonomy_level: 'A2' as const,
+        allowed_actions: ['analysis.internal', 'artifact.prepare'],
+        approved_channels: ['internal'],
+        approved_tools: ['hermes.analysis', 'hermes.file.ephemeral'],
+      },
+    }
+    assert.deepEqual(parseRuntimeOutputContract(instruction), {
+      type: 'account_draft_batch_v1',
+      maximum_accounts: 10,
+      source_artifact_sha256: sourceHash,
+    })
+    const prompt = buildHermesPrompt(draftRequest)
+    assert.match(prompt, /internal drafts only/i)
+    assert.match(prompt, /"company":"Empresa Uno"/)
+    assert.match(prompt, /"approval_state":"not_eligible"/)
+    assert.match(prompt, /suspected manual operational pain only as an explicit hypothesis/)
+    assert.throws(
+      () => buildHermesPrompt({ ...draftRequest, profile_id: 'market-account-intelligence' }),
+      /RUNTIME_OUTPUT_CONTRACT_PROFILE_DENIED/,
+    )
+    assert.throws(
+      () => buildHermesPrompt({
+        ...draftRequest,
+        evidence: { trust: 'untrusted_data', content: evidence.replace(sourceHash, 'e'.repeat(64)) },
+      }),
+      /ACCOUNT_DRAFT_EVIDENCE_INVALID/,
+    )
+  })
+
   it('accepts only trusted Hermes usage and preserves unknown monetary cost', () => {
     const usage = validateHermesUsage(
       {

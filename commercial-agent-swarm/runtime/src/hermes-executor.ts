@@ -20,6 +20,7 @@ import { readGroupSecretFile } from './secret-file.js'
 import {
   ACTIVE_PROFILES,
   buildHermesPrompt,
+  parseAccountDraftEvidence,
   parseRuntimeOutputContract,
   validateExecuteRequest,
   validateHermesUsage,
@@ -35,6 +36,7 @@ import {
 } from './runtime-config.js'
 import type {
   AccountCandidateBatchContract,
+  AccountDraftBatchContract,
   ExecuteInput,
   MarketObservationShardContract,
   ProfileId,
@@ -372,22 +374,33 @@ export class HermesExecutor implements ExecutorPort {
         const runtimeOutputContract = parseRuntimeOutputContract(
           request.instruction,
         )
+        const compactOutput = runtimeOutputContract
+          ? parseBoundedCompactModelJson(output.stdout)
+          : null
         const rawResult = runtimeOutputContract
           ? runtimeOutputContract.type === 'market_observation_shard_v1'
             ? adaptMarketObservationShard(
-                parseBoundedCompactModelJson(output.stdout),
+                compactOutput,
                 runtimeOutputContract,
                 input,
                 startedAt,
                 finishedAt,
               )
-            : adaptAccountCandidateBatch(
-                parseBoundedCompactModelJson(output.stdout),
-                runtimeOutputContract,
-                input,
-                startedAt,
-                finishedAt,
-              )
+            : runtimeOutputContract.type === 'account_candidate_batch_v1'
+              ? adaptAccountCandidateBatch(
+                  compactOutput,
+                  runtimeOutputContract,
+                  input,
+                  startedAt,
+                  finishedAt,
+                )
+              : adaptAccountDraftBatch(
+                  compactOutput,
+                  runtimeOutputContract,
+                  input,
+                  startedAt,
+                  finishedAt,
+                )
           : parseStrictModelJson(output.stdout)
         agentResult = reconcileAgentResult(
           rawResult,
@@ -403,7 +416,9 @@ export class HermesExecutor implements ExecutorPort {
           !RESULT_VALIDATION_FAILURES.has(code) &&
           !code.startsWith('INVALID_AGENT_RESULT_') &&
           !code.startsWith('INVALID_MARKET_SHARD_') &&
-          !code.startsWith('INVALID_ACCOUNT_BATCH_')
+          !code.startsWith('INVALID_ACCOUNT_BATCH_') &&
+          !code.startsWith('INVALID_ACCOUNT_DRAFT_') &&
+          !code.startsWith('ACCOUNT_DRAFT_EVIDENCE_')
         )
           throw error
         // Usage is already trusted and priced at this boundary. Return a
@@ -738,6 +753,130 @@ export function adaptAccountCandidateBatch(
   }
 }
 
+export function adaptAccountDraftBatch(
+  value: unknown,
+  contract: AccountDraftBatchContract,
+  input: ExecuteInput,
+  startedAt: string,
+  finishedAt: string,
+): AgentResult {
+  const evidence = parseAccountDraftEvidence(input.evidence.content, contract)
+  if (
+    input.profile_id !== 'outreach-draft-manager' ||
+    !recordWithExactKeys(value, ['status', 'drafts']) ||
+    !['completed', 'partial'].includes(String(value.status)) ||
+    !Array.isArray(value.drafts) ||
+    value.drafts.length !== evidence.approved_accounts.length
+  )
+    throw new Error('INVALID_ACCOUNT_DRAFT_TOP_LEVEL')
+
+  const drafts = value.drafts.map((entry, index) => {
+    const approved = evidence.approved_accounts[index]
+    if (
+      !recordWithExactKeys(entry, [
+        'slot',
+        'company',
+        'url',
+        'state',
+        'evidence_basis',
+        'subject',
+        'body',
+        'withheld_reason',
+        'offer_reference',
+        'approval_state',
+      ]) ||
+      entry.slot !== approved.slot ||
+      entry.company !== approved.company ||
+      entry.url !== approved.url ||
+      !['drafted', 'withheld'].includes(String(entry.state)) ||
+      !safeDraftText(entry.evidence_basis, 1_500, false) ||
+      typeof entry.subject !== 'string' ||
+      typeof entry.body !== 'string' ||
+      typeof entry.withheld_reason !== 'string' ||
+      entry.offer_reference !== 'operacion-sin-planillas:offer-v1' ||
+      entry.approval_state !== 'not_eligible'
+    )
+      throw new Error('INVALID_ACCOUNT_DRAFT_ROW')
+    const drafted = entry.state === 'drafted'
+    if (
+      (drafted &&
+        (!safeDraftText(entry.subject, 120, false) ||
+          !safeDraftText(entry.body, 1_500, false) ||
+          !/hip[oó]tesis/i.test(entry.body) ||
+          entry.withheld_reason !== 'none' ||
+          approved.state !== 'observed')) ||
+      (!drafted &&
+        (entry.subject !== '' ||
+          entry.body !== '' ||
+          !safeDraftText(entry.withheld_reason, 500, false)))
+    )
+      throw new Error('INVALID_ACCOUNT_DRAFT_STATE')
+    return {
+      slot: approved.slot,
+      company: approved.company,
+      url: approved.url,
+      state: entry.state as 'drafted' | 'withheld',
+      evidenceBasis: entry.evidence_basis as string,
+      subject: entry.subject as string,
+      body: entry.body as string,
+      withheldReason: entry.withheld_reason as string,
+    }
+  })
+  const hasWithheld = drafts.some((draft) => draft.state === 'withheld')
+  if (
+    (hasWithheld && value.status !== 'partial') ||
+    (!hasWithheld && value.status !== 'completed')
+  )
+    throw new Error('INVALID_ACCOUNT_DRAFT_STATUS')
+
+  const summary = [
+    ...drafts.map((draft) =>
+      draft.state === 'drafted'
+        ? `${draft.slot}. ${draft.company} | ${draft.url} | state=drafted | evidence_basis=${draft.evidenceBasis} | subject=${draft.subject} | body=${draft.body} | approval_state=not_eligible`
+        : `${draft.slot}. ${draft.company} | ${draft.url} | state=withheld | evidence_basis=${draft.evidenceBasis} | withheld_reason=${draft.withheldReason} | approval_state=not_eligible`,
+    ),
+    'Internal drafts only. No account, draft, recipient or channel is approved or eligible for outreach.',
+  ].join('\n')
+  if (summary.length > 32_000)
+    throw new Error('INVALID_ACCOUNT_DRAFT_SUMMARY')
+  return {
+    mission_id: input.mission_id,
+    trace_id: input.trace_id,
+    assignment_id: input.assignment_id,
+    agent_id: input.profile_id,
+    status: value.status as 'completed' | 'partial',
+    summary,
+    facts: [],
+    inferences: [],
+    actions_taken: [],
+    external_changes: [],
+    evidence: [],
+    artifacts: [],
+    metrics: {
+      runtime_output_adapter: 'account_draft_batch_v1',
+      accounts_reviewed: drafts.length,
+      drafts_prepared: drafts.filter((draft) => draft.state === 'drafted').length,
+      drafts_withheld: drafts.filter((draft) => draft.state === 'withheld').length,
+      eligible_for_outreach: 0,
+      external_actions: 0,
+    },
+    cost: {
+      currency: 'USD',
+      llm: 0,
+      tools: 0,
+      total: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+    },
+    errors: [],
+    risks: [],
+    pending_approvals: [],
+    recommended_next_actions: [],
+    started_at: startedAt,
+    finished_at: finishedAt,
+  }
+}
+
 function validCandidateUrl(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 2_000) return false
   try {
@@ -779,6 +918,23 @@ function safeMarketText(value: unknown, maximum: number): value is string {
     return false
   const forbidden =
     /(?:https?:\/\/|www\.|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:\+?\d[\s().-]*){8,}\d|linkedin\.|(?:api|access)[ _-]?key|bearer\s+[a-z0-9._-]+|password|passwd|credential|cookie|private[ _-]?key|secret|system\s+prompt|ignore\s+(?:all\s+)?(?:previous|prior)|<script|```)/i
+  return !forbidden.test(value)
+}
+
+function safeDraftText(
+  value: unknown,
+  maximum: number,
+  allowEmpty: boolean,
+): value is string {
+  if (
+    typeof value !== 'string' ||
+    (!allowEmpty && value.length < 1) ||
+    value.length > maximum ||
+    /[\u0000-\u001f\u007f]/.test(value)
+  )
+    return false
+  const forbidden =
+    /(?:https?:\/\/|www\.|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|(?:\+?\d[\s().-]*){8,}\d|linkedin\.|(?:api|access)[ _-]?key|bearer\s+[a-z0-9._-]+|password|passwd|credential|cookie|private[ _-]?key|secret|system\s+prompt|ignore\s+(?:all\s+)?(?:previous|prior)|<script|```|descuento|garant(?:ía|ia)|100\s*%|testimonio|cliente\s+actual)/i
   return !forbidden.test(value)
 }
 

@@ -39,11 +39,12 @@ class BrokerFake implements BrokerAutomationPort {
   orders: WorkOrder[] = []
   plans: AssignmentPlan[] = []
   execution: MissionExecution | null = null
+  executions = new Map<string, MissionExecution>()
   async createWorkOrder(order: WorkOrder) { this.orders.push(structuredClone(order)) }
   async createAssignments(plan: AssignmentPlan) { this.plans.push(structuredClone(plan)) }
-  async findExecution() { return this.execution }
+  async findExecution(missionId: string) { return this.executions.get(missionId) ?? this.execution }
   async getExecution(missionId: string) {
-    return this.execution ?? { mission_id: missionId, status: 'queued', assignments: [] }
+    return this.executions.get(missionId) ?? this.execution ?? { mission_id: missionId, status: 'queued', assignments: [] }
   }
   gateEligible = false
   async getShadowReviewGate(reviewId: string) {
@@ -605,6 +606,77 @@ describe('Paperclip commercial automation', () => {
     )
     assert.match(broker.plans[0].assignments[0].instruction, /^RUNTIME_OUTPUT_CONTRACT_JSON=\{"type":"account_candidate_batch_v1","maximum_accounts":10,"country":"CL"\}/)
     assert.match(broker.plans[0].assignments[0].instruction, /POST-HUMAN-GATE ACCOUNT DISCOVERY/)
+  })
+
+  it('dispatches ALA-52 only from signed completed ALA-51 evidence and keeps every draft internal and ineligible', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-36', 'done'), issue('ALA-51', 'backlog'), issue('ALA-52', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    broker.gateEligible = true
+    const service = automation(paperclip, broker)
+    const ala51 = await service.tick()
+    assert.equal(ala51.issue, 'ALA-51')
+    const plan = broker.plans[0]
+    const market = plan.assignments[0]
+    const steward = plan.assignments[1]
+    const qualification = plan.assignments[2]
+    const qa = plan.assignments[3]
+    const envelope = (agentId: string, summary: string, metrics: Record<string, unknown>) => ({
+      schema_version: '1.0',
+      agent_result: {
+        agent_id: agentId,
+        status: 'completed',
+        summary,
+        external_changes: [],
+        metrics,
+      },
+    })
+    const execution: MissionExecution = {
+      mission_id: ala51.mission_id!,
+      status: 'completed',
+      assignments: [
+        { assignment_id: market.assignment_id, profile_id: market.profile_id, status: 'succeeded', attempts: 1, max_attempts: 1, artifact_sha256: 'a'.repeat(64), result_envelope: envelope('market-account-intelligence', '1. Empresa Uno | https://empresa-uno.cl/ | state=observed | chile_relevance=Chile | b2b_service=Servicios B2B | headcount_evidence=unknown | conflicts=none | obtained_at=2026-08-24T00:00:00.000Z | verification_method=public_web | confidence=0.8\nCoverage is bounded. No account is eligible for outreach.', { external_actions: 0, eligible_for_outreach: 0 }), error: null },
+        { assignment_id: steward.assignment_id, profile_id: steward.profile_id, status: 'succeeded', attempts: 1, max_attempts: 1, artifact_sha256: 'b'.repeat(64), result_envelope: envelope('contact-data-steward', 'One verified company slot; no contacts processed.', { external_actions: 0 }), error: null },
+        { assignment_id: qualification.assignment_id, profile_id: qualification.profile_id, status: 'succeeded', attempts: 1, max_attempts: 1, artifact_sha256: 'c'.repeat(64), result_envelope: envelope('qualification-prioritization', '1. ICP fit=unknown; evidence=partial; outreach=not_eligible_pending_human_and_policy_review.', { external_actions: 0, eligible_for_outreach: 0 }), error: null },
+        { assignment_id: qa.assignment_id, profile_id: qa.profile_id, status: 'succeeded', attempts: 1, max_attempts: 1, artifact_sha256: 'd'.repeat(64), result_envelope: envelope('commercial-qa-compliance', 'VERDICT: allow_internal\nZero external changes; evidence preserved.', { external_actions: 0, eligible_for_outreach: 0 }), error: null },
+      ],
+    }
+    broker.executions.set(ala51.mission_id!, execution)
+    assert.equal((await service.tick()).status, 'review_ready')
+    paperclip.values.find((item) => item.identifier === 'ALA-51')!.status = 'done'
+
+    const ala52 = await service.tick()
+    assert.equal(ala52.status, 'dispatched')
+    assert.equal(ala52.issue, 'ALA-52')
+    const order = broker.orders.at(-1) as any
+    assert.equal(order.autonomy_level, 'A2')
+    assert.deepEqual(order.approved_channels, ['internal'])
+    assert.deepEqual(order.approved_tools, ['hermes.analysis', 'hermes.file.ephemeral'])
+    assert.equal(order.contact_policy.contact_permitted, false)
+    assert.equal(order.volume_limits.maximum_accounts, 10)
+    assert.equal(order.volume_limits.maximum_contacts, 0)
+    assert.equal(order.volume_limits.maximum_external_actions, 0)
+    assert.equal(order.dry_run, true)
+    const draftPlan = broker.plans.at(-1)!
+    assert.deepEqual(draftPlan.assignments.map((item) => item.profile_id), [
+      'outreach-draft-manager', 'commercial-qa-compliance',
+    ])
+    assert.match(draftPlan.assignments[0].instruction, /^RUNTIME_OUTPUT_CONTRACT_JSON=\{"type":"account_draft_batch_v1","maximum_accounts":10,"source_artifact_sha256":"a{64}"\}/)
+    assert.match(draftPlan.assignments[0].evidence, /"approved_accounts"/)
+    assert.match(draftPlan.assignments[1].instruction, /approval_state=not_eligible/)
+    assert.doesNotMatch(draftPlan.assignments[0].instruction, /mail\.send|send this email/i)
+  })
+
+  it('does not trust ALA-51 done status without its signed terminal evidence', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-51', 'done'), issue('ALA-52', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    assert.deepEqual(await automation(paperclip, broker).tick(), {
+      status: 'idle', issue: null, mission_id: null, external_actions: 0,
+    })
+    assert.equal(broker.orders.length, 0)
   })
 
   it('preserves a terminal ALA-37 marker while allowing the explicit ALA-38 successor', async () => {
