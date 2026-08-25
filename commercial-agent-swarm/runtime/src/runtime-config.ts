@@ -19,6 +19,7 @@ export const EXECUTOR_CHILD_GID = 10002
 export const EXECUTOR_IPC_GID = 11000
 export const EXECUTOR_MODEL_PROXY_URL = 'http://executor-egress-proxy:3128'
 export const EXECUTOR_NO_PROXY = 'broker,localhost,127.0.0.1'
+export const EXECUTOR_CLEANUP_MARGIN_MS = 30_000
 
 export interface BrokerRuntimeConfig {
   socketPath: string
@@ -59,7 +60,7 @@ export function loadBrokerRuntimeConfig(
   const clientTimeoutMs = integer(
     env,
     'EXECUTOR_CLIENT_TIMEOUT_MS',
-    hermesTimeoutMs + 5_000,
+    hermesTimeoutMs + EXECUTOR_CLEANUP_MARGIN_MS,
     3_660_000,
   )
   const leaseSeconds = integer(env, 'DISPATCH_LEASE_SECONDS', 2, 3600)

@@ -15,8 +15,8 @@ describe('split runtime trust-zone configuration', () => {
       () =>
         loadBrokerRuntimeConfig({
           ...common,
-          EXECUTOR_CLIENT_TIMEOUT_MS: '65000',
-          DISPATCH_LEASE_SECONDS: '90',
+          EXECUTOR_CLIENT_TIMEOUT_MS: '90000',
+          DISPATCH_LEASE_SECONDS: '120',
           CUSTOM_API_KEY_FILE: '/secret',
         }),
       /BROKER_SECRET_BOUNDARY/,
@@ -25,16 +25,25 @@ describe('split runtime trust-zone configuration', () => {
       () =>
         loadBrokerRuntimeConfig({
           ...common,
-          EXECUTOR_CLIENT_TIMEOUT_MS: '65000',
+          EXECUTOR_CLIENT_TIMEOUT_MS: '90000',
           DISPATCH_LEASE_SECONDS: '60',
         }),
       /EXECUTOR_TIMEOUT_ORDER_INVALID/,
     )
+    assert.throws(
+      () =>
+        loadBrokerRuntimeConfig({
+          ...common,
+          EXECUTOR_CLIENT_TIMEOUT_MS: '65000',
+          DISPATCH_LEASE_SECONDS: '120',
+        }),
+      /EXECUTOR_CLIENT_TIMEOUT_MS_INVALID/,
+    )
     assert.equal(
       loadBrokerRuntimeConfig({
         ...common,
-        EXECUTOR_CLIENT_TIMEOUT_MS: '65000',
-        DISPATCH_LEASE_SECONDS: '90',
+        EXECUTOR_CLIENT_TIMEOUT_MS: '90000',
+        DISPATCH_LEASE_SECONDS: '120',
       }).childTimeoutSeconds,
       60,
     )

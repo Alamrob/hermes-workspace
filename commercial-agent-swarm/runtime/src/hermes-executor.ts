@@ -1308,23 +1308,35 @@ export class NodeProcessRunner implements ProcessRunner {
           else process.kill(-child.pid, 'SIGKILL')
         } catch {}
       }
+      const terminateAndClosePipes = () => {
+        terminate()
+        // A grandchild may inherit stdout/stderr and keep Node's `close` event
+        // pending even after the Hermes process group has been killed. Close
+        // the supervisor-side readers after a terminal containment decision so
+        // the executor can report a bounded timeout instead of outliving the
+        // broker's IPC deadline and turning known local failure into
+        // usage_unknown. Output already captured within the byte limits is
+        // retained; no child-controlled stream remains authoritative.
+        child.stdout.destroy()
+        child.stderr.destroy()
+      }
       child.stdout.on('data', (chunk: Buffer) => {
         stdoutBytes += chunk.length
         if (stdoutBytes > invocation.stdoutLimitBytes) {
           overflow ??= new Error('HERMES_STDOUT_LIMIT')
-          terminate()
+          terminateAndClosePipes()
         } else stdout.push(chunk)
       })
       child.stderr.on('data', (chunk: Buffer) => {
         stderrBytes += chunk.length
         if (stderrBytes > invocation.stderrLimitBytes) {
           overflow ??= new Error('HERMES_STDERR_LIMIT')
-          terminate()
+          terminateAndClosePipes()
         } else stderr.push(chunk)
       })
       const timer = setTimeout(() => {
         timedOut = true
-        terminate()
+        terminateAndClosePipes()
       }, invocation.timeoutMs)
       child.once('error', (error) => {
         if (settled) return

@@ -71,6 +71,33 @@ describe('Node process runner containment', () => {
     },
   )
   it(
+    'does not wait on a detached descendant that inherited the child pipes',
+    { skip: !linux, timeout: 5_000 },
+    async () => {
+      const call = await invocation(
+        "const{spawn}=require('child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:['ignore','inherit','inherit']});c.unref();console.log(c.pid);setInterval(()=>{},1000)",
+        100,
+        1024,
+      )
+      let detachedPid = 0
+      try {
+        const startedAt = Date.now()
+        const out = await new NodeProcessRunner().run(call)
+        assert.equal(out.timedOut, true)
+        assert.ok(Date.now() - startedAt < 3_000)
+        detachedPid = Number(out.stdout.trim())
+        assert.equal(Number.isSafeInteger(detachedPid), true)
+      } finally {
+        if (detachedPid > 0) {
+          try {
+            process.kill(detachedPid, 'SIGKILL')
+          } catch {}
+        }
+        await rm(call.cwd, { recursive: true, force: true })
+      }
+    },
+  )
+  it(
     'kills a surviving descendant when the process-group leader exits first',
     { skip: !linux },
     async () => {
