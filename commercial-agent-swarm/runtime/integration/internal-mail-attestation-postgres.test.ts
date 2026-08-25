@@ -30,6 +30,7 @@ const versions = [
   '020_internal_mail_attestation',
   '021_commercial_policy_v2_draft',
   '022_policy_human_review',
+  '023_policy_activation_dossier',
 ]
 
 integration('PostgreSQL 17 internal-mail attestation ledger', () => {

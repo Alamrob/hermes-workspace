@@ -4,6 +4,7 @@ import {
   migrationDigest,
   validateMigrationSet,
 } from '../src/migration-runner.js'
+import { loadMigrationSources } from '../src/migrate-main.js'
 
 describe('versioned migration runner', () => {
   it('orders a closed migration set and calculates stable SHA-256 digests', () => {
@@ -27,6 +28,7 @@ describe('versioned migration runner', () => {
       { version: '020_internal_mail_attestation', sql: 'SELECT 20;' },
       { version: '021_commercial_policy_v2_draft', sql: 'SELECT 21;' },
       { version: '022_policy_human_review', sql: 'SELECT 22;' },
+      { version: '023_policy_activation_dossier', sql: 'SELECT 23;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -56,11 +58,26 @@ describe('versioned migration runner', () => {
         '020_internal_mail_attestation',
         '021_commercial_policy_v2_draft',
         '022_policy_human_review',
+        '023_policy_activation_dossier',
       ],
     )
     assert.equal(
       migrationDigest('SELECT 1;'),
       '17db4fd369edb9244b9f91d9aeed145c3d04ad8ba6e95d06247f07a63527d11a',
+    )
+  })
+
+  it('loads the complete production migration set through the inert activation dossier', async () => {
+    const migrations = await loadMigrationSources()
+    assert.equal(migrations.length, 23)
+    assert.equal(migrations.at(-1)?.version, '023_policy_activation_dossier')
+    assert.match(
+      migrations.at(-1)?.sql ?? '',
+      /control\.build_policy_activation_dossier_state/,
+    )
+    assert.doesNotMatch(
+      migrations.at(-1)?.sql ?? '',
+      /INSERT INTO\s+(?:control\.policy_activation_authorizations|mail\.delivery_policies|mail\.delivery_policy_activations|catalog\.version_activations)/i,
     )
   })
 
