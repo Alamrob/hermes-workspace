@@ -6,12 +6,10 @@ name: Build & publish Docker image
 #   image: ghcr.io/outsourc-e/hermes-workspace:latest
 #
 # Triggers:
-#   - push to main        -> tags: latest, main, main-<sha>
 #   - push a git tag v*   -> tags: <version>, <major>.<minor>, latest
 #   - manual dispatch     -> tags: latest
 on:
   push:
-    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -21,7 +19,7 @@ permissions:
 
 concurrency:
   group: docker-publish-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
