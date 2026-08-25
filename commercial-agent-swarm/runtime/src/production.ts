@@ -192,6 +192,7 @@ const EXPECTED_FUNCTIONS: Record<
     'control.get_dispatch_dependency_evidence(uuid)',
     'control.build_policy_review_state()',
     'control.record_policy_human_review(text,text,text,text,text,timestamp with time zone,text,jsonb,text,text)',
+    'control.build_policy_activation_dossier_state()',
   ],
   commercial_work_order_ingestor: [
     'control.save_mission(uuid,text,jsonb)',

@@ -26,6 +26,7 @@ import {
   type ShadowReview,
 } from './shadow-review.js'
 import { PolicyReviewError, validatePolicyReviewState, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
+import { validatePolicyActivationDossierState, type PolicyActivationDossierState } from './policy-activation-dossier.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -268,6 +269,13 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       if (code) throw new PolicyReviewError(code)
       throw error
     }
+  }
+
+  async getPolicyActivationDossierState(): Promise<PolicyActivationDossierState> {
+    const result = await this.pool.query<{ state: unknown }>(
+      'SELECT control.build_policy_activation_dossier_state() AS state',
+    )
+    return validatePolicyActivationDossierState(result.rows[0]?.state)
   }
 
   async createInstructionRequest(

@@ -391,6 +391,10 @@ export class BrokerApplication {
         }),
       }
     }
+    if (route.action === 'getPolicyActivationDossier') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      return { status: 200, body: await this.options.repository.getPolicyActivationDossierState() }
+    }
     if (route.action === 'requestApproval') {
       requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
       return { status: 201, body: await this.options.approvals.request(request.body) }
@@ -518,6 +522,8 @@ function matchRoute(method: string, path: string): Route | null {
     return { action: 'getPolicyReview', auditAction: 'policy_review.get' }
   if (method === 'POST' && path === '/internal/v1/policy-reviews/proptimiza/policy-v2/decision')
     return { action: 'recordPolicyReview', auditAction: 'policy_review.record' }
+  if (method === 'GET' && path === '/internal/v1/policy-activation-dossiers/proptimiza/policy-v2')
+    return { action: 'getPolicyActivationDossier', auditAction: 'policy_activation_dossier.get' }
   if (method === 'POST' && path === '/v1/work-orders') return { action: 'createWorkOrder', auditAction: 'work_order.create' }
   if (method === 'POST' && path === '/v1/instruction-requests')
     return { action: 'createInstructionRequest', auditAction: 'instruction_request.create' }

@@ -6,6 +6,7 @@ import type {
   ShadowReview,
 } from './shadow-review.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
+import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
 
 interface ApprovalRecord {
   approval_id: string
@@ -36,6 +37,7 @@ export interface RuntimeRepository {
   completeShadowReview(input: CompleteShadowReviewInput): Promise<ShadowReview>
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
+  getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
   saveMission(record: MissionRecord): Promise<void>
   createInstructionRequest(record: InstructionRequestRecord): Promise<InstructionRequestResult>
   listInstructionRequests(): Promise<InstructionRequestView[]>
@@ -280,6 +282,21 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
     }
     this.policyReviews.set(input.kind, structuredClone(input))
     return inMemoryPolicyReviewState(this.policyReviews)
+  }
+
+  async getPolicyActivationDossierState(): Promise<PolicyActivationDossierState> {
+    const review = inMemoryPolicyReviewState(this.policyReviews)
+    const globalKillSwitchActive = this.killSwitches.has('global:*')
+    const emailKillSwitchActive = this.killSwitches.has('channel:email')
+    return {
+      projectId: 'proptimiza', policyVersion: 'policy-v2', policyDigest: review.policyDigest,
+      reviewCompleted: review.reviewCompleted, authorizationRecorded: false, internalMailAttested: false,
+      activePolicyVersion: 'policy-v1', policyEffective: false, externalContact: false,
+      versionActivationCreated: false, deliveryPolicyCreated: false, deliveryPolicyActivationCreated: false,
+      globalKillSwitchActive, emailKillSwitchActive, databaseGateSatisfied: false, activationAllowed: false,
+      nextRequiredGate: review.reviewCompleted ? 'internal_mail_attestation' : 'human_reviews',
+      provenance: { source: 'control-broker', sourceId: 'policy-activation-dossier:proptimiza:policy-v2', observedAt: new Date().toISOString(), synthetic: false },
+    }
   }
 
   async createInstructionRequest(

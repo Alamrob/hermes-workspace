@@ -1049,4 +1049,17 @@ describe('broker application routes', () => {
     assert.equal((privacy.body as any).activationCreated, false)
     assert.equal(state.audit.events.filter((event) => event.tool_action === 'policy_review.record').every((event) => event.external_action === false), true)
   })
+
+  it('exposes an authenticated, read-only activation dossier that cannot enable activation', async () => {
+    const state = setup()
+    const path = '/internal/v1/policy-activation-dossiers/proptimiza/policy-v2'
+    assert.equal((await state.app.handle({ method: 'GET', path })).status, 401)
+    const response = await state.app.handle({ method: 'GET', path, headers: headers('shadow-review-token') })
+    assert.equal(response.status, 200)
+    assert.equal((response.body as any).authorizationRecorded, false)
+    assert.equal((response.body as any).databaseGateSatisfied, false)
+    assert.equal((response.body as any).activationAllowed, false)
+    assert.equal((response.body as any).activePolicyVersion, 'policy-v1')
+    assert.equal(state.audit.events.filter((event) => event.tool_action === 'policy_activation_dossier.get').every((event) => event.external_action === false), true)
+  })
 })
