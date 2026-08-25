@@ -46,11 +46,23 @@ type ActiveProfileId = (typeof ACTIVE_PROFILE_IDS)[number]
 
 export const PROFILE_TOOLSETS: Record<ActiveProfileId, Array<string>> = {
   'sales-orchestrator': [],
-  'market-account-intelligence': ['web', 'file'],
-  'contact-data-steward': ['web', 'file'],
+  'market-account-intelligence': ['web'],
+  'contact-data-steward': ['web'],
   'qualification-prioritization': [],
   'outreach-draft-manager': ['file'],
   'commercial-qa-compliance': [],
+}
+
+export const PROFILE_EXECUTION_LIMITS: Record<
+  ActiveProfileId,
+  { maxTokens: number; maxTurns: number }
+> = {
+  'sales-orchestrator': { maxTokens: 4096, maxTurns: 6 },
+  'market-account-intelligence': { maxTokens: 2048, maxTurns: 3 },
+  'contact-data-steward': { maxTokens: 4096, maxTurns: 6 },
+  'qualification-prioritization': { maxTokens: 4096, maxTurns: 6 },
+  'outreach-draft-manager': { maxTokens: 4096, maxTurns: 6 },
+  'commercial-qa-compliance': { maxTokens: 2048, maxTurns: 3 },
 }
 
 export const HERMES_TOOLSET_KEYS = [
@@ -88,6 +100,8 @@ export const HERMES_OBSERVABLE_TOOLSET_KEYS = HERMES_TOOLSET_KEYS.filter(
 
 const NATIVE_CONFIG_FIELDS = [
   'model',
+  'auxiliary',
+  'web',
   'memory',
   'max_concurrent_sessions',
   'agent',
@@ -339,6 +353,9 @@ export function validateNativeProfileConfig(
   }
 
   const expectedToolsets = profileToolsets(profileId)
+  const profilePolicy = Object.hasOwn(PROFILE_EXECUTION_LIMITS, profileId)
+    ? PROFILE_EXECUTION_LIMITS[profileId as ActiveProfileId]
+    : null
   const expectedLabel = expectedToolsets.join(',')
   const configuredToolsets = [...expectedToolsets, 'no_mcp']
   if (!sameStrings(value.toolsets, configuredToolsets)) {
@@ -367,10 +384,43 @@ export function validateNativeProfileConfig(
     model.default !== 'deepseek-v4-flash' ||
     model.provider !== 'opencode-go'
   ) {
-    errors.push(`${profileId}: model must use the confirmed opencode-go provider`)
+    errors.push(
+      `${profileId}: model must use the confirmed opencode-go provider`,
+    )
   }
-  if (model?.max_tokens !== 4096) {
-    errors.push(`${profileId}: model.max_tokens must equal 4096`)
+  if (!profilePolicy || model?.max_tokens !== profilePolicy.maxTokens) {
+    errors.push(
+      `${profileId}: model.max_tokens must equal ${profilePolicy?.maxTokens ?? 'its closed profile policy'}`,
+    )
+  }
+
+  const auxiliary = isRecord(value.auxiliary) ? value.auxiliary : null
+  const titleGeneration =
+    auxiliary && isRecord(auxiliary.title_generation)
+      ? auxiliary.title_generation
+      : null
+  if (
+    !auxiliary ||
+    unsupportedKeys(auxiliary, ['title_generation']).length > 0 ||
+    !titleGeneration ||
+    unsupportedKeys(titleGeneration, ['enabled']).length > 0 ||
+    titleGeneration.enabled !== false
+  ) {
+    errors.push(`${profileId}: automatic title generation must be disabled`)
+  }
+
+  const web = isRecord(value.web) ? value.web : null
+  if (profileId === 'market-account-intelligence') {
+    if (
+      !web ||
+      unsupportedKeys(web, ['search_backend', 'extract_backend']).length > 0 ||
+      web.search_backend !== 'ddgs' ||
+      web.extract_backend !== 'public-http'
+    ) {
+      errors.push(`${profileId}: web backends must equal ddgs and public-http`)
+    }
+  } else if (value.web !== undefined) {
+    errors.push(`${profileId}: web backend configuration is not permitted`)
   }
 
   const memory = isRecord(value.memory) ? value.memory : null
@@ -400,8 +450,10 @@ export function validateNativeProfileConfig(
       `${profileId}: agent may contain only max_turns and disabled_toolsets`,
     )
   }
-  if (agent?.max_turns !== 6) {
-    errors.push(`${profileId}: agent.max_turns must equal 6`)
+  if (!profilePolicy || agent?.max_turns !== profilePolicy.maxTurns) {
+    errors.push(
+      `${profileId}: agent.max_turns must equal ${profilePolicy?.maxTurns ?? 'its closed profile policy'}`,
+    )
   }
   const expectedDisabledToolsets = HERMES_TOOLSET_KEYS.filter(
     (toolset) => !expectedToolsets.includes(toolset),
@@ -446,12 +498,16 @@ export function validateNativeProfileSoul(
   }
 
   const permissions = sectionBody(text, 'Permisos').toLocaleLowerCase('es')
-  for (const term of ['a3 no está disponible', 'a4 es humano']) {
-    if (!permissions.includes(term)) {
-      errors.push(
-        `${profileId}: SOUL.md Permisos is missing autonomy term ${term}`,
-      )
-    }
+  const a3Unavailable =
+    permissions.includes('a3 no está disponible') ||
+    permissions.includes('a3 y a4 no están disponibles')
+  if (!a3Unavailable) {
+    errors.push(`${profileId}: SOUL.md Permisos does not explicitly deny A3`)
+  }
+  if (!permissions.includes('a4 es humano')) {
+    errors.push(
+      `${profileId}: SOUL.md Permisos is missing autonomy term a4 es humano`,
+    )
   }
 
   const contract = PROFILE_PROMPT_CONTRACTS[profileId as ActiveProfileId]

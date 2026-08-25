@@ -60,11 +60,23 @@ const hermes0201Toolsets = [
 
 const expectedProfileToolsets: Record<string, Array<string>> = {
   'sales-orchestrator': [],
-  'market-account-intelligence': ['web', 'file'],
-  'contact-data-steward': ['web', 'file'],
+  'market-account-intelligence': ['web'],
+  'contact-data-steward': ['web'],
   'qualification-prioritization': [],
   'outreach-draft-manager': ['file'],
   'commercial-qa-compliance': [],
+}
+
+const expectedProfileLimits: Record<
+  string,
+  { maxTokens: number; maxTurns: number }
+> = {
+  'sales-orchestrator': { maxTokens: 4096, maxTurns: 6 },
+  'market-account-intelligence': { maxTokens: 2048, maxTurns: 3 },
+  'contact-data-steward': { maxTokens: 4096, maxTurns: 6 },
+  'qualification-prioritization': { maxTokens: 4096, maxTurns: 6 },
+  'outreach-draft-manager': { maxTokens: 4096, maxTurns: 6 },
+  'commercial-qa-compliance': { maxTokens: 2048, maxTurns: 3 },
 }
 
 function readProfileConfig(profileId: string): Record<string, unknown> {
@@ -137,9 +149,10 @@ describe('commercial swarm package validator', () => {
       const config = readProfileConfig(profileId)
       const model = config.model as Record<string, unknown>
       const agent = config.agent as Record<string, unknown>
+      const expected = expectedProfileLimits[profileId]
 
-      expect(model.max_tokens, profileId).toBe(4096)
-      expect(agent.max_turns, profileId).toBe(6)
+      expect(model.max_tokens, profileId).toBe(expected.maxTokens)
+      expect(agent.max_turns, profileId).toBe(expected.maxTurns)
     }
 
     const unsafe = readProfileConfig('sales-orchestrator')
@@ -151,6 +164,43 @@ describe('commercial swarm package validator', () => {
         'sales-orchestrator: model.max_tokens must equal 4096',
         'sales-orchestrator: agent.max_turns must equal 6',
       ]),
+    )
+  })
+
+  it('requires disabled auxiliary title generation and exact reviewed web backends', () => {
+    for (const profileId of activeProfileIds) {
+      const config = readProfileConfig(profileId)
+      expect(config.auxiliary, profileId).toEqual({
+        title_generation: { enabled: false },
+      })
+      if (profileId === 'market-account-intelligence') {
+        expect(config.web).toEqual({
+          search_backend: 'ddgs',
+          extract_backend: 'public-http',
+        })
+      } else {
+        expect(config).not.toHaveProperty('web')
+      }
+      expect(validateNativeProfileConfig(config, profileId)).toEqual([])
+    }
+
+    const unsafeTitles = readProfileConfig('sales-orchestrator')
+    ;(
+      (unsafeTitles.auxiliary as Record<string, unknown>)
+        .title_generation as Record<string, unknown>
+    ).enabled = true
+    expect(
+      validateNativeProfileConfig(unsafeTitles, 'sales-orchestrator'),
+    ).toContain(
+      'sales-orchestrator: automatic title generation must be disabled',
+    )
+
+    const unsafeWeb = readProfileConfig('market-account-intelligence')
+    ;(unsafeWeb.web as Record<string, unknown>).extract_backend = 'browser'
+    expect(
+      validateNativeProfileConfig(unsafeWeb, 'market-account-intelligence'),
+    ).toContain(
+      'market-account-intelligence: web backends must equal ddgs and public-http',
     )
   })
 
@@ -320,7 +370,7 @@ describe('commercial swarm package validator', () => {
     )
 
     expect(errors).toContain(
-      'market-account-intelligence: CLI toolsets must equal web,file plus no_mcp sentinel',
+      'market-account-intelligence: CLI toolsets must equal web plus no_mcp sentinel',
     )
     expect(errors).toContain(
       'market-account-intelligence: config.yaml contains unsupported keys api_key,custom_providers',

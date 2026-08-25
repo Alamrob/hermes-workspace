@@ -27,7 +27,7 @@ workers:
     mission: Produce cited public account evidence without contact or restricted access.
     profile: market-account-intelligence
     modes: [simulate, shadow]
-    tools: [web, file]
+    tools: [web]
     skills: []
     plugins: []
     pluginToolsets: []
@@ -46,7 +46,7 @@ workers:
     mission: Verify only necessary public professional data without contact or guessing.
     profile: contact-data-steward
     modes: [simulate, shadow]
-    tools: [web, file]
+    tools: [web]
     skills: []
     plugins: []
     pluginToolsets: []
