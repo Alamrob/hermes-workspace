@@ -190,6 +190,8 @@ const EXPECTED_FUNCTIONS: Record<
     'control.external_actions_blocked()',
     'control.get_mission_execution(uuid)',
     'control.get_dispatch_dependency_evidence(uuid)',
+    'control.build_policy_review_state()',
+    'control.record_policy_human_review(text,text,text,text,text,timestamp with time zone,text,jsonb,text,text)',
   ],
   commercial_work_order_ingestor: [
     'control.save_mission(uuid,text,jsonb)',
