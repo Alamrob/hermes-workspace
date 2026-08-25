@@ -169,6 +169,14 @@ describe('runtime persistence composition', () => {
       ),
       true,
     )
+    assert.equal(
+      expectedFunctionSets.some((functions) =>
+        functions.includes(
+          'mail.attest_internal_mail_test(uuid,text,uuid,text,uuid,text,text,text)',
+        ),
+      ),
+      true,
+    )
     await verifyProductionDatabasePrincipals([
       {
         pool: fake('ingestor_login', [

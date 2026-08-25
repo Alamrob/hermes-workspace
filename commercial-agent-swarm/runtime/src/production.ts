@@ -205,6 +205,7 @@ const EXPECTED_FUNCTIONS: Record<
   commercial_safety_operator: [
     'control.set_kill_switch(text,text,boolean)',
     'control.add_pilot_suppression(text,text,text)',
+    'mail.attest_internal_mail_test(uuid,text,uuid,text,uuid,text,text,text)',
   ],
   commercial_observer: [],
   commercial_approval_evidence: [
