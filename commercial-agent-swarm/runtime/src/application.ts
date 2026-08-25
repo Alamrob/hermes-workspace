@@ -1,4 +1,5 @@
 import { ApprovalError, type ApprovalBroker } from './approvals.js'
+import { buildInternalMailTestPlan } from './internal-mail-test-plan.js'
 import { createHash } from 'node:crypto'
 import type {
   ApprovalChannel,
@@ -395,6 +396,10 @@ export class BrokerApplication {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       return { status: 200, body: await this.options.repository.getPolicyActivationDossierState() }
     }
+    if (route.action === 'getInternalMailTestPlan') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      return { status: 200, body: buildInternalMailTestPlan(this.now()) }
+    }
     if (route.action === 'requestApproval') {
       requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
       return { status: 201, body: await this.options.approvals.request(request.body) }
@@ -524,6 +529,8 @@ function matchRoute(method: string, path: string): Route | null {
     return { action: 'recordPolicyReview', auditAction: 'policy_review.record' }
   if (method === 'GET' && path === '/internal/v1/policy-activation-dossiers/proptimiza/policy-v2')
     return { action: 'getPolicyActivationDossier', auditAction: 'policy_activation_dossier.get' }
+  if (method === 'GET' && path === '/internal/v1/internal-mail-test-plans/proptimiza/v1')
+    return { action: 'getInternalMailTestPlan', auditAction: 'internal_mail_test_plan.get' }
   if (method === 'POST' && path === '/v1/work-orders') return { action: 'createWorkOrder', auditAction: 'work_order.create' }
   if (method === 'POST' && path === '/v1/instruction-requests')
     return { action: 'createInstructionRequest', auditAction: 'instruction_request.create' }

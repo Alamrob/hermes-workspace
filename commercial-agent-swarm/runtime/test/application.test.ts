@@ -1062,4 +1062,20 @@ describe('broker application routes', () => {
     assert.equal((response.body as any).activePolicyVersion, 'policy-v1')
     assert.equal(state.audit.events.filter((event) => event.tool_action === 'policy_activation_dossier.get').every((event) => event.external_action === false), true)
   })
+
+  it('exposes an authenticated, inert internal-mail test plan without mission or approval', async () => {
+    const state = setup()
+    const path = '/internal/v1/internal-mail-test-plans/proptimiza/v1'
+    assert.equal((await state.app.handle({ method: 'GET', path })).status, 401)
+    const response = await state.app.handle({ method: 'GET', path, headers: headers('shadow-review-token') })
+    assert.equal(response.status, 200)
+    assert.equal((response.body as any).state, 'draft_only')
+    assert.equal((response.body as any).sender, 'ventas@proptimiza.com')
+    assert.equal((response.body as any).recipient, 'contacto@proptimiza.com')
+    assert.equal((response.body as any).executionAllowed, false)
+    assert.match((response.body as any).planHash, /^[0-9a-f]{64}$/)
+    assert.equal('missionId' in (response.body as any), false)
+    assert.equal('approvalToken' in (response.body as any), false)
+    assert.equal(state.audit.events.filter((event) => event.tool_action === 'internal_mail_test_plan.get').every((event) => event.external_action === false), true)
+  })
 })
