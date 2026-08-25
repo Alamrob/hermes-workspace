@@ -47,6 +47,7 @@ integration('PostgreSQL simulation safety seed', { concurrency: 1 }, () => {
         '018_sales_mission_draft_projection',
         '019_codex_instruction_review',
         '020_internal_mail_attestation',
+        '021_commercial_policy_v2_draft',
       ].map(async (version) => ({
         version,
         sql: await readFile(

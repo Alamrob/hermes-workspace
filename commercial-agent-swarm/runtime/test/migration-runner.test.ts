@@ -25,6 +25,7 @@ describe('versioned migration runner', () => {
       { version: '018_sales_mission_draft_projection', sql: 'SELECT 18;' },
       { version: '019_codex_instruction_review', sql: 'SELECT 19;' },
       { version: '020_internal_mail_attestation', sql: 'SELECT 20;' },
+      { version: '021_commercial_policy_v2_draft', sql: 'SELECT 21;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -52,6 +53,7 @@ describe('versioned migration runner', () => {
         '018_sales_mission_draft_projection',
         '019_codex_instruction_review',
         '020_internal_mail_attestation',
+        '021_commercial_policy_v2_draft',
       ],
     )
     assert.equal(

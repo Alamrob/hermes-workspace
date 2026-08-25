@@ -1,0 +1,101 @@
+{
+  "status": "draft_human_approval_required",
+  "effective": false,
+  "external_contact": false,
+  "project_id": "proptimiza",
+  "project_version": "v1",
+  "offer_id": "operacion-sin-planillas",
+  "offer_version": "offer-v1",
+  "jurisdiction": ["CL"],
+  "channel_scope": ["email"],
+  "mail_sender": "ventas@proptimiza.com",
+  "internal_test_recipient": "contacto@proptimiza.com",
+  "human_review": {
+    "commercial_required": true,
+    "privacy_legal_required": true,
+    "completed": false,
+    "activation_requires_new_immutable_record": true
+  },
+  "legal_snapshot": {
+    "reviewed_at": "2026-08-25",
+    "not_legal_advice": true,
+    "current_framework_until": "2026-11-30",
+    "future_framework_effective_from": "2026-12-01",
+    "sources": [
+      {
+        "id": "cl-law-19496-art-28b",
+        "url": "https://www.bcn.cl/leychile/navegar?idNorma=61438&idParte=8542485",
+        "control_basis": ["clear_subject", "sender_identity", "valid_opt_out", "stop_after_opposition"]
+      },
+      {
+        "id": "cl-law-19628-current",
+        "url": "https://www.bcn.cl/leychile/Navegar?idNorma=141599&idParte=8642680",
+        "control_basis": ["lawful_purpose", "data_minimization", "source_provenance", "data_subject_rights"]
+      },
+      {
+        "id": "cl-law-21719-future",
+        "url": "https://www.bcn.cl/leychile/navegar?idNorma=1209272&idParte=10527468&idVersion=2026-12-01",
+        "control_basis": ["privacy_by_design", "transparency", "security", "access_rectification_deletion_opposition"]
+      }
+    ]
+  },
+  "data_policy": {
+    "allowed_contact_type": "role_based_corporate_email_published_by_the_account",
+    "required_source_evidence": ["public_url", "captured_at", "purpose", "confidence"],
+    "prohibited_sources": ["purchased_lists", "inferred_personal_email", "scraping_forbidden_by_terms", "authentication_bypass"],
+    "prohibited_data": ["sensitive_personal_data", "personal_email", "private_profile_data", "credentials", "cookies", "government_identifiers"],
+    "candidate_retention_days": 30,
+    "admitted_pilot_retention_days": 365,
+    "suppression_hmac_retention_days": 1825,
+    "reverification_required_before_use": true
+  },
+  "contact_policy": {
+    "maximum_companies": 10,
+    "maximum_initial_messages_per_company": 1,
+    "automatic_follow_up": false,
+    "tracking_pixels": false,
+    "tracking_links": false,
+    "clear_subject_required": true,
+    "sender_identity_required": true,
+    "valid_opt_out_required": true,
+    "suppression_check_required": true,
+    "opposition_effect": "immediate_global_suppression",
+    "second_contact_requires_new_policy_and_approval": true
+  },
+  "approval_policy": {
+    "qa_required": true,
+    "human_approval_per_external_action": true,
+    "approval_token_required": true,
+    "approval_token_single_use": true,
+    "approval_token_maximum_ttl_minutes": 30,
+    "content_hash_binding_required": true,
+    "recipient_binding_required": true,
+    "kill_switch_must_be_rechecked": true
+  },
+  "commercial_policy": {
+    "approved_offer_name": "Operación Sin Planillas",
+    "minimum_public_price_clp": 1800000,
+    "discounts_allowed": false,
+    "unapproved_promises_allowed": false,
+    "scope_or_date_commitments_allowed": false
+  },
+  "activation_conditions": {
+    "policy_review_completed": false,
+    "internal_mail_attested": false,
+    "hostinger_credentials_installed": false,
+    "telegram_credentials_installed": false,
+    "external_pilot_authorized": false,
+    "delivery_policy_created": false,
+    "version_activation_created": false
+  },
+  "stop_conditions": [
+    "identity_or_permission_uncertain",
+    "source_provenance_missing",
+    "suppression_match",
+    "privacy_or_terms_risk",
+    "negative_response_rate_guardrail_breached",
+    "deliverability_guardrail_breached",
+    "budget_limit_reached",
+    "kill_switch_active"
+  ]
+}
