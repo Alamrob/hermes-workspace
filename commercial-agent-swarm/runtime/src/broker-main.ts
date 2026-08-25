@@ -14,6 +14,7 @@ import {
   expandDatabaseSecretFiles,
   loadSimulationBrokerConfig,
   readApplicationSecrets,
+  readHostingerWebhookMailboxSecrets,
   assertBrokerServiceIdentity,
 } from './simulation-entrypoint.js'
 import { WebhookService } from './webhook.js'
@@ -34,6 +35,7 @@ export async function startSimulationBroker(
     expandDatabaseSecretFiles(config, environment),
     readApplicationSecrets(config),
   ])
+  const mailboxSecrets = await readHostingerWebhookMailboxSecrets(config, secrets)
   const persistence = await createRuntimePersistence(databaseEnvironment)
   try {
     await assertSimulationSafetyBoundary(
@@ -71,7 +73,7 @@ export async function startSimulationBroker(
       }),
       webhook: new WebhookService({
         repository: persistence.repository,
-        mailboxSecrets: {},
+        mailboxSecrets,
         maxPayloadBytes: 262_144,
       }),
       audit: persistence.audit,

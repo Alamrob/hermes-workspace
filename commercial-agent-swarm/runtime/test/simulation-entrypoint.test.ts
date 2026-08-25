@@ -4,6 +4,7 @@ import {
   BROKER_SERVICE_GID,
   assertBrokerServiceIdentity,
   assertDistinctApplicationSecrets,
+  assertHostingerWebhookSecrets,
   loadSimulationBrokerConfig,
   validateSecretFileMetadata,
 } from '../src/simulation-entrypoint.js'
@@ -53,6 +54,7 @@ describe('Simulation broker entrypoint', () => {
     assert.equal(config.databaseSecretFiles.length, 5)
     assert.equal(config.approvalMode, 'either')
     assert.equal(config.a3AdmissionEnabled, false)
+    assert.equal(config.hostingerWebhookSecretFiles, null)
     assert.equal(config.secretGid, BROKER_SERVICE_GID)
     assert.equal(config.secretGid, 10001)
     assert.deepEqual(config.approvalActors, {
@@ -98,6 +100,31 @@ describe('Simulation broker entrypoint', () => {
       () => loadSimulationBrokerConfig(missing),
       /DATABASE_URL_FILE_REQUIRED/,
     )
+    assert.throws(
+      () => loadSimulationBrokerConfig({
+        ...environment,
+        HOSTINGER_WEBHOOK_MAILBOX_KEY_FILE: '/run/secrets/hostinger-webhook-mailbox-key',
+      }),
+      /HOSTINGER_WEBHOOK_SECRET_PAIR_REQUIRED/,
+    )
+    assert.throws(
+      () => loadSimulationBrokerConfig({
+        ...environment,
+        HOSTINGER_WEBHOOK_MAILBOX_KEY: 'raw-mailbox-key',
+        HOSTINGER_WEBHOOK_MAILBOX_KEY_FILE: '/run/secrets/hostinger-webhook-mailbox-key',
+        HOSTINGER_WEBHOOK_BEARER_FILE: '/run/secrets/hostinger-webhook-bearer',
+      }),
+      /RAW_SECRET_FORBIDDEN:HOSTINGER_WEBHOOK_MAILBOX_KEY/,
+    )
+    const withWebhook = loadSimulationBrokerConfig({
+      ...environment,
+      HOSTINGER_WEBHOOK_MAILBOX_KEY_FILE: '/run/secrets/hostinger-webhook-mailbox-key',
+      HOSTINGER_WEBHOOK_BEARER_FILE: '/run/secrets/hostinger-webhook-bearer',
+    })
+    assert.deepEqual(withWebhook.hostingerWebhookSecretFiles, {
+      mailboxKey: '/run/secrets/hostinger-webhook-mailbox-key',
+      bearer: '/run/secrets/hostinger-webhook-bearer',
+    })
   })
 
   it('accepts only root:broker-group 0440 secrets for the broker group', () => {
@@ -191,5 +218,25 @@ describe('Simulation broker entrypoint', () => {
         }),
       /APPLICATION_SECRETS_NOT_DISTINCT/,
     )
+  })
+
+  it('validates opaque, distinct Hostinger webhook routing secrets', () => {
+    const applicationSecrets = {
+      workOrderHmac: 'a'.repeat(32), controlPlane: 'b'.repeat(32),
+      approvalSalesGateway: 'c'.repeat(32), approvalTelegramGateway: 'd'.repeat(32),
+      connector: 'e'.repeat(32), internal: 'f'.repeat(32),
+      instructionInbox: 'g'.repeat(32), salesCommands: 'h'.repeat(32),
+      shadowReview: 'i'.repeat(32), approvalHmac: 'j'.repeat(32),
+    }
+    assert.doesNotThrow(() => assertHostingerWebhookSecrets({
+      mailboxKey: 'mailbox_key_'.padEnd(32, 'k'),
+      bearer: 'webhook_bearer_'.padEnd(32, 'z'),
+    }, applicationSecrets))
+    assert.throws(() => assertHostingerWebhookSecrets({
+      mailboxKey: 'short', bearer: 'webhook_bearer_'.padEnd(32, 'z'),
+    }, applicationSecrets), /HOSTINGER_WEBHOOK_SECRET_FORMAT_INVALID/)
+    assert.throws(() => assertHostingerWebhookSecrets({
+      mailboxKey: 'a'.repeat(32), bearer: 'webhook_bearer_'.padEnd(32, 'z'),
+    }, applicationSecrets), /HOSTINGER_WEBHOOK_SECRET_REUSE/)
   })
 })

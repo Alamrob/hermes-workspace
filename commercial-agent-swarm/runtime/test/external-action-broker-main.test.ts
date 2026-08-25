@@ -20,7 +20,7 @@ describe('external action broker entrypoint', () => {
       host: '0.0.0.0', port: 8091, hostingerEnabled: false, telegramEnabled: false,
       bearerFile: '/run/secrets/external-action-broker-bearer',
       brokerInternalFile: null,
-      hostingerTokenFile: null, telegramTokenFile: null, telegramChatId: null, proxyUrl: null,
+      hostingerTokenFile: null, telegramTokenFile: null, telegramChatIdFile: null, proxyUrl: null,
     })
   })
 
@@ -39,10 +39,20 @@ describe('external action broker entrypoint', () => {
       ...base,
       HOSTINGER_MAIL_ENABLED: 'true', HOSTINGER_MAIL_TOKEN_FILE: '/run/secrets/hostinger-mail-token',
       TELEGRAM_APPROVAL_ENABLED: 'true', TELEGRAM_BOT_TOKEN_FILE: '/run/secrets/telegram-bot-token',
-      TELEGRAM_APPROVER_CHAT_ID: '140795', EXTERNAL_ACTION_PROXY_URL: 'http://external-egress-proxy:3128',
+      TELEGRAM_APPROVER_CHAT_ID_FILE: '/run/secrets/telegram-approver-chat-id',
+      EXTERNAL_ACTION_PROXY_URL: 'http://external-egress-proxy:3128',
     })
     assert.equal(config.hostingerEnabled, true)
     assert.equal(config.telegramEnabled, true)
+    assert.equal(config.telegramChatIdFile, '/run/secrets/telegram-approver-chat-id')
+    assert.throws(() => loadExternalActionBrokerConfig({
+      ...base,
+      TELEGRAM_APPROVAL_ENABLED: 'true',
+      TELEGRAM_BOT_TOKEN_FILE: '/run/secrets/telegram-bot-token',
+      TELEGRAM_APPROVER_CHAT_ID: '140795',
+      TELEGRAM_APPROVER_CHAT_ID_FILE: '/run/secrets/telegram-approver-chat-id',
+      EXTERNAL_ACTION_PROXY_URL: 'http://external-egress-proxy:3128',
+    }), /RAW_SECRET_FORBIDDEN:TELEGRAM_APPROVER_CHAT_ID/)
   })
 
   it('serves bounded JSON without reflecting malformed input', async () => {

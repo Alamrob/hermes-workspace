@@ -46,6 +46,8 @@ const RAW_SECRETS = [
   'OPENCODE_GO_API_KEY',
   'MAIL_TOKEN',
   'TELEGRAM_TOKEN',
+  'HOSTINGER_WEBHOOK_MAILBOX_KEY',
+  'HOSTINGER_WEBHOOK_BEARER',
 ] as const
 
 export interface SimulationBrokerConfig {
@@ -58,6 +60,7 @@ export interface SimulationBrokerConfig {
   workOrderAuthority: { issuer: string; audience: string; keyId: string }
   approvalMode: ApprovalMode
   approvalActors: { sales: string[]; telegram: string[] }
+  hostingerWebhookSecretFiles: { mailboxKey: string; bearer: string } | null
   secretGid: typeof BROKER_SERVICE_GID
   a3AdmissionEnabled: false
 }
@@ -110,6 +113,11 @@ export function loadSimulationBrokerConfig(
     sales: parseActors(environment, 'SALES_APPROVER_IDS'),
     telegram: parseActors(environment, 'TELEGRAM_APPROVER_IDS'),
   }
+  const hostingerWebhookSecretFiles = optionalSecretPair(
+    environment,
+    'HOSTINGER_WEBHOOK_MAILBOX_KEY_FILE',
+    'HOSTINGER_WEBHOOK_BEARER_FILE',
+  )
 
   return {
     mode: 'simulation',
@@ -125,9 +133,41 @@ export function loadSimulationBrokerConfig(
     },
     approvalMode: parseApprovalMode(environment.APPROVAL_MODE),
     approvalActors,
+    hostingerWebhookSecretFiles,
     secretGid: BROKER_SERVICE_GID,
     a3AdmissionEnabled: false,
   }
+}
+
+export async function readHostingerWebhookMailboxSecrets(
+  config: SimulationBrokerConfig,
+  applicationSecrets: ApplicationSecrets,
+): Promise<Record<string, string>> {
+  const files = config.hostingerWebhookSecretFiles
+  if (files === null) return {}
+  const values = {
+    mailboxKey: await readGroupSecretFile(files.mailboxKey, config.secretGid),
+    bearer: await readGroupSecretFile(files.bearer, config.secretGid),
+  }
+  assertHostingerWebhookSecrets(values, applicationSecrets)
+  return { [values.mailboxKey]: values.bearer }
+}
+
+export function assertHostingerWebhookSecrets(
+  values: { mailboxKey: string; bearer: string },
+  applicationSecrets: ApplicationSecrets,
+): void {
+  if (
+    !/^[A-Za-z0-9_-]{32,128}$/.test(values.mailboxKey) ||
+    !/^[\x21-\x7e]{32,8192}$/.test(values.bearer)
+  )
+    throw new Error('HOSTINGER_WEBHOOK_SECRET_FORMAT_INVALID')
+  if (
+    values.mailboxKey === values.bearer ||
+    Object.values(applicationSecrets).includes(values.mailboxKey) ||
+    Object.values(applicationSecrets).includes(values.bearer)
+  )
+    throw new Error('HOSTINGER_WEBHOOK_SECRET_REUSE')
 }
 
 export interface SecretFileMetadata {
@@ -254,6 +294,21 @@ function requiredSecretPath(environment: Environment, name: string): string {
   if (!isAbsolute(path) || !path.startsWith('/run/secrets/'))
     throw new Error(`${name}_INVALID`)
   return path
+}
+
+function optionalSecretPair(
+  environment: Environment,
+  firstName: string,
+  secondName: string,
+): { mailboxKey: string; bearer: string } | null {
+  const first = environment[firstName]?.trim()
+  const second = environment[secondName]?.trim()
+  if (!first && !second) return null
+  if (!first || !second) throw new Error('HOSTINGER_WEBHOOK_SECRET_PAIR_REQUIRED')
+  return {
+    mailboxKey: requiredSecretPath(environment, firstName),
+    bearer: requiredSecretPath(environment, secondName),
+  }
 }
 
 function parseActors(environment: Environment, name: string): string[] {

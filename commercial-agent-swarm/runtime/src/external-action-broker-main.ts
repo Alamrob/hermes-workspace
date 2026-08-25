@@ -29,15 +29,15 @@ export function loadExternalActionBrokerConfig(environment: Record<string, strin
     : null
   const hostingerTokenFile = hostingerEnabled ? secretFile(environment, 'HOSTINGER_MAIL_TOKEN_FILE') : null
   const telegramTokenFile = telegramEnabled ? secretFile(environment, 'TELEGRAM_BOT_TOKEN_FILE') : null
-  const telegramChatId = telegramEnabled ? environment.TELEGRAM_APPROVER_CHAT_ID?.trim() : null
-  if (telegramEnabled && (!telegramChatId || !/^-?[0-9]{5,20}$/.test(telegramChatId)))
-    throw new Error('TELEGRAM_APPROVER_CHAT_ID_INVALID')
+  const telegramChatIdFile = telegramEnabled
+    ? secretFile(environment, 'TELEGRAM_APPROVER_CHAT_ID_FILE')
+    : null
   const proxyUrl = environment.EXTERNAL_ACTION_PROXY_URL?.trim()
   if (providersEnabled && proxyUrl !== PROXY_URL)
     throw new Error('EXTERNAL_ACTION_PROXY_INVALID')
   return {
     host, port, hostingerEnabled, telegramEnabled, bearerFile, brokerInternalFile,
-    hostingerTokenFile, telegramTokenFile, telegramChatId, proxyUrl: proxyUrl ?? null,
+    hostingerTokenFile, telegramTokenFile, telegramChatIdFile, proxyUrl: proxyUrl ?? null,
   }
 }
 
@@ -53,6 +53,9 @@ export async function startExternalActionBroker(
     : null
   if (brokerInternal !== null && bearer.trim() === brokerInternal.trim())
     throw new Error('EXTERNAL_ACTION_SECRET_REUSE')
+  const telegramChatId = config.telegramChatIdFile
+    ? await read(config.telegramChatIdFile)
+    : null
   const dispatcher = config.hostingerEnabled || config.telegramEnabled
     ? new ProxyAgent(PROXY_URL)
     : null
@@ -73,7 +76,7 @@ export async function startExternalActionBroker(
   const telegram = config.telegramEnabled
     ? new TelegramBotApiClient({
         readToken: () => read(config.telegramTokenFile!),
-        chatId: config.telegramChatId!, fetch: externalFetch,
+        chatId: telegramChatId!, fetch: externalFetch,
       })
     : undefined
   try {
