@@ -30,4 +30,15 @@ describe('policy activation dossier', () => {
     assert.doesNotMatch(migration, /record_policy_activation|activate_policy|GRANT\s+(?:INSERT|UPDATE|DELETE).*policy_activation_authorizations/is)
     assert.match(migration, /GRANT EXECUTE ON FUNCTION control\.build_policy_activation_dossier_state\(\) TO commercial_runtime/i)
   })
+
+  it('removes its own migration-history row on an empty-ledger rollback', async () => {
+    const rollback = await readFile(
+      new URL('../migrations/023_policy_activation_dossier.rollback.sql', import.meta.url),
+      'utf8',
+    )
+    assert.match(
+      rollback,
+      /DELETE FROM control\.schema_migrations\s+WHERE version='023_policy_activation_dossier'/,
+    )
+  })
 })

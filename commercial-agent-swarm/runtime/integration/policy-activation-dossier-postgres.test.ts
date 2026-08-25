@@ -34,6 +34,10 @@ integration('PostgreSQL 17 policy activation dossier', () => {
       assert.equal((await pool.query(`SELECT count(*)::int AS count FROM catalog.version_activations WHERE project_id='proptimiza' AND policy_version='policy-v2'`)).rows[0].count, 0)
       assert.equal((await pool.query(`SELECT count(*)::int AS count FROM mail.delivery_policies WHERE project_id='proptimiza' AND policy_version='policy-v2'`)).rows[0].count, 0)
       assert.equal((await pool.query(`SELECT count(*)::int AS count FROM mail.external_actions`)).rows[0].count, 0)
+      await pool.query(await readFile(new URL('../migrations/023_policy_activation_dossier.rollback.sql', import.meta.url), 'utf8'))
+      assert.equal((await pool.query(`SELECT count(*)::int AS count FROM control.schema_migrations WHERE version='023_policy_activation_dossier'`)).rows[0].count, 0)
+      assert.equal((await pool.query(`SELECT to_regclass('control.policy_activation_authorizations') AS relation`)).rows[0].relation, null)
+      assert.equal((await pool.query(`SELECT to_regprocedure('control.build_policy_activation_dossier_state()') AS function`)).rows[0].function, null)
     } finally {
       await pool.end()
       await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1', [database])
