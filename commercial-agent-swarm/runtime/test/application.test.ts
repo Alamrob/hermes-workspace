@@ -1003,4 +1003,50 @@ describe('broker application routes', () => {
     })
     assert.deepEqual(response, { status: 202, body: { accepted: true, duplicate: false } })
   })
+
+  it('records two immutable policy reviews without activation or external action', async () => {
+    const state = setup()
+    const path = '/internal/v1/policy-reviews/proptimiza/policy-v2'
+    assert.equal((await state.app.handle({ method: 'GET', path })).status, 401)
+    const pending = await state.app.handle({ method: 'GET', path, headers: headers('shadow-review-token') })
+    assert.equal(pending.status, 200)
+    assert.equal((pending.body as any).reviewCompleted, false)
+    assert.equal((pending.body as any).activationCreated, false)
+
+    const body = (reviewKind: 'commercial' | 'privacy_legal', idempotencyKey: string) => ({
+      review_kind: reviewKind,
+      decision: 'approved',
+      rationale: reviewKind === 'commercial' ? 'Confirmo oferta, precio, alcance, límites y promesas prohibidas.' : 'Confirmo revisión humana competente del alcance de privacidad y controles exigidos.',
+      reviewer_id: 'cloudflare-director-subject',
+      reviewer_email: 'proptimizaspa@gmail.com',
+      reviewed_at: NOW.toISOString(),
+      expected_policy_digest: '888988d6359694300e9d0970d7ad7166b989727b08000d5969d61a66c920ff19',
+      attestations: {
+        competent_human_confirmed: reviewKind === 'privacy_legal',
+        control_set_confirmed: true,
+        no_activation_requested: true,
+        policy_digest_confirmed: true,
+        review_scope_confirmed: true,
+      },
+      idempotency_key: idempotencyKey,
+    })
+    const commercial = await state.app.handle({ method: 'POST', path: `${path}/decision`, headers: headers('shadow-review-token'), body: body('commercial','policy-review:commercial-0001') })
+    assert.equal(commercial.status, 200)
+    assert.equal((commercial.body as any).commercialReview.decision, 'approved')
+    assert.equal((commercial.body as any).reviewCompleted, false)
+    assert.equal((commercial.body as any).activePolicyVersion, 'policy-v1')
+    assert.equal((commercial.body as any).activationCreated, false)
+    const replay = await state.app.handle({ method: 'POST', path: `${path}/decision`, headers: headers('shadow-review-token'), body: body('commercial','policy-review:commercial-0001') })
+    assert.equal(replay.status, 200)
+    const conflict = await state.app.handle({ method: 'POST', path: `${path}/decision`, headers: headers('shadow-review-token'), body: body('commercial','policy-review:commercial-0002') })
+    assert.equal(conflict.status, 409)
+
+    const privacy = await state.app.handle({ method: 'POST', path: `${path}/decision`, headers: headers('shadow-review-token'), body: body('privacy_legal','policy-review:privacy-0001') })
+    assert.equal(privacy.status, 200)
+    assert.equal((privacy.body as any).reviewCompleted, true)
+    assert.equal((privacy.body as any).effective, false)
+    assert.equal((privacy.body as any).externalContact, false)
+    assert.equal((privacy.body as any).activationCreated, false)
+    assert.equal(state.audit.events.filter((event) => event.tool_action === 'policy_review.record').every((event) => event.external_action === false), true)
+  })
 })

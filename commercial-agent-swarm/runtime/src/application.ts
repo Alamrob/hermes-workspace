@@ -25,6 +25,7 @@ import {
 } from './assignment-plan.js'
 import type { DispatchQueuePort } from './dispatch-queue.js'
 import type { ShadowDecisionDimension, ShadowDecisionValue } from './shadow-review.js'
+import { PolicyReviewError, type PolicyReviewAttestations, type PolicyReviewDecision, type PolicyReviewKind } from './policy-review.js'
 
 export interface ApplicationRequest {
   method: string
@@ -375,6 +376,21 @@ export class BrokerApplication {
         }),
       }
     }
+    if (route.action === 'getPolicyReview') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      return { status: 200, body: await this.options.repository.getPolicyReviewState() }
+    }
+    if (route.action === 'recordPolicyReview') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const input = validatePolicyReviewRequest(request.body, this.now())
+      return {
+        status: 200,
+        body: await this.options.repository.recordPolicyReview({
+          ...input,
+          requestSha256: hashAction({ project_id: 'proptimiza', policy_version: 'policy-v2', ...input }),
+        }),
+      }
+    }
     if (route.action === 'requestApproval') {
       requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
       return { status: 201, body: await this.options.approvals.request(request.body) }
@@ -498,6 +514,10 @@ function matchRoute(method: string, path: string): Route | null {
   const shadowComplete = /^\/internal\/v1\/shadow-reviews\/([^/]+)\/complete$/.exec(path)
   if (method === 'POST' && shadowComplete)
     return { action: 'completeShadowReview', auditAction: 'shadow_review.complete', id: shadowComplete[1] }
+  if (method === 'GET' && path === '/internal/v1/policy-reviews/proptimiza/policy-v2')
+    return { action: 'getPolicyReview', auditAction: 'policy_review.get' }
+  if (method === 'POST' && path === '/internal/v1/policy-reviews/proptimiza/policy-v2/decision')
+    return { action: 'recordPolicyReview', auditAction: 'policy_review.record' }
   if (method === 'POST' && path === '/v1/work-orders') return { action: 'createWorkOrder', auditAction: 'work_order.create' }
   if (method === 'POST' && path === '/v1/instruction-requests')
     return { action: 'createInstructionRequest', auditAction: 'instruction_request.create' }
@@ -981,6 +1001,54 @@ function validateShadowCompletionRequest(value: unknown): {
   }
 }
 
+function validatePolicyReviewRequest(value: unknown, now: Date): {
+  kind: PolicyReviewKind
+  decision: PolicyReviewDecision
+  rationale: string
+  reviewerId: string
+  reviewerEmail: 'proptimizaspa@gmail.com'
+  reviewedAt: string
+  expectedPolicyDigest: string
+  attestations: PolicyReviewAttestations
+  idempotencyKey: string
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError(['policy review must be an object'])
+  const record = value as Record<string, unknown>
+  const allowed = new Set(['review_kind','decision','rationale','reviewer_id','reviewer_email','reviewed_at','expected_policy_digest','attestations','idempotency_key'])
+  const attestationRecord = record.attestations && typeof record.attestations === 'object' && !Array.isArray(record.attestations) ? record.attestations as Record<string, unknown> : null
+  const attestationKeys = ['competent_human_confirmed','control_set_confirmed','no_activation_requested','policy_digest_confirmed','review_scope_confirmed']
+  const kind = string(record.review_kind)
+  const decision = string(record.decision)
+  const reviewedAt = Date.parse(string(record.reviewed_at))
+  if (Object.keys(record).some((field) => !allowed.has(field)) || !['commercial','privacy_legal'].includes(kind) || !['approved','rejected'].includes(decision) ||
+      string(record.rationale).trim().length < 20 || string(record.rationale).trim().length > 2000 ||
+      !/^[A-Za-z0-9._:@+-]{3,254}$/.test(string(record.reviewer_id)) || string(record.reviewer_email).toLowerCase() !== 'proptimizaspa@gmail.com' ||
+      !Number.isFinite(reviewedAt) || Math.abs(reviewedAt-now.getTime()) > 300_000 ||
+      string(record.expected_policy_digest) !== '888988d6359694300e9d0970d7ad7166b989727b08000d5969d61a66c920ff19' ||
+      !/^policy-review:[A-Za-z0-9._:-]{8,108}$/.test(string(record.idempotency_key)) || !attestationRecord ||
+      JSON.stringify(Object.keys(attestationRecord).sort()) !== JSON.stringify(attestationKeys) || Object.values(attestationRecord).some((item) => typeof item !== 'boolean') ||
+      attestationRecord.policy_digest_confirmed !== true || attestationRecord.no_activation_requested !== true || attestationRecord.review_scope_confirmed !== true ||
+      (decision === 'approved' && attestationRecord.control_set_confirmed !== true) ||
+      (decision === 'approved' && kind === 'privacy_legal' && attestationRecord.competent_human_confirmed !== true)) throw new ValidationError(['policy review is invalid'])
+  return {
+    kind: kind as PolicyReviewKind,
+    decision: decision as PolicyReviewDecision,
+    rationale: string(record.rationale).trim(),
+    reviewerId: string(record.reviewer_id),
+    reviewerEmail: 'proptimizaspa@gmail.com',
+    reviewedAt: new Date(reviewedAt).toISOString(),
+    expectedPolicyDigest: string(record.expected_policy_digest),
+    attestations: {
+      policyDigestConfirmed: attestationRecord.policy_digest_confirmed as boolean,
+      noActivationRequested: attestationRecord.no_activation_requested as boolean,
+      reviewScopeConfirmed: attestationRecord.review_scope_confirmed as boolean,
+      controlSetConfirmed: attestationRecord.control_set_confirmed as boolean,
+      competentHumanConfirmed: attestationRecord.competent_human_confirmed as boolean,
+    },
+    idempotencyKey: string(record.idempotency_key),
+  }
+}
+
 function resolveApprovalChannel(
   authorization: string | undefined,
   gateways: Record<ApprovalChannel, { bearer: string; actors: string[] }>,
@@ -1017,6 +1085,10 @@ function publicFailure(error: unknown): {
       status: 403,
       error: allowed.has(error.code) ? error.code : 'forbidden',
     }
+  }
+  if (error instanceof PolicyReviewError) {
+    if (error.code === 'POLICY_REVIEW_INVALID') return { status: 400, error: error.code }
+    return { status: 409, error: error.code }
   }
   if (error instanceof ApprovalError) {
     if (error.code === 'INVALID_ACTION' || error.code === 'INVALID_TTL')

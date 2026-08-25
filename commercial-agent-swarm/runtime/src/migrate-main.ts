@@ -53,6 +53,7 @@ export async function loadMigrationSources() {
       '019_codex_instruction_review',
       '020_internal_mail_attestation',
       '021_commercial_policy_v2_draft',
+      '022_policy_human_review',
     ].map(async (version) => ({
       version,
       sql: await readFile(

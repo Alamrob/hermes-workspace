@@ -29,6 +29,7 @@ const versions = [
   '019_codex_instruction_review',
   '020_internal_mail_attestation',
   '021_commercial_policy_v2_draft',
+  '022_policy_human_review',
 ]
 
 integration('PostgreSQL 17 commercial policy v2 draft', () => {
@@ -87,6 +88,7 @@ integration('PostgreSQL 17 commercial policy v2 draft', () => {
         pool.query(`DELETE FROM catalog.policy_versions WHERE project_id='proptimiza' AND version='policy-v2'`),
         /VERSIONED_CATALOG_IMMUTABLE/,
       )
+      await pool.query(await readFile(new URL('../migrations/022_policy_human_review.rollback.sql', import.meta.url), 'utf8'))
       const rollback = await readFile(
         new URL('../migrations/021_commercial_policy_v2_draft.rollback.sql', import.meta.url),
         'utf8',

@@ -5,6 +5,7 @@ import type {
   RecordShadowDecisionInput,
   ShadowReview,
 } from './shadow-review.js'
+import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 
 interface ApprovalRecord {
   approval_id: string
@@ -33,6 +34,8 @@ export interface RuntimeRepository {
   getShadowReview(id: string): Promise<ShadowReview | null>
   recordShadowDecision(input: RecordShadowDecisionInput): Promise<ShadowReview>
   completeShadowReview(input: CompleteShadowReviewInput): Promise<ShadowReview>
+  getPolicyReviewState(): Promise<PolicyReviewState>
+  recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   saveMission(record: MissionRecord): Promise<void>
   createInstructionRequest(record: InstructionRequestRecord): Promise<InstructionRequestResult>
   listInstructionRequests(): Promise<InstructionRequestView[]>
@@ -143,6 +146,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly instructionReviews = new Map<string, InstructionReviewInput>()
   private readonly webhookEvents = new Map<string, WebhookEventRecord>()
   private readonly externalActions = new Map<string, { action_hash: string; channel: string; receipt_id?: string; approval_id?: string }>()
+  private readonly policyReviews = new Map<string, RecordPolicyReviewInput>()
 
   async ready(): Promise<boolean> {
     return true
@@ -261,6 +265,21 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   }
   async completeShadowReview(_input: CompleteShadowReviewInput): Promise<ShadowReview> {
     throw new Error('SHADOW_REVIEW_NOT_FOUND')
+  }
+
+  async getPolicyReviewState(): Promise<PolicyReviewState> {
+    return inMemoryPolicyReviewState(this.policyReviews)
+  }
+
+  async recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState> {
+    const existing = this.policyReviews.get(input.kind)
+    if (existing) {
+      if (existing.idempotencyKey !== input.idempotencyKey || existing.requestSha256 !== input.requestSha256)
+        throw new PolicyReviewError('POLICY_REVIEW_IMMUTABLE_CONFLICT')
+      return inMemoryPolicyReviewState(this.policyReviews)
+    }
+    this.policyReviews.set(input.kind, structuredClone(input))
+    return inMemoryPolicyReviewState(this.policyReviews)
   }
 
   async createInstructionRequest(
@@ -404,5 +423,34 @@ function instructionReviewResult(
     converted_mission_id: input.mission?.mission_id ?? null,
     replayed,
     external_actions_allowed: false,
+  }
+}
+
+function inMemoryPolicyReviewState(reviews: Map<string, RecordPolicyReviewInput>): PolicyReviewState {
+  const project = (input: RecordPolicyReviewInput | undefined) => input ? {
+    kind: input.kind,
+    decision: input.decision,
+    rationale: input.rationale,
+    reviewerId: input.reviewerId,
+    reviewerEmail: input.reviewerEmail,
+    reviewedAt: input.reviewedAt,
+    policyDigest: input.expectedPolicyDigest,
+    attestations: structuredClone(input.attestations),
+  } : null
+  const commercial = project(reviews.get('commercial'))
+  const privacyLegal = project(reviews.get('privacy_legal'))
+  return {
+    projectId: 'proptimiza',
+    policyVersion: 'policy-v2',
+    policyDigest: '888988d6359694300e9d0970d7ad7166b989727b08000d5969d61a66c920ff19',
+    draftStatus: 'draft_human_approval_required',
+    effective: false,
+    externalContact: false,
+    activePolicyVersion: 'policy-v1',
+    commercialReview: commercial,
+    privacyLegalReview: privacyLegal,
+    reviewCompleted: commercial?.decision === 'approved' && privacyLegal?.decision === 'approved',
+    activationCreated: false,
+    provenance: { source: 'control-broker', sourceId: 'policy-review:proptimiza:policy-v2', observedAt: new Date().toISOString(), synthetic: false },
   }
 }

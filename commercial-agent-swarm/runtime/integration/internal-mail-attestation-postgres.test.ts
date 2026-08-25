@@ -29,6 +29,7 @@ const versions = [
   '019_codex_instruction_review',
   '020_internal_mail_attestation',
   '021_commercial_policy_v2_draft',
+  '022_policy_human_review',
 ]
 
 integration('PostgreSQL 17 internal-mail attestation ledger', () => {

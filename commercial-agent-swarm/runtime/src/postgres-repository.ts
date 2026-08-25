@@ -25,6 +25,7 @@ import {
   type RecordShadowDecisionInput,
   type ShadowReview,
 } from './shadow-review.js'
+import { PolicyReviewError, validatePolicyReviewState, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -240,6 +241,35 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     return validateShadowReview(result.rows[0]?.review)
   }
 
+  async getPolicyReviewState(): Promise<PolicyReviewState> {
+    const result = await this.pool.query<{ state: unknown }>(
+      'SELECT control.build_policy_review_state() AS state',
+    )
+    return validatePolicyReviewState(result.rows[0]?.state)
+  }
+
+  async recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState> {
+    const attestations = {
+      policy_digest_confirmed: input.attestations.policyDigestConfirmed,
+      no_activation_requested: input.attestations.noActivationRequested,
+      review_scope_confirmed: input.attestations.reviewScopeConfirmed,
+      control_set_confirmed: input.attestations.controlSetConfirmed,
+      competent_human_confirmed: input.attestations.competentHumanConfirmed,
+    }
+    try {
+      const result = await this.pool.query<{ state: unknown }>(
+        'SELECT control.record_policy_human_review($1,$2,$3,$4,$5,$6::timestamptz,$7,$8::jsonb,$9,$10) AS state',
+        [input.kind,input.decision,input.rationale,input.reviewerId,input.reviewerEmail,input.reviewedAt,input.expectedPolicyDigest,JSON.stringify(attestations),input.idempotencyKey,input.requestSha256],
+      )
+      return validatePolicyReviewState(result.rows[0]?.state)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      const code = ['POLICY_REVIEW_IDEMPOTENCY_CONFLICT','POLICY_REVIEW_IMMUTABLE_CONFLICT','POLICY_REVIEW_DRAFT_STATE_REQUIRED','POLICY_REVIEW_INVALID'].find((candidate) => message.includes(candidate))
+      if (code) throw new PolicyReviewError(code)
+      throw error
+    }
+  }
+
   async createInstructionRequest(
     record: InstructionRequestRecord,
   ): Promise<InstructionRequestResult> {
@@ -409,6 +439,7 @@ function approvalFromRow(
     consumed_at: row.consumed_at ? iso(row.consumed_at) : null,
   }
 }
+
 
 function validateInstructionRequestViews(value: unknown): InstructionRequestView[] {
   if (!Array.isArray(value)) throw new Error('INSTRUCTION_REQUEST_LIST_INVALID')
