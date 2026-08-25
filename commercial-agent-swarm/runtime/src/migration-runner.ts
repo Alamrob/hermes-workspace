@@ -21,6 +21,7 @@ const EXPECTED_MIGRATIONS = [
   '017_external_action_kill_switch_projection',
   '018_sales_mission_draft_projection',
   '019_codex_instruction_review',
+  '020_internal_mail_attestation',
 ] as const
 
 export interface MigrationSource {

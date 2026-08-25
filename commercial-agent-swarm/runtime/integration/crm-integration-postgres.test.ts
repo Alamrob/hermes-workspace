@@ -37,6 +37,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '017_external_action_kill_switch_projection',
         '018_sales_mission_draft_projection',
         '019_codex_instruction_review',
+        '020_internal_mail_attestation',
       ]
       await runVersionedMigrations(
         pool,
