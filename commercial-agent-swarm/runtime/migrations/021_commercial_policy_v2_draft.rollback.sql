@@ -27,6 +27,12 @@ BEGIN
   END IF;
 END$$;
 
-DELETE FROM control.schema_migrations WHERE version='021_commercial_policy_v2_draft';
+DO $$
+BEGIN
+  IF to_regclass('control.schema_migrations') IS NOT NULL THEN
+    DELETE FROM control.schema_migrations
+    WHERE version='021_commercial_policy_v2_draft';
+  END IF;
+END$$;
 
 COMMIT;
