@@ -4,12 +4,13 @@ import { InternalMailOneShot, InternalMailOneShotError, type InternalMailOneShot
 
 const NOW = new Date('2026-08-26T20:00:00.000Z')
 const PLAN_HASH = '18fe59be00a1b5dd5f4e3bb81f77ef41d69f17024cc2797e7b1ecacc3f34f348'
-const ids = ['123e4567-e89b-42d3-a456-426614174001','123e4567-e89b-42d3-a456-426614174002']
+const AUTHORIZATION_ID = '123e4567-e89b-42d3-a456-426614174001'
+const ids = ['123e4567-e89b-42d3-a456-426614174002']
 
 function input() {
   return {
     readiness: { status: 'ready_for_a3_request' as const, qa_approved: true as const, execution_allowed: false as const, checked_at: '2026-08-26T19:59:00.000Z', plan_hash: PLAN_HASH as typeof PLAN_HASH, action: { sender: 'ventas@proptimiza.com' as const, recipient: 'contacto@proptimiza.com' as const, volume: 1 as const }, failures: [] as [] },
-    authorization: { approved_by: 'proptimizaspa@gmail.com' as const, authorized_at: '2026-08-26T19:59:30.000Z', authorized_plan_hash: PLAN_HASH as typeof PLAN_HASH, instruction_sha256: 'a'.repeat(64) },
+    authorization: { authorization_id: AUTHORIZATION_ID, approved_by: 'proptimizaspa@gmail.com' as const, authorized_at: '2026-08-26T19:59:30.000Z', authorized_plan_hash: PLAN_HASH as typeof PLAN_HASH, instruction_sha256: 'a'.repeat(64) },
   }
 }
 
@@ -18,7 +19,7 @@ function setup(overrides: Partial<InternalMailOneShotPorts> = {}) {
   let active = true
   let sends = 0
   const ports: InternalMailOneShotPorts = {
-    createWorkOrder: async (order) => { events.push(`mission:${order.autonomy_level}:${order.dry_run}`) },
+    createWorkOrder: async (order) => { events.push(`mission:${order.mission_id}:${order.autonomy_level}:${order.dry_run}`) },
     requestApproval: async (action) => ({ approval_id: '223e4567-e89b-42d3-a456-426614174003', action_hash: (await import('../src/canonical.js')).hashAction(action) }),
     approve: async () => ({ token: `APPROVAL::${'x'.repeat(120)}` }),
     isGlobalKillSwitchActive: async () => active,
@@ -40,7 +41,7 @@ describe('single-use internal mail transaction', () => {
     assert.equal(state.sends, 1)
     assert.equal(state.active, true)
     assert.deepEqual(state.events, [
-      'mission:A3:false','mission.created','switch:false','kill_switch.opened_for_single_send',
+      `mission:${AUTHORIZATION_ID}:A3:false`,'mission.created','switch:false','kill_switch.opened_for_single_send',
       'send:contacto@proptimiza.com','switch:true','mail.sent_once',
     ])
   })
@@ -50,6 +51,7 @@ describe('single-use internal mail transaction', () => {
       (value: ReturnType<typeof input>) => { value.readiness.checked_at = '2026-08-26T19:00:00.000Z' },
       (value: ReturnType<typeof input>) => { value.authorization.authorized_plan_hash = '0'.repeat(64) as typeof PLAN_HASH },
       (value: ReturnType<typeof input>) => { value.authorization.instruction_sha256 = 'invalid' },
+      (value: ReturnType<typeof input>) => { value.authorization.authorization_id = 'invalid' },
     ]) {
       const value = input(); mutate(value)
       const state = setup()

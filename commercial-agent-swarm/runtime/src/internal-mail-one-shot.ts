@@ -21,6 +21,7 @@ export interface InternalMailReadiness {
 }
 
 export interface HumanInternalMailAuthorization {
+  authorization_id: string
   approved_by: 'proptimizaspa@gmail.com'
   authorized_at: string
   authorized_plan_hash: typeof PLAN_HASH
@@ -63,7 +64,10 @@ export class InternalMailOneShot {
   }): Promise<{ mission_id: string; receipt_id: string; approval_reference: string }> {
     const now = (this.options.now ?? (() => new Date()))()
     validateInput(input, now)
-    const missionId = (this.options.uuid ?? (() => crypto.randomUUID()))()
+    // The human authorization identifier is also the mission identifier. This makes
+    // the authorization consumable: replaying the same file collides before another
+    // approval or external action can be created.
+    const missionId = input.authorization.authorization_id
     const traceId = (this.options.uuid ?? (() => crypto.randomUUID()))()
     if (!UUID.test(missionId) || !UUID.test(traceId) || missionId === traceId)
       throw new InternalMailOneShotError('IDENTIFIERS_INVALID')
@@ -145,7 +149,8 @@ function validateInput(input: { readiness: InternalMailReadiness; authorization:
       input.readiness?.action?.volume !== 1 || !Array.isArray(input.readiness?.failures) || input.readiness.failures.length !== 0 ||
       !Number.isFinite(readinessAt) || now.getTime() - readinessAt > 10 * 60_000 || readinessAt > now.getTime() + 60_000)
     throw new InternalMailOneShotError('READINESS_INVALID')
-  if (input.authorization?.approved_by !== 'proptimizaspa@gmail.com' ||
+  if (!UUID.test(input.authorization?.authorization_id ?? '') ||
+      input.authorization?.approved_by !== 'proptimizaspa@gmail.com' ||
       input.authorization?.authorized_plan_hash !== PLAN_HASH || !SHA256.test(input.authorization?.instruction_sha256 ?? '') ||
       !Number.isFinite(authorizationAt) || now.getTime() - authorizationAt > 10 * 60_000 || authorizationAt > now.getTime() + 60_000)
     throw new InternalMailOneShotError('HUMAN_AUTHORIZATION_INVALID')
