@@ -12,6 +12,8 @@ import { createBrokerHttpServer } from './server.js'
 import { createBrokerDispatcher } from './runtime-entrypoints.js'
 import {
   expandDatabaseSecretFiles,
+  loadBrokerConfig,
+  loadInternalMailBrokerConfig,
   loadSimulationBrokerConfig,
   readApplicationSecrets,
   readHostingerWebhookMailboxSecrets,
@@ -31,6 +33,28 @@ export async function startSimulationBroker(
 ): Promise<{ close: () => Promise<void> }> {
   assertBrokerServiceIdentity()
   const config = loadSimulationBrokerConfig(environment)
+  return startBrokerWithConfig(environment, config)
+}
+
+export async function startInternalMailBroker(
+  environment: Record<string, string | undefined> = process.env,
+): Promise<{ close: () => Promise<void> }> {
+  assertBrokerServiceIdentity()
+  const config = loadInternalMailBrokerConfig(environment)
+  return startBrokerWithConfig(environment, config)
+}
+
+export async function startBroker(
+  environment: Record<string, string | undefined> = process.env,
+): Promise<{ close: () => Promise<void> }> {
+  assertBrokerServiceIdentity()
+  return startBrokerWithConfig(environment, loadBrokerConfig(environment))
+}
+
+async function startBrokerWithConfig(
+  environment: Record<string, string | undefined>,
+  config: ReturnType<typeof loadBrokerConfig>,
+): Promise<{ close: () => Promise<void> }> {
   const [databaseEnvironment, secrets] = await Promise.all([
     expandDatabaseSecretFiles(config, environment),
     readApplicationSecrets(config),
@@ -38,10 +62,11 @@ export async function startSimulationBroker(
   const mailboxSecrets = await readHostingerWebhookMailboxSecrets(config, secrets)
   const persistence = await createRuntimePersistence(databaseEnvironment)
   try {
-    await assertSimulationSafetyBoundary(
-      persistence.repository,
-      config.a3AdmissionEnabled,
-    )
+    if (config.mode === 'simulation') {
+      await assertSimulationSafetyBoundary(persistence.repository, config.a3AdmissionEnabled)
+    } else {
+      await assertInternalMailTestSafetyBoundary(persistence.repository, config.a3AdmissionEnabled)
+    }
 
     const externalClient = createExternalActionBrokerClientFromEnvironment(environment)
     const externalTransports = createBrokerExternalTransports(environment, {
@@ -180,6 +205,17 @@ export async function assertSimulationSafetyBoundary(
     throw new Error('SIMULATION_EXTERNAL_ACTIONS_NOT_BLOCKED')
 }
 
+export async function assertInternalMailTestSafetyBoundary(
+  repository: Pick<RuntimeRepository, 'externalActionsBlocked' | 'isKillSwitchActive'>,
+  a3AdmissionEnabled: boolean,
+): Promise<void> {
+  if (!a3AdmissionEnabled) throw new Error('INTERNAL_MAIL_A3_MUST_BE_ENABLED')
+  if (!(await repository.externalActionsBlocked()))
+    throw new Error('INTERNAL_MAIL_EXTERNAL_ACTIONS_MUST_START_BLOCKED')
+  if (!(await repository.isKillSwitchActive({ missionId: '*', channel: '*' })))
+    throw new Error('INTERNAL_MAIL_KILL_SWITCH_MUST_START_ACTIVE')
+}
+
 export async function configureDispatcherBeforeListen<T>(
   configureDispatcher: () => T,
   listen: () => Promise<void>,
@@ -238,7 +274,7 @@ export function brokerDispatcherEnvironment(
 }
 
 async function main(): Promise<void> {
-  const broker = await startSimulationBroker()
+  const broker = await startBroker()
   let stopping = false
   const stop = () => {
     if (stopping) return

@@ -65,6 +65,13 @@ export interface SimulationBrokerConfig {
   a3AdmissionEnabled: false
 }
 
+export interface InternalMailBrokerConfig extends Omit<SimulationBrokerConfig, 'mode' | 'a3AdmissionEnabled'> {
+  mode: 'internal_mail_test'
+  a3AdmissionEnabled: true
+}
+
+export type BrokerConfig = SimulationBrokerConfig | InternalMailBrokerConfig
+
 export interface ApplicationSecrets {
   workOrderHmac: string
   controlPlane: string
@@ -81,8 +88,7 @@ export interface ApplicationSecrets {
 export function loadSimulationBrokerConfig(
   environment: Environment,
 ): SimulationBrokerConfig {
-  for (const name of RAW_SECRETS)
-    if (environment[name]?.trim()) throw new Error(`RAW_SECRET_FORBIDDEN:${name}`)
+  rejectRawSecrets(environment)
   if (
     environment.NODE_ENV !== 'production' ||
     environment.COMMERCIAL_MODE !== 'simulation' ||
@@ -91,6 +97,40 @@ export function loadSimulationBrokerConfig(
     environment.EXTERNAL_ACTION_KILL_SWITCH !== 'true'
   )
     throw new Error('SIMULATION_BOUNDARY_INVALID')
+
+  return loadBrokerConfigFields(environment, 'simulation', false)
+}
+
+export function loadInternalMailBrokerConfig(
+  environment: Environment,
+): InternalMailBrokerConfig {
+  rejectRawSecrets(environment)
+  if (
+    environment.NODE_ENV !== 'production' ||
+    environment.COMMERCIAL_MODE !== 'internal_mail_test' ||
+    environment.A3_ENABLED !== 'true' ||
+    environment.EXTERNAL_RESEARCH_ENABLED !== 'false' ||
+    environment.EXTERNAL_ACTION_KILL_SWITCH !== 'true' ||
+    environment.HOSTINGER_MAIL_ENABLED !== 'true' ||
+    environment.TELEGRAM_APPROVAL_ENABLED !== 'false'
+  )
+    throw new Error('INTERNAL_MAIL_BOUNDARY_INVALID')
+  return loadBrokerConfigFields(environment, 'internal_mail_test', true)
+}
+
+export function loadBrokerConfig(environment: Environment): BrokerConfig {
+  if (environment.COMMERCIAL_MODE === 'simulation')
+    return loadSimulationBrokerConfig(environment)
+  if (environment.COMMERCIAL_MODE === 'internal_mail_test')
+    return loadInternalMailBrokerConfig(environment)
+  throw new Error('COMMERCIAL_MODE_INVALID')
+}
+
+function loadBrokerConfigFields<M extends BrokerConfig['mode'], A extends boolean>(
+  environment: Environment,
+  mode: M,
+  a3AdmissionEnabled: A,
+): Extract<BrokerConfig, { mode: M }> {
 
   const host = required(environment, 'BROKER_HOST')
   if (host !== '0.0.0.0' && host !== '127.0.0.1')
@@ -120,7 +160,7 @@ export function loadSimulationBrokerConfig(
   )
 
   return {
-    mode: 'simulation',
+    mode,
     host,
     port,
     deployedVersion,
@@ -135,12 +175,17 @@ export function loadSimulationBrokerConfig(
     approvalActors,
     hostingerWebhookSecretFiles,
     secretGid: BROKER_SERVICE_GID,
-    a3AdmissionEnabled: false,
-  }
+    a3AdmissionEnabled,
+  } as Extract<BrokerConfig, { mode: M }>
+}
+
+function rejectRawSecrets(environment: Environment): void {
+  for (const name of RAW_SECRETS)
+    if (environment[name]?.trim()) throw new Error(`RAW_SECRET_FORBIDDEN:${name}`)
 }
 
 export async function readHostingerWebhookMailboxSecrets(
-  config: SimulationBrokerConfig,
+  config: BrokerConfig,
   applicationSecrets: ApplicationSecrets,
 ): Promise<Record<string, string>> {
   const files = config.hostingerWebhookSecretFiles
@@ -224,7 +269,7 @@ export async function readOwnerSecretFile(
 }
 
 export async function expandDatabaseSecretFiles(
-  config: SimulationBrokerConfig,
+  config: BrokerConfig,
   environment: Environment,
 ): Promise<Environment> {
   const expanded: Environment = { ...environment }
@@ -234,7 +279,7 @@ export async function expandDatabaseSecretFiles(
 }
 
 export async function readApplicationSecrets(
-  config: SimulationBrokerConfig,
+  config: BrokerConfig,
 ): Promise<ApplicationSecrets> {
   const files = config.applicationSecretFiles
   const secrets = {

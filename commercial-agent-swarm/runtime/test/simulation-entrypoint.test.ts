@@ -5,6 +5,8 @@ import {
   assertBrokerServiceIdentity,
   assertDistinctApplicationSecrets,
   assertHostingerWebhookSecrets,
+  loadBrokerConfig,
+  loadInternalMailBrokerConfig,
   loadSimulationBrokerConfig,
   validateSecretFileMetadata,
 } from '../src/simulation-entrypoint.js'
@@ -12,6 +14,7 @@ import { validateGroupSecretFileMetadata } from '../src/secret-file.js'
 import { DisabledExternalMailTransport } from '../src/disabled-transports.js'
 import {
   assertSimulationKillSwitchActive,
+  assertInternalMailTestSafetyBoundary,
   assertSimulationSafetyBoundary,
 } from '../src/broker-main.js'
 
@@ -164,6 +167,31 @@ describe('Simulation broker entrypoint', () => {
     )
   })
 
+  it('accepts the exact internal-mail mode only with A3 admission and Hostinger transport', () => {
+    const internal = {
+      ...environment,
+      COMMERCIAL_MODE: 'internal_mail_test',
+      A3_ENABLED: 'true',
+      HOSTINGER_MAIL_ENABLED: 'true',
+      TELEGRAM_APPROVAL_ENABLED: 'false',
+    }
+    const config = loadInternalMailBrokerConfig(internal)
+    assert.equal(config.mode, 'internal_mail_test')
+    assert.equal(config.a3AdmissionEnabled, true)
+    assert.equal(loadBrokerConfig(internal).mode, 'internal_mail_test')
+    for (const [name, value] of [
+      ['A3_ENABLED', 'false'],
+      ['HOSTINGER_MAIL_ENABLED', 'false'],
+      ['TELEGRAM_APPROVAL_ENABLED', 'true'],
+      ['EXTERNAL_ACTION_KILL_SWITCH', 'false'],
+    ]) {
+      assert.throws(
+        () => loadInternalMailBrokerConfig({ ...internal, [name]: value }),
+        /INTERNAL_MAIL_BOUNDARY_INVALID/,
+      )
+    }
+  })
+
   it('allows A0-A2 dispatch only while every external channel remains blocked', async () => {
     await assert.doesNotReject(
       assertSimulationSafetyBoundary(
@@ -184,6 +212,26 @@ describe('Simulation broker entrypoint', () => {
         true,
       ),
       /SIMULATION_A3_MUST_BE_DISABLED/,
+    )
+  })
+
+  it('admits internal-mail A3 only when every external action starts blocked', async () => {
+    const safe = {
+      externalActionsBlocked: async () => true,
+      isKillSwitchActive: async () => true,
+    }
+    await assert.doesNotReject(assertInternalMailTestSafetyBoundary(safe, true))
+    await assert.rejects(
+      assertInternalMailTestSafetyBoundary({ ...safe, externalActionsBlocked: async () => false }, true),
+      /INTERNAL_MAIL_EXTERNAL_ACTIONS_MUST_START_BLOCKED/,
+    )
+    await assert.rejects(
+      assertInternalMailTestSafetyBoundary({ ...safe, isKillSwitchActive: async () => false }, true),
+      /INTERNAL_MAIL_KILL_SWITCH_MUST_START_ACTIVE/,
+    )
+    await assert.rejects(
+      assertInternalMailTestSafetyBoundary(safe, false),
+      /INTERNAL_MAIL_A3_MUST_BE_ENABLED/,
     )
   })
 
