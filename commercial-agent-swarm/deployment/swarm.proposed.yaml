@@ -1,0 +1,116 @@
+version: 1
+workers:
+  - id: sales-orchestrator
+    name: Sales Orchestrator
+    role: Commercial planning, broker routing and fail-closed consolidation
+    specialty: bounded work orders, least-privilege routing, evidence and human gates
+    model: deepseek-v4-flash
+    mission: Coordinate internal Simulation and Shadow work without external action.
+    profile: sales-orchestrator
+    modes: [simulate, shadow]
+    tools: [file, todo, session_search]
+    skills: []
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities: [plan, prepare-work-orders, consolidate, stop]
+    preferredTaskTypes: [commercial-plan, evidence-consolidation, qa-routing]
+    greenlightRequiredFor: []
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: market-account-intelligence
+    name: Market and Account Intelligence
+    role: Public market and account evidence researcher
+    specialty: Chilean B2B account identity, ICP signals and sourced hypotheses
+    model: deepseek-v4-flash
+    mission: Produce cited public account evidence without contact or restricted access.
+    profile: market-account-intelligence
+    modes: [simulate, shadow]
+    tools: [web, file]
+    skills: []
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities: [market-research, account-research, evidence]
+    preferredTaskTypes: [market-research, account-research, signal-validation]
+    greenlightRequiredFor: []
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: contact-data-steward
+    name: Contact Data Steward
+    role: Minimal public professional-data custodian
+    specialty: identity resolution, field provenance, freshness, minimization and suppression
+    model: deepseek-v4-flash
+    mission: Verify only necessary public professional data without contact or guessing.
+    profile: contact-data-steward
+    modes: [simulate, shadow]
+    tools: [web, file]
+    skills: []
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities: [identity-resolution, provenance, data-quality, suppression]
+    preferredTaskTypes: [contact-verification, provenance-review, deduplication]
+    greenlightRequiredFor: []
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: qualification-prioritization
+    name: Qualification and Prioritization
+    role: Reproducible local commercial scoring analyst
+    specialty: versioned factors, exclusions, confidence and explainable tiers
+    model: deepseek-v4-flash
+    mission: Score supplied evidence deterministically without research or contact.
+    profile: qualification-prioritization
+    modes: [simulate, shadow]
+    tools: [file]
+    skills: []
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities: [qualification, prioritization, explainable-scoring]
+    preferredTaskTypes: [qualification, scoring, prioritization]
+    greenlightRequiredFor: []
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: outreach-draft-manager
+    name: Outreach Draft Manager
+    role: Internal commercial draft writer
+    specialty: evidence-bound wording, versioning and claim traceability
+    model: deepseek-v4-flash
+    mission: Produce draft-only artifacts with no send, sequence or connector capability.
+    profile: outreach-draft-manager
+    modes: [simulate, shadow, draft]
+    tools: [file]
+    skills: []
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities: [draft, claim-mapping, content-versioning]
+    preferredTaskTypes: [outreach-draft, copy-review, message-variant]
+    greenlightRequiredFor: []
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: true
+  - id: commercial-qa-compliance
+    name: Commercial QA and Compliance
+    role: Independent local safety, privacy and evidence gate
+    specialty: claims, provenance, suppression, injection, policy and tool-scope review
+    model: deepseek-v4-flash
+    mission: Issue internal evidence-bound verdicts without human approval or external action.
+    profile: commercial-qa-compliance
+    modes: [simulate, shadow, gate]
+    tools: [file]
+    skills: []
+    plugins: []
+    pluginToolsets: []
+    mcpServers: []
+    capabilities: [commercial-qa, privacy, compliance, injection-review]
+    preferredTaskTypes: [qa, compliance, privacy-review, draft-review]
+    greenlightRequiredFor: []
+    maxConcurrentTasks: 1
+    acceptsBroadcast: false
+    reviewRequired: false

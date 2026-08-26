@@ -1,0 +1,52 @@
+custom_providers:
+  - name: deepseek-v4-flash
+    base_url: https://opencode.ai/zen/go/v1
+    key_env: CUSTOM_API_KEY
+    api_mode: chat_completions
+model:
+  default: deepseek-v4-flash
+  provider: custom:deepseek-v4-flash
+  max_tokens: 4096
+memory:
+  memory_enabled: false
+  user_profile_enabled: false
+  write_approval: true
+max_concurrent_sessions: 1
+agent:
+  max_turns: 6
+  disabled_toolsets:
+    - web
+    - browser
+    - terminal
+    - code_execution
+    - vision
+    - image_gen
+    - skills
+    - memory
+    - clarify
+    - delegation
+    - cronjob
+    - computer_use
+    - messaging
+    - video
+    - video_gen
+    - bfl
+    - x_search
+    - tts
+    - stt
+    - context_engine
+    - homeassistant
+    - spotify
+    - yuanbao
+toolsets:
+  - file
+  - todo
+  - session_search
+  - no_mcp
+platform_toolsets:
+  cli:
+    - file
+    - todo
+    - session_search
+    - no_mcp
+mcp_servers: {}

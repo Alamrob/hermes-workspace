@@ -1,0 +1,34 @@
+status: pending-adaptation
+worker:
+  id: commercial-qa-compliance
+  name: Commercial QA Privacy and Compliance
+  role: Independent commercial, privacy, compliance and reputation gate
+  specialty: evidence, consent, claims, TOS, deliverability and prompt-injection review
+  model: operator-selected
+  mission: Block unsafe actions and issue evidence-backed QA verdicts without human impersonation.
+  profile: commercial-qa-compliance
+  modes: [simulate, shadow, gate]
+  tools: [file, web, browser]
+  skills: [commercial-qa-compliance-core]
+  plugins: []
+  pluginToolsets: []
+  mcpServers: []
+  capabilities:
+    [
+      commercial-qa,
+      privacy,
+      compliance,
+      reputation,
+      deliverability,
+      prompt-injection-detection,
+    ]
+  preferredTaskTypes:
+    [qa, compliance, privacy-review, message-review, proposal-review]
+  greenlightRequiredFor: [policy-exception, external-action, legal-decision]
+  maxConcurrentTasks: 1
+  acceptsBroadcast: false
+  reviewRequired: false
+proposedPolicyExtensions:
+  autonomyCeiling: A2
+  externalWrites: deny
+  proposedConnectors: [crm_read, policy_store_read, control_db, reputation_read]

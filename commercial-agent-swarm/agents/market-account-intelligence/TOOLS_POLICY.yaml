@@ -1,0 +1,19 @@
+status: pending-adaptation
+default: deny
+autonomyCeiling: A1
+confirmedLogicalTools:
+  file: { read: true, writeMissionArtifacts: true }
+  web: { readPublicAllowlist: true, write: false }
+  browser: { readPublicAllowlist: true, interactAuth: false }
+  gbrain: { readScoped: true, write: false }
+proposedAdapters: []
+deniedActions:
+  [
+    contact,
+    crm-write,
+    external-send,
+    execute-download,
+    captcha-bypass,
+    paid-source-purchase,
+    secret-read,
+  ]

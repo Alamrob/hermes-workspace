@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/schemas/commercial-swarm/audit-event.schema.json",
+  "title": "Commercial Swarm Audit Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "mission_id",
+    "trace_id",
+    "agent_id",
+    "event_type",
+    "occurred_at",
+    "tool",
+    "duration_ms",
+    "input_summary",
+    "outcome",
+    "retry_count",
+    "external_action",
+    "approval_id",
+    "evidence_refs",
+    "change_refs",
+    "cost",
+    "integrity"
+  ],
+  "properties": {
+    "event_id": { "type": "string", "format": "uuid" },
+    "mission_id": { "type": "string", "format": "uuid" },
+    "trace_id": { "type": "string", "format": "uuid" },
+    "agent_id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+    "event_type": {
+      "enum": [
+        "mission_validated",
+        "assignment_started",
+        "tool_called",
+        "approval_requested",
+        "approval_checked",
+        "external_action_attempted",
+        "external_action_completed",
+        "external_action_reconciled",
+        "checkpoint",
+        "error",
+        "policy_denied",
+        "kill_switch",
+        "rollback"
+      ]
+    },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "tool": { "type": ["string", "null"] },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "input_summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Redacted; no secrets or full sensitive payloads."
+    },
+    "outcome": { "type": "string", "minLength": 1 },
+    "error": { "type": ["string", "null"] },
+    "retry_count": { "type": "integer", "minimum": 0 },
+    "external_action": { "type": "boolean" },
+    "approval_id": { "type": ["string", "null"], "format": "uuid" },
+    "evidence_refs": { "type": "array", "items": { "type": "string" } },
+    "change_refs": { "type": "array", "items": { "type": "string" } },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "amount", "input_tokens", "output_tokens"],
+      "properties": {
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "amount": { "type": "number", "minimum": 0 },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["previous_event_hash", "event_hash"],
+      "properties": {
+        "previous_event_hash": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "event_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

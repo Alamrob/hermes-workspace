@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/schemas/commercial-swarm/work-order.schema.json",
+  "title": "Codex to Hermes Commercial Work Order",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mission_id",
+    "trace_id",
+    "created_at",
+    "expires_at",
+    "project_id",
+    "project_version",
+    "offer_id",
+    "offer_version",
+    "icp_version",
+    "policy_version",
+    "objective",
+    "business_context",
+    "target_segment",
+    "allowed_actions",
+    "prohibited_actions",
+    "approved_channels",
+    "approved_tools",
+    "autonomy_level",
+    "budget_limit",
+    "volume_limits",
+    "success_criteria",
+    "stop_conditions",
+    "required_evidence",
+    "approval_token",
+    "idempotency_key",
+    "requested_by",
+    "authority",
+    "data_policy",
+    "contact_policy",
+    "dry_run"
+  ],
+  "properties": {
+    "mission_id": { "type": "string", "format": "uuid" },
+    "trace_id": { "type": "string", "format": "uuid" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "project_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "project_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "offer_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "offer_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "icp_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "policy_version": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "objective": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "business_context": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10000
+    },
+    "target_segment": { "type": "string", "minLength": 1, "maxLength": 1000 },
+    "allowed_actions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/action" }
+    },
+    "prohibited_actions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/action" }
+    },
+    "approved_channels": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "none",
+          "internal",
+          "public_web",
+          "crm",
+          "email",
+          "whatsapp",
+          "calendar",
+          "web_chat",
+          "telephone"
+        ]
+      }
+    },
+    "approved_tools": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9._:-]{0,127}$" }
+    },
+    "autonomy_level": { "enum": ["A0", "A1", "A2", "A3", "A4"] },
+    "budget_limit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "maximum"],
+      "properties": {
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+        "maximum": { "type": "number", "minimum": 0 },
+        "warning_at_percent": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 80
+        }
+      }
+    },
+    "volume_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximum_accounts",
+        "maximum_contacts",
+        "maximum_external_actions",
+        "maximum_per_contact",
+        "period"
+      ],
+      "properties": {
+        "maximum_accounts": { "type": "integer", "minimum": 0 },
+        "maximum_contacts": { "type": "integer", "minimum": 0 },
+        "maximum_external_actions": { "type": "integer", "minimum": 0 },
+        "maximum_per_contact": { "type": "integer", "minimum": 0 },
+        "period": { "enum": ["mission", "hour", "day", "week"] },
+        "channel_limits": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "success_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    },
+    "stop_conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    },
+    "required_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    },
+    "approval_token": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "pattern": "^APPROVAL::[0-9a-fA-F-]{36}::[0-9a-f]{64}::[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})::[^:]{16,256}::[0-9a-f]{64}$",
+          "maxLength": 512
+        }
+      ]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{8,200}$"
+    },
+    "requested_by": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issuer", "audience", "key_id", "algorithm", "signature"],
+      "properties": {
+        "issuer": { "type": "string", "minLength": 1 },
+        "audience": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "algorithm": { "const": "HMAC-SHA256" },
+        "signature": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "data_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "classification",
+        "allowed_countries",
+        "legal_basis",
+        "retention_days",
+        "sensitive_data_allowed"
+      ],
+      "properties": {
+        "classification": {
+          "enum": ["public", "internal", "confidential", "restricted"]
+        },
+        "allowed_countries": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[A-Z]{2}$" }
+        },
+        "legal_basis": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "consent",
+              "contract",
+              "legal_obligation",
+              "legitimate_interest_reviewed",
+              "public_source_reviewed",
+              "none"
+            ]
+          }
+        },
+        "retention_days": { "type": "integer", "minimum": 0, "maximum": 3650 },
+        "sensitive_data_allowed": { "type": "boolean" },
+        "allowed_data_categories": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "contact_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contact_permitted",
+        "suppression_check_required",
+        "consent_check_required",
+        "maximum_frequency_days",
+        "quiet_hours_timezone"
+      ],
+      "properties": {
+        "contact_permitted": { "type": "boolean" },
+        "suppression_check_required": { "const": true },
+        "consent_check_required": { "type": "boolean" },
+        "maximum_frequency_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 365
+        },
+        "quiet_hours_timezone": { "type": "string", "minLength": 1 },
+        "allowed_local_time_start": {
+          "type": "string",
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        },
+        "allowed_local_time_end": {
+          "type": "string",
+          "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        }
+      }
+    },
+    "dry_run": { "type": "boolean" },
+    "metadata": { "type": "object", "additionalProperties": true }
+  },
+  "$defs": {
+    "action": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._:-]{1,127}$"
+    }
+  }
+}

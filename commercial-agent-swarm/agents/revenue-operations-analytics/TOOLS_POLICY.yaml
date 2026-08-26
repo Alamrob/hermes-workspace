@@ -1,0 +1,27 @@
+status: pending-adaptation
+default: deny
+autonomyCeiling: A3
+confirmedLogicalTools:
+  file: { read: true, writeMissionArtifacts: true }
+proposedAdapters:
+  crm_read: { read: true, write: false }
+  crm_write:
+    {
+      writeReversibleA2: true,
+      materialWrite: approval-gateway-only,
+      compareAndSwap: true,
+    }
+  warehouse_read: { read: true, write: false }
+  control_db: { read: true, writeAuditAndDerived: true }
+  billing_read: { read: true, write: false }
+  contract_read: { read: true, write: false }
+deniedActions:
+  [
+    destructive-sql,
+    close-without-approval,
+    delete-record,
+    invent-metric,
+    overwrite-conflict,
+    billing-write,
+    contract-write,
+  ]

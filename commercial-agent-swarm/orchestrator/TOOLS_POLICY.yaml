@@ -1,0 +1,23 @@
+status: pending-adaptation
+default: deny
+autonomyCeiling: A2
+confirmedLogicalTools:
+  file: { read: true, writeMissionArtifacts: true }
+  todo: { read: true, writeInternal: true }
+  kanban: { read: true, writeInternal: true }
+  delegation: { dispatchApprovedRosterOnly: true }
+  session_search: { readScoped: true }
+proposedAdapters:
+  control_db: { read: true, writeMissionLocksBudgetsAudit: true }
+  approval_gateway: { validateOnly: true, issueHumanGrant: false }
+  kill_switch_broker: { read: true, activateByPolicy: true, deactivate: false }
+deniedActions:
+  [
+    web-research,
+    direct-external-write,
+    direct-contact,
+    strategy-change,
+    approval-issue,
+    secret-read,
+    a4,
+  ]

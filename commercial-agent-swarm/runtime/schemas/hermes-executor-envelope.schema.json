@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/schemas/hermes-executor-envelope.schema.json",
+  "title": "Isolated Hermes Executor Envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mission_id",
+    "assignment_id",
+    "profile_id",
+    "status",
+    "result",
+    "evidence",
+    "token_cost",
+    "error"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "mission_id": { "type": "string", "minLength": 1 },
+    "assignment_id": { "type": "string", "minLength": 1 },
+    "profile_id": {
+      "enum": [
+        "sales-orchestrator",
+        "market-account-intelligence",
+        "contact-data-steward",
+        "qualification-prioritization",
+        "outreach-draft-manager",
+        "commercial-qa-compliance"
+      ]
+    },
+    "status": { "enum": ["completed", "failed"] },
+    "result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["artifact_id", "content"],
+          "properties": {
+            "artifact_id": { "type": "string", "minLength": 1 },
+            "content": { "type": "string" }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
+    "evidence": { "type": "array", "items": { "type": "string" } },
+    "token_cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_tokens", "output_tokens", "currency", "amount"],
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "currency": { "type": "string", "minLength": 1 },
+        "amount": { "type": "number", "minimum": 0 }
+      }
+    },
+    "error": { "type": ["string", "null"] }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "completed" } } },
+      "then": {
+        "properties": {
+          "result": { "type": "object" },
+          "error": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "failed" } } },
+      "then": {
+        "properties": {
+          "result": { "type": "null" },
+          "error": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ]
+}

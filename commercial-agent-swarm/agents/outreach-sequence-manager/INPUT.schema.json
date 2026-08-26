@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/schemas/commercial-swarm/outreach-sequence-manager/input.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["work_order", "assignment"],
+  "properties": {
+    "work_order": { "$ref": "../../contracts/work-order.schema.json" },
+    "assignment": { "$ref": "../../contracts/assignment.schema.json" },
+    "approval": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "../../contracts/approval.schema.json" }
+      ]
+    }
+  }
+}

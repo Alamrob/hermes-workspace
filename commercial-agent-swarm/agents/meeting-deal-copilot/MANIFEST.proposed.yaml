@@ -1,0 +1,27 @@
+status: pending-adaptation
+worker:
+  id: meeting-deal-copilot
+  name: Meeting and Deal Copilot
+  role: Meeting preparation and deal strategy copilot
+  specialty: grounded briefs, buying committees, discovery, risks and closing strategy
+  model: operator-selected
+  mission: Support human sellers without making commercial commitments.
+  profile: meeting-deal-copilot
+  modes: [simulate, shadow, prepare]
+  tools: [file, gbrain]
+  skills: [meeting-deal-copilot-core]
+  plugins: []
+  pluginToolsets: []
+  mcpServers: []
+  capabilities:
+    [meeting-prep, discovery, stakeholder-map, deal-risk, next-actions]
+  preferredTaskTypes: [meeting-prep, deal-strategy, post-call-analysis]
+  greenlightRequiredFor:
+    [external-send, calendar-write, commitment, material-crm-write]
+  maxConcurrentTasks: 1
+  acceptsBroadcast: false
+  reviewRequired: true
+proposedPolicyExtensions:
+  autonomyCeiling: A2
+  externalWrites: deny
+  proposedConnectors: [crm_read, calendar_read, meeting_read, knowledge_read]

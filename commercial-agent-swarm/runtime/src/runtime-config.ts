@@ -1,0 +1,122 @@
+const BROKER_FORBIDDEN = [
+  /^CUSTOM_API_/i,
+  /^(?:OPENAI|ANTHROPIC|LLM|HERMES|MAIL|SMTP|IMAP|TELEGRAM|WHATSAPP|CRM|HUBSPOT|HOSTINGER|DOCKER|SSH|AWS|GITHUB)_/i,
+]
+const EXECUTOR_FORBIDDEN = [
+  /^DATABASE_URL(?:_FILE)?$/i,
+  /^(?:APPROVER|SAFETY|WORK_ORDER)_DATABASE_URL(?:_FILE)?$/i,
+  /^(?:MAIL|SMTP|IMAP|TELEGRAM|WHATSAPP|CRM|HUBSPOT|HOSTINGER|DOCKER|SSH|PG|AWS|GITHUB)_/i,
+]
+const CREDENTIAL_NAME =
+  /(?:KEY|TOKEN|PASSWORD|PASSWD|SECRET|COOKIE|CREDENTIAL)/i
+export const EXECUTOR_SOCKET_DIRECTORY = '/run/commercial-swarm'
+export const EXECUTOR_SOCKET_PATH = `${EXECUTOR_SOCKET_DIRECTORY}/executor.sock`
+export const HERMES_TEMPORARY_ROOT = '/run/commercial-swarm/hermes-executor'
+
+export interface BrokerRuntimeConfig {
+  socketPath: string
+  clientTimeoutMs: number
+  hermesTimeoutMs: number
+  leaseSeconds: number
+  childTimeoutSeconds: number
+}
+export interface ExecutorRuntimeConfig {
+  socketPath: string
+  socketDirectory: string
+  ipcGid: number
+  profileSeed: string
+  seedSha256: string
+  temporaryRoot: string
+  customApiKeyFile: string
+  hermesTimeoutMs: number
+}
+
+export function loadBrokerRuntimeConfig(
+  env: Record<string, string | undefined>,
+): BrokerRuntimeConfig {
+  rejectNames(env, BROKER_FORBIDDEN, 'BROKER_SECRET_BOUNDARY', [
+    'HERMES_TIMEOUT_MS',
+  ])
+  const socketPath = required(env, 'EXECUTOR_SOCKET_PATH')
+  const hermesTimeoutMs = integer(env, 'HERMES_TIMEOUT_MS', 1, 3_600_000)
+  const clientTimeoutMs = integer(
+    env,
+    'EXECUTOR_CLIENT_TIMEOUT_MS',
+    hermesTimeoutMs + 5_000,
+    3_660_000,
+  )
+  const leaseSeconds = integer(env, 'DISPATCH_LEASE_SECONDS', 2, 3600)
+  const childTimeoutSeconds = Math.ceil(hermesTimeoutMs / 1000)
+  if (
+    leaseSeconds * 1000 <= clientTimeoutMs ||
+    childTimeoutSeconds >= leaseSeconds
+  )
+    throw new Error('EXECUTOR_TIMEOUT_ORDER_INVALID')
+  return {
+    socketPath,
+    clientTimeoutMs,
+    hermesTimeoutMs,
+    leaseSeconds,
+    childTimeoutSeconds,
+  }
+}
+export function loadExecutorRuntimeConfig(
+  env: Record<string, string | undefined>,
+): ExecutorRuntimeConfig {
+  rejectNames(env, EXECUTOR_FORBIDDEN, 'EXECUTOR_SECRET_BOUNDARY', [
+    'CUSTOM_API_KEY_FILE',
+  ])
+  const socketPath = required(env, 'EXECUTOR_SOCKET_PATH')
+  const socketDirectory = required(env, 'EXECUTOR_SOCKET_DIRECTORY')
+  if (
+    socketPath !== EXECUTOR_SOCKET_PATH ||
+    socketDirectory !== EXECUTOR_SOCKET_DIRECTORY
+  )
+    throw new Error('UNSAFE_EXECUTOR_SOCKET_PATH')
+  const temporaryRoot = required(env, 'HERMES_TEMPORARY_ROOT')
+  if (temporaryRoot !== HERMES_TEMPORARY_ROOT)
+    throw new Error('UNSAFE_HERMES_TEMPORARY_ROOT')
+  return {
+    socketPath,
+    socketDirectory,
+    ipcGid: integer(env, 'EXECUTOR_IPC_GID', 1, 65535),
+    profileSeed: required(env, 'HERMES_PROFILE_SEED'),
+    seedSha256: required(env, 'HERMES_PROFILE_SEED_SHA256'),
+    temporaryRoot,
+    customApiKeyFile: required(env, 'CUSTOM_API_KEY_FILE'),
+    hermesTimeoutMs: integer(env, 'HERMES_TIMEOUT_MS', 1, 3_600_000),
+  }
+}
+function rejectNames(
+  env: Record<string, string | undefined>,
+  rules: Array<RegExp>,
+  code: string,
+  allowed: Array<string> = [],
+) {
+  for (const [name, value] of Object.entries(env))
+    if (
+      value &&
+      !allowed.includes(name) &&
+      (rules.some((rule) => rule.test(name)) || CREDENTIAL_NAME.test(name))
+    )
+      throw new Error(`${code}:${name}`)
+}
+function required(
+  env: Record<string, string | undefined>,
+  name: string,
+): string {
+  const value = env[name]?.trim()
+  if (!value) throw new Error(`${name}_REQUIRED`)
+  return value
+}
+function integer(
+  env: Record<string, string | undefined>,
+  name: string,
+  min: number,
+  max: number,
+): number {
+  const value = Number(required(env, name))
+  if (!Number.isSafeInteger(value) || value < min || value > max)
+    throw new Error(`${name}_INVALID`)
+  return value
+}
