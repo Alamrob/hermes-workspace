@@ -84,11 +84,11 @@ class InternalMailHttpPorts implements InternalMailOneShotPorts {
     return { token: value.token }
   }
 
-  async isGlobalKillSwitchActive(): Promise<boolean> {
+  async isKillSwitchActive(input: { missionId: string; channel: '*' | 'email' }): Promise<boolean> {
     const value = await this.request(
       '/internal/v1/safety/kill-switch',
       this.options.internalBearer,
-      { mission_id: '*', channel: '*' },
+      { mission_id: input.missionId, channel: input.channel },
       200,
     )
     if (!isRecord(value) || typeof value.active !== 'boolean')
@@ -99,6 +99,14 @@ class InternalMailHttpPorts implements InternalMailOneShotPorts {
   async setGlobalKillSwitch(active: boolean): Promise<void> {
     const result = await this.safetyPool.query<{ changed: boolean }>(
       "SELECT control.set_kill_switch('global','*',$1) AS changed",
+      [active],
+    )
+    if (result.rows[0]?.changed !== true) throw new Error('KILL_SWITCH_CHANGE_FAILED')
+  }
+
+  async setEmailKillSwitch(active: boolean): Promise<void> {
+    const result = await this.safetyPool.query<{ changed: boolean }>(
+      "SELECT control.set_kill_switch('channel','email',$1) AS changed",
       [active],
     )
     if (result.rows[0]?.changed !== true) throw new Error('KILL_SWITCH_CHANGE_FAILED')
@@ -199,6 +207,7 @@ async function main(environment: Record<string, string | undefined> = process.en
       secret_disclosed: false,
     })}\n`)
   } finally {
+    try { await ports.setEmailKillSwitch(true) } catch { /* terminal state is reported by the caller/watchdog */ }
     try { await ports.setGlobalKillSwitch(true) } catch { /* terminal state is reported by the caller/watchdog */ }
     await ports.close()
   }

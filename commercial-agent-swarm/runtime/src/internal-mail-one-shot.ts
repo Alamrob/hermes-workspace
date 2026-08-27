@@ -38,8 +38,9 @@ export interface InternalMailOneShotPorts {
     decided_at: string
     expires_at: string
   }): Promise<{ token: string }>
-  isGlobalKillSwitchActive(): Promise<boolean>
+  isKillSwitchActive(input: { missionId: string; channel: '*' | 'email' }): Promise<boolean>
   setGlobalKillSwitch(active: boolean): Promise<void>
+  setEmailKillSwitch(active: boolean): Promise<void>
   send(input: { action: ApprovalAction; approval_token: string }): Promise<{ receipt_id: string; approval_reference: string }>
   record(event: { type: string; at: string; mission_id: string; details: Record<string, string | boolean> }): Promise<void>
 }
@@ -109,28 +110,46 @@ export class InternalMailOneShot {
     })
     if (!/^APPROVAL::[^\s]{100,1024}$/.test(grant.token))
       throw new InternalMailOneShotError('APPROVAL_TOKEN_INVALID')
-    if (!(await ports.isGlobalKillSwitchActive()))
+    if (!(await ports.isKillSwitchActive({ missionId: '*', channel: '*' })))
       throw new InternalMailOneShotError('KILL_SWITCH_NOT_ACTIVE_BEFORE_SEND')
 
-    let opened = false
+    let globalOpened = false
+    let emailOpened = false
     let outcome: { receipt_id: string; approval_reference: string }
     try {
-      opened = true
+      globalOpened = true
       await ports.setGlobalKillSwitch(false)
-      if (await ports.isGlobalKillSwitchActive())
-        throw new InternalMailOneShotError('KILL_SWITCH_DID_NOT_OPEN')
+      if (await ports.isKillSwitchActive({ missionId: '*', channel: '*' }))
+        throw new InternalMailOneShotError('GLOBAL_KILL_SWITCH_DID_NOT_OPEN')
+      if (!(await ports.isKillSwitchActive({ missionId, channel: 'email' })))
+        throw new InternalMailOneShotError('EMAIL_KILL_SWITCH_NOT_ACTIVE_BEFORE_SEND')
+      emailOpened = true
+      await ports.setEmailKillSwitch(false)
+      if (await ports.isKillSwitchActive({ missionId, channel: 'email' }))
+        throw new InternalMailOneShotError('EMAIL_KILL_SWITCH_DID_NOT_OPEN')
       await ports.record({ type: 'kill_switch.opened_for_single_send', at: (this.options.now ?? (() => new Date()))().toISOString(), mission_id: missionId, details: { action_hash: actionHash } })
       outcome = await ports.send({ action, approval_token: grant.token })
     } catch (error) {
       throw new InternalMailOneShotError('SINGLE_SEND_FAILED', { cause: error })
     } finally {
-      if (opened) {
+      const restorationErrors: unknown[] = []
+      if (emailOpened) {
+        try { await ports.setEmailKillSwitch(true) }
+        catch (error) { restorationErrors.push(error) }
+      }
+      if (globalOpened) {
+        try { await ports.setGlobalKillSwitch(true) }
+        catch (error) { restorationErrors.push(error) }
+      }
+      if (globalOpened || emailOpened) {
         try {
-          await ports.setGlobalKillSwitch(true)
-          if (!(await ports.isGlobalKillSwitchActive())) throw new Error('verification_failed')
-        } catch (error) {
-          throw new InternalMailOneShotError('KILL_SWITCH_RESTORE_FAILED', { cause: error })
-        }
+          if (!(await ports.isKillSwitchActive({ missionId: '*', channel: '*' })) ||
+              !(await ports.isKillSwitchActive({ missionId, channel: 'email' })))
+            restorationErrors.push(new Error('verification_failed'))
+        } catch (error) { restorationErrors.push(error) }
+      }
+      if (restorationErrors.length > 0) {
+        throw new InternalMailOneShotError('KILL_SWITCH_RESTORE_FAILED', { cause: restorationErrors[0] })
       }
     }
     if (!outcome!.receipt_id || !outcome!.approval_reference)

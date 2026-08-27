@@ -16,21 +16,23 @@ function input() {
 
 function setup(overrides: Partial<InternalMailOneShotPorts> = {}) {
   const events: string[] = []
-  let active = true
+  let globalActive = true
+  let emailActive = true
   let sends = 0
   const ports: InternalMailOneShotPorts = {
     createWorkOrder: async (order) => { events.push(`mission:${order.mission_id}:${order.autonomy_level}:${order.dry_run}`) },
     requestApproval: async (action) => ({ approval_id: '223e4567-e89b-42d3-a456-426614174003', action_hash: (await import('../src/canonical.js')).hashAction(action) }),
     approve: async () => ({ token: `APPROVAL::${'x'.repeat(120)}` }),
-    isGlobalKillSwitchActive: async () => active,
-    setGlobalKillSwitch: async (value) => { active = value; events.push(`switch:${value}`) },
+    isKillSwitchActive: async ({ channel }) => globalActive || (channel === 'email' && emailActive),
+    setGlobalKillSwitch: async (value) => { globalActive = value; events.push(`switch:global:${value}`) },
+    setEmailKillSwitch: async (value) => { emailActive = value; events.push(`switch:email:${value}`) },
     send: async ({ action }) => { sends += 1; events.push(`send:${action.recipients[0]}`); return { receipt_id: 'hostinger:receipt', approval_reference: '223e4567-e89b-42d3-a456-426614174003' } },
     record: async (event) => { events.push(event.type) },
     ...overrides,
   }
   let index = 0
   const runner = new InternalMailOneShot({ ports, now: () => NOW, uuid: () => ids[index++]! })
-  return { runner, events, get active() { return active }, get sends() { return sends } }
+  return { runner, events, get active() { return globalActive && emailActive }, get sends() { return sends } }
 }
 
 describe('single-use internal mail transaction', () => {
@@ -41,8 +43,8 @@ describe('single-use internal mail transaction', () => {
     assert.equal(state.sends, 1)
     assert.equal(state.active, true)
     assert.deepEqual(state.events, [
-      `mission:${AUTHORIZATION_ID}:A3:false`,'mission.created','switch:false','kill_switch.opened_for_single_send',
-      'send:contacto@proptimiza.com','switch:true','mail.sent_once',
+      `mission:${AUTHORIZATION_ID}:A3:false`,'mission.created','switch:global:false','switch:email:false',
+      'kill_switch.opened_for_single_send','send:contacto@proptimiza.com','switch:email:true','switch:global:true','mail.sent_once',
     ])
   })
 
@@ -62,7 +64,7 @@ describe('single-use internal mail transaction', () => {
   })
 
   it('never sends while the switch is already open', async () => {
-    const state = setup({ isGlobalKillSwitchActive: async () => false })
+    const state = setup({ isKillSwitchActive: async () => false })
     await assert.rejects(state.runner.run(input()), /KILL_SWITCH_NOT_ACTIVE_BEFORE_SEND/)
     assert.equal(state.sends, 0)
   })
@@ -73,7 +75,7 @@ describe('single-use internal mail transaction', () => {
     await assert.rejects(state.runner.run(input()), /SINGLE_SEND_FAILED/)
     assert.equal(attempts, 1)
     assert.equal(state.active, true)
-    assert.deepEqual(state.events.slice(-1), ['switch:true'])
+    assert.deepEqual(state.events.slice(-2), ['switch:email:true', 'switch:global:true'])
   })
 
   it('attempts fail-safe restoration even when opening the switch errors', async () => {
@@ -87,10 +89,12 @@ describe('single-use internal mail transaction', () => {
   })
 
   it('surfaces switch restoration failure as the terminal safety error', async () => {
-    let active = true
+    let globalActive = true
+    let emailActive = true
     const state = setup({
-      isGlobalKillSwitchActive: async () => active,
-      setGlobalKillSwitch: async (value) => { if (value) throw new Error('restore_failed'); active = false },
+      isKillSwitchActive: async ({ channel }) => globalActive || (channel === 'email' && emailActive),
+      setGlobalKillSwitch: async (value) => { if (value) throw new Error('restore_failed'); globalActive = false },
+      setEmailKillSwitch: async (value) => { emailActive = value },
     })
     await assert.rejects(state.runner.run(input()), /KILL_SWITCH_RESTORE_FAILED/)
   })

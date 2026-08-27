@@ -45,8 +45,9 @@ describe('internal-mail one-shot production adapters', () => {
     await ports.createWorkOrder(order)
     await ports.requestApproval(ACTION)
     await ports.approve({ approval_id: '223e4567-e89b-42d3-a456-426614174003', action_hash: hashAction(ACTION), actor_id: 'proptimizaspa@gmail.com', decided_at: '2026-08-26T20:00:00Z', expires_at: '2026-08-26T20:15:00Z' })
-    assert.equal(await ports.isGlobalKillSwitchActive(), true)
+    assert.equal(await ports.isKillSwitchActive({ missionId: '*', channel: '*' }), true)
     await ports.setGlobalKillSwitch(false)
+    await ports.setEmailKillSwitch(false)
     await ports.send({ action: ACTION, approval_token: `APPROVAL::${'x'.repeat(120)}` })
     await ports.record({ type: 'mail.sent_once', at: '2026-08-26T20:00:00Z', mission_id: ACTION.mission_id, details: { receipt_recorded: true } })
     await ports.close()
@@ -55,7 +56,10 @@ describe('internal-mail one-shot production adapters', () => {
     assert.deepEqual(calls.map((call) => call.authorization), ['Bearer control','Bearer control','Bearer sales','Bearer internal','Bearer connector'])
     assert.match(String((calls[0]!.body.authority as any).signature), /^[0-9a-f]{64}$/)
     assert.notEqual((calls[0]!.body.authority as any).signature, '0'.repeat(64))
-    assert.deepEqual(safetyQueries[0], ["SELECT control.set_kill_switch('global','*',$1) AS changed", [false]])
+    assert.deepEqual(safetyQueries, [
+      ["SELECT control.set_kill_switch('global','*',$1) AS changed", [false]],
+      ["SELECT control.set_kill_switch('channel','email',$1) AS changed", [false]],
+    ])
     assert.equal(runtimeQueries.length, 1)
     const serialized = JSON.stringify({ calls, runtimeQueries, safetyQueries })
     for (const secret of ['w'.repeat(32), 'control', 'sales', 'connector', 'internal']) {
