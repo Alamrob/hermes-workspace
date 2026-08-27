@@ -282,7 +282,7 @@ const WORKFLOWS: Workflow[] = [
 
 const MARKER = /^AUTOMATION_V1 mission=([0-9a-f-]{36}) workflow=([a-z0-9._-]+) state=dispatched sig=([0-9a-f]{64})$/
 const RESULT_MARKER = /^AUTOMATION_RESULT_V2 mission=([0-9a-f-]{36}) workflow=([a-z0-9._-]+) state=(review_ready|blocked) primary_sha256=([a-f0-9]{64}|missing) qa_sha256=([a-f0-9]{64}|missing) external_actions=0 sig=([0-9a-f]{64})$/
-const LEGACY_WORKFLOW_VERSION = 'commercial-v14'
+const TERMINAL_HISTORY_VERSIONS = ['commercial-v14', 'commercial-v15'] as const
 
 export class CommercialAutomation {
   private running = false
@@ -291,7 +291,7 @@ export class CommercialAutomation {
 
   constructor(private readonly options: CommercialAutomationOptions) {
     this.now = options.now ?? (() => new Date())
-    this.workflowVersion = options.workflowVersion ?? 'commercial-v15'
+    this.workflowVersion = options.workflowVersion ?? 'commercial-v16'
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(this.workflowVersion)) throw new Error('AUTOMATION_WORKFLOW_VERSION_INVALID')
   }
 
@@ -318,8 +318,9 @@ export class CommercialAutomation {
       const comments = await this.options.paperclip.listComments(issue.id)
       if (
         issue.identifier !== 'ALA-51' &&
-        this.workflowVersion !== LEGACY_WORKFLOW_VERSION &&
-        this.hasTerminalMarker(issue.id, comments, LEGACY_WORKFLOW_VERSION)
+        TERMINAL_HISTORY_VERSIONS.some(
+          (version) => version !== this.workflowVersion && this.hasTerminalMarker(issue.id, comments, version),
+        )
       ) continue
       const marker = comments
         .filter((comment) => comment.authorType === 'system' || comment.authorType === 'user')
