@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { RuntimeRepository } from './repository.js'
 import { constantTimeSecretEqual } from './security.js'
 
@@ -61,4 +62,3 @@ export class WebhookService {
     return { accepted: true, duplicate: !inserted }
   }
 }
-import { createHash } from 'node:crypto'

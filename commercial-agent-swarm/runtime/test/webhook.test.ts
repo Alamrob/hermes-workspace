@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { describe, it } from 'node:test'
 import { InMemoryRuntimeRepository } from '../src/repository.js'
 import { WebhookError, WebhookService } from '../src/webhook.js'
@@ -90,5 +91,41 @@ describe('Hostinger Mail webhook', () => {
     )
     assert.equal(JSON.stringify(stored[0]?.untrusted_payload).includes('event_type'), false)
     assert.equal('instruction' in (stored[0] ?? {}), false)
+  })
+
+  it('accepts the documented Hostinger message.received envelope without retaining the full message', async () => {
+    const state = setup()
+    const documentedPayload = JSON.stringify({
+      event: 'message.received',
+      mailbox: 'contacto@proptimiza.com',
+      message: {
+        from: 'ventas@proptimiza.com',
+        subject: 'Re: Prueba interna de correo Proptimiza',
+        thread_id: 'thr_internal_test',
+      },
+    })
+
+    assert.deepEqual(
+      await state.webhook.ingest({
+        mailboxKey: 'contacto',
+        authorization: 'Bearer 0123456789abcdef0123456789abcdef',
+        rawBody: documentedPayload,
+      }),
+      { accepted: true, duplicate: false },
+    )
+
+    const stored = await state.repository.listWebhookEvents()
+    const expectedHash = createHash('sha256')
+      .update('contacto')
+      .update(Buffer.from([0]))
+      .update(documentedPayload)
+      .digest('hex')
+    assert.equal(stored[0]?.provider_event_id, expectedHash)
+    assert.deepEqual(Object.keys(stored[0]?.untrusted_payload ?? {}).sort(), [
+      'byte_length',
+      'payload_sha256',
+      'preview',
+    ])
+    assert.equal(stored[0]?.instruction_eligible, false)
   })
 })
