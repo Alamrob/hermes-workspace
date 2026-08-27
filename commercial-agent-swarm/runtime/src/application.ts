@@ -431,6 +431,26 @@ export class BrokerApplication {
         ),
       }
     }
+    if (route.action === 'activateKillSwitch') {
+      const channel = resolveApprovalChannel(
+        request.headers?.authorization,
+        this.options.authentication.approvalGateways,
+      )
+      const gateway = this.options.authentication.approvalGateways[channel]
+      const activation = validateKillSwitchActivation(request.body, this.now())
+      if (!gateway.actors.includes(activation.actorId))
+        throw new AuthenticationError('FORBIDDEN')
+      await this.options.repository.activateKillSwitch('global', '*')
+      return {
+        status: 200,
+        body: {
+          active: true,
+          scope: 'global',
+          scope_id: '*',
+          activated_by: `${channel}:${activation.actorId}`,
+        },
+      }
+    }
     if (route.action === 'sendMail') {
       requireBearer(request.headers?.authorization, this.options.authentication.connector)
       return { status: 200, body: await this.options.mail.send(request.body) }
@@ -567,6 +587,11 @@ function matchRoute(method: string, path: string): Route | null {
       action: 'decideApproval',
       auditAction: 'approval.decision',
       id: decision[1],
+    }
+  if (method === 'POST' && path === '/v1/kill-switches/activate')
+    return {
+      action: 'activateKillSwitch',
+      auditAction: 'safety.kill_switch.activate',
     }
   const webhook = /^\/webhooks\/hostinger-mail\/([^/]+)$/.exec(path)
   if (method === 'POST' && webhook) return { action: 'webhook', auditAction: 'webhook.ingest', id: webhook[1] }
@@ -748,6 +773,35 @@ function validateEvidenceDecision(value: unknown): {
     actorId: record.actor_id,
     decidedAt: new Date(record.decided_at).toISOString(),
     expiresAt: new Date(record.expires_at).toISOString(),
+  }
+}
+
+function validateKillSwitchActivation(
+  value: unknown,
+  now: Date,
+): {
+  actorId: string
+  occurredAt: string
+} {
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw new ValidationError(['kill switch activation must be an object'])
+  const record = value as Record<string, unknown>
+  const expected = ['actor_id', 'occurred_at', 'reason', 'scope', 'scope_id']
+  if (
+    JSON.stringify(Object.keys(record).sort()) !== JSON.stringify(expected) ||
+    record.scope !== 'global' ||
+    record.scope_id !== '*' ||
+    record.reason !== 'telegram_emergency_stop' ||
+    typeof record.actor_id !== 'string' ||
+    !/^[A-Za-z0-9._:@-]{1,128}$/.test(record.actor_id) ||
+    typeof record.occurred_at !== 'string' ||
+    !Number.isFinite(Date.parse(record.occurred_at)) ||
+    Math.abs(Date.parse(record.occurred_at) - now.getTime()) > 5 * 60_000
+  )
+    throw new ValidationError(['kill switch activation is invalid'])
+  return {
+    actorId: record.actor_id,
+    occurredAt: new Date(record.occurred_at).toISOString(),
   }
 }
 

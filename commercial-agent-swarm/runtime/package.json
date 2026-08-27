@@ -13,6 +13,7 @@
     "start:crm-sync": "node dist/crm-sync-main.js",
     "start:commercial-automation": "node dist/commercial-automation-main.js",
     "start:external-action-broker": "node dist/external-action-broker-main.js",
+    "start:telegram-approval-poller": "node dist/telegram-approval-poller-main.js",
     "start:workspace-instruction-gateway": "node dist/workspace-instruction-gateway-main.js",
     "smoke:usage": "node dist/usage-smoke-main.js",
     "reconcile:crm-sync": "node dist/crm-sync-main.js reconcile",

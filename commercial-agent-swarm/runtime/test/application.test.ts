@@ -727,6 +727,49 @@ describe('broker application routes', () => {
     }), { status: 200, body: { active: true } })
   })
 
+  it('allows an authenticated allowlisted Telegram gateway to activate but never deactivate the global kill switch', async () => {
+    const state = setup()
+    const body = {
+      actor_id: 'telegram-user-1',
+      occurred_at: NOW.toISOString(),
+      reason: 'telegram_emergency_stop',
+      scope: 'global',
+      scope_id: '*',
+    }
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/kill-switches/activate', body,
+    })).status, 401)
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/kill-switches/activate',
+      headers: headers('telegram-approval-token'),
+      body: { ...body, actor_id: 'not-allowlisted' },
+    })).status, 403)
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/kill-switches/activate',
+      headers: headers('telegram-approval-token'),
+      body: { ...body, reason: 'disable' },
+    })).status, 400)
+    assert.deepEqual(await state.app.handle({
+      method: 'POST', path: '/v1/kill-switches/activate',
+      headers: headers('telegram-approval-token'), body,
+    }), {
+      status: 200,
+      body: {
+        active: true,
+        scope: 'global',
+        scope_id: '*',
+        activated_by: 'telegram:telegram-user-1',
+      },
+    })
+    assert.equal(await state.repository.isKillSwitchActive({
+      missionId: '11111111-1111-4111-8111-111111111111', channel: 'email',
+    }), true)
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/kill-switches/deactivate',
+      headers: headers('telegram-approval-token'), body,
+    })).status, 404)
+  })
+
   it('exposes a minimal fail-closed human shadow gate only to the internal capability', async () => {
     const state = setup()
     state.repository.getShadowReview = async () => ({

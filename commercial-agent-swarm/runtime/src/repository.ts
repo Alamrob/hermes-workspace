@@ -57,6 +57,7 @@ export interface RuntimeRepository {
     now: string
   }): Promise<ApprovalGrantRecord | null>
   isKillSwitchActive(input: { missionId: string; channel: string }): Promise<boolean>
+  activateKillSwitch(scope: string, scopeId: string): Promise<void>
   externalActionsBlocked(): Promise<boolean>
   claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string; actionHash: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string; approval_id: string }>
   completeExternalAction(input: { missionId: string; idempotencyKey: string; actionHash: string; receipt_id: string; approval_id: string }): Promise<void>
