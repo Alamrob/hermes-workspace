@@ -12,7 +12,7 @@ import { FileTelegramCursorStore } from './telegram-cursor-store.js'
 const SERVICE_UID = 10016
 const SERVICE_GID = 10016
 const TELEGRAM_SECRET_GID = 10014
-const PROXY_URL = 'http://external-egress-proxy:3128'
+const PROXY_URL = 'http://172.16.12.1:3130'
 const BROKER_URL = 'http://broker:8080'
 const STATE_PATH = '/var/lib/proptimiza-telegram/cursor.json'
 

@@ -184,7 +184,7 @@ describe('Telegram approval poller configuration', () => {
   const base = {
     NODE_ENV: 'production', TELEGRAM_CONTROL_ENABLED: 'true', TELEGRAM_POLLER_HOST: '0.0.0.0',
     TELEGRAM_POLLER_PORT: '8092', TELEGRAM_BROKER_URL: 'http://broker:8080',
-    TELEGRAM_PROXY_URL: 'http://external-egress-proxy:3128',
+    TELEGRAM_PROXY_URL: 'http://172.16.12.1:3130',
     TELEGRAM_CURSOR_PATH: '/var/lib/proptimiza-telegram/cursor.json', TELEGRAM_ACTOR_ID: 'telegram-gateway',
     TELEGRAM_BOT_TOKEN_FILE: '/run/secrets/telegram-bot-token',
     TELEGRAM_APPROVER_CHAT_ID_FILE: '/run/secrets/telegram-approver-chat-id',
@@ -204,6 +204,7 @@ describe('Telegram approval poller configuration', () => {
       (value: any) => { value.TELEGRAM_BOT_TOKEN = 'secret' },
       (value: any) => { value.TELEGRAM_BROKER_URL = 'https://evil.test' },
       (value: any) => { value.TELEGRAM_PROXY_URL = 'http://direct:3128' },
+      (value: any) => { value.TELEGRAM_PROXY_URL = 'http://172.16.12.2:3130' },
       (value: any) => { value.TELEGRAM_CURSOR_PATH = '/tmp/cursor' },
       (value: any) => { value.TELEGRAM_ACTOR_ID = 'admin' },
     ]) {
