@@ -174,11 +174,11 @@ $$;
 DO $$
 DECLARE ala52_ok boolean; ala53_ok boolean;
 BEGIN
-  SELECT count(*)=2 AND bool_and(status='succeeded' AND usage_budget_state='settled' AND api_calls_used=1 AND coalesce((result_envelope#>>'{metrics,external_actions}')::integer,0)=0) AND
+  SELECT count(*)=2 AND bool_and(status='succeeded' AND usage_budget_state='settled' AND api_calls_used=1 AND coalesce((result_envelope#>>'{agent_result,metrics,external_actions}')::integer,-1)=0) AND
     count(*) FILTER(WHERE artifact_sha256='37bdaf503a815bd4acdcf3ffbc2fa424e013250be3ed37ce8cbe93fa11c71563')=1 AND
     count(*) FILTER(WHERE artifact_sha256='75b33e7b244059c776e6e8d05adbfa0cea9619496d2f5b50572d0aedd7076ddf')=1
   INTO ala52_ok FROM control.dispatch_jobs WHERE mission_id='6d08b421-69db-5c34-bdf7-601444f9e11b';
-  SELECT count(*)=2 AND bool_and(status='succeeded' AND usage_budget_state='settled' AND api_calls_used=1 AND coalesce((result_envelope#>>'{metrics,external_actions}')::integer,0)=0) AND
+  SELECT count(*)=2 AND bool_and(status='succeeded' AND usage_budget_state='settled' AND api_calls_used=1 AND coalesce((result_envelope#>>'{agent_result,metrics,external_actions}')::integer,-1)=0) AND
     count(*) FILTER(WHERE artifact_sha256='04d6975de24153e541846ac1b575464ca4f799d8c82354f20fd705c155ad46ad')=1 AND
     count(*) FILTER(WHERE artifact_sha256='9761cd549ce4c344cf36fcfe800d4dd606dbaa4ca327139c17458a7614cee9c7')=1
   INTO ala53_ok FROM control.dispatch_jobs WHERE mission_id='5f45d649-5527-5bdb-82fc-dd3c2315582f';
