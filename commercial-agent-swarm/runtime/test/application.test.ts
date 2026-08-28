@@ -1203,6 +1203,39 @@ describe('broker application routes', () => {
     assert.deepEqual(stale.body, { error: 'A1_RESEARCH_AUTHORIZATION_GATE_CLOSED' })
   })
 
+  it('exposes only an unsigned A1 work-order preview without persistence or dispatch', async () => {
+    const state = setup()
+    const reviewId = 'a2500000-0000-4500-8500-000000000053'
+    const dossier: any = {
+      reviewId, projectId: 'proptimiza', offerId: 'operacion-sin-planillas', offerVersion: 'v1',
+      status: 'authorization_required', reviewCompleted: true, eligibleAccountCount: 1,
+      accounts: [{ slot: 1, companyName: 'Cuenta Uno', sourceUrl: 'https://cuenta-uno.cl/', decision: 'accepted_internal', decisionVersion: 1 }],
+      autonomyLevel: 'A1', allowedActions: ['analysis.internal','research.public.read'],
+      prohibitedActions: ['credit.consume','personal_contact.discover','personal_email.infer','crm.write','mail.send','message.send','campaign.activate','a3.enable'],
+      approvedChannels: ['internal','public_web'], requestedTools: ['hermes.analysis','hermes.web'],
+      allowedDataCategories: ['public_company_identity','public_business_information','public_source_provenance','published_role_based_corporate_channel'],
+      maximumAccounts: 1, maximumContacts: 0, maximumExternalActions: 0, maximumBudgetUsd: 0.5,
+      providerCreditSpendAllowed: false, internetAccessAllowed: false, contactPermitted: false, crmWriteAllowed: false,
+      authorizationRequired: true, missionCreated: false, productionGate: 'blocked', externalActions: 0,
+      provenance: { source: 'control-broker', sourceId: `a1-research-dossier:${reviewId}`, observedAt: NOW.toISOString(), synthetic: false },
+    }
+    state.repository.getA1ResearchDossier = async () => dossier
+    state.repository.getA1ResearchAuthorizationState = async () => null
+    const path = `/internal/v1/a1-work-order-previews/${reviewId}`
+    assert.equal((await state.app.handle({ method: 'GET', path })).status, 401)
+    const response = await state.app.handle({ method: 'GET', path, headers: headers('shadow-review-token') })
+    assert.equal(response.status, 200)
+    assert.equal((response.body as any).nextRequiredGate, 'human_authorization')
+    assert.equal((response.body as any).signedWorkOrderPresent, false)
+    assert.equal((response.body as any).workOrderPersisted, false)
+    assert.equal((response.body as any).missionCreated, false)
+    assert.equal((response.body as any).dispatchQueued, false)
+    assert.equal((response.body as any).executionAuthorized, false)
+    assert.equal((response.body as any).providerCreditSpendAllowed, false)
+    assert.equal((response.body as any).maximumExternalActions, 0)
+    assert.equal(state.audit.events.filter((event) => event.tool_action === 'a1_work_order_preview.get').every((event) => event.external_action === false), true)
+  })
+
   it('exposes an authenticated, inert internal-mail test plan without mission or approval', async () => {
     const state = setup()
     const path = '/internal/v1/internal-mail-test-plans/proptimiza/v1'
