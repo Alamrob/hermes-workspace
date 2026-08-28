@@ -29,6 +29,7 @@ describe('versioned migration runner', () => {
       { version: '021_commercial_policy_v2_draft', sql: 'SELECT 21;' },
       { version: '022_policy_human_review', sql: 'SELECT 22;' },
       { version: '023_policy_activation_dossier', sql: 'SELECT 23;' },
+      { version: '024_draft_internal_review', sql: 'SELECT 24;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -59,6 +60,7 @@ describe('versioned migration runner', () => {
         '021_commercial_policy_v2_draft',
         '022_policy_human_review',
         '023_policy_activation_dossier',
+        '024_draft_internal_review',
       ],
     )
     assert.equal(
@@ -67,17 +69,17 @@ describe('versioned migration runner', () => {
     )
   })
 
-  it('loads the complete production migration set through the inert activation dossier', async () => {
+  it('loads the complete production migration set through the internal draft-review gate', async () => {
     const migrations = await loadMigrationSources()
-    assert.equal(migrations.length, 23)
-    assert.equal(migrations.at(-1)?.version, '023_policy_activation_dossier')
+    assert.equal(migrations.length, 24)
+    assert.equal(migrations.at(-1)?.version, '024_draft_internal_review')
     assert.match(
       migrations.at(-1)?.sql ?? '',
-      /control\.build_policy_activation_dossier_state/,
+      /control\.build_draft_review/,
     )
     assert.doesNotMatch(
       migrations.at(-1)?.sql ?? '',
-      /INSERT INTO\s+(?:control\.policy_activation_authorizations|mail\.delivery_policies|mail\.delivery_policy_activations|catalog\.version_activations)/i,
+      /INSERT INTO\s+(?:control\.approvals|mail\.external_actions|mail\.delivery_policies|mail\.delivery_policy_activations|catalog\.version_activations)/i,
     )
   })
 

@@ -5,6 +5,11 @@ import type {
   RecordShadowDecisionInput,
   ShadowReview,
 } from './shadow-review.js'
+import type {
+  CompleteDraftReviewInput,
+  DraftReview,
+  RecordDraftReviewItemInput,
+} from './draft-review.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
 
@@ -35,6 +40,10 @@ export interface RuntimeRepository {
   getShadowReview(id: string): Promise<ShadowReview | null>
   recordShadowDecision(input: RecordShadowDecisionInput): Promise<ShadowReview>
   completeShadowReview(input: CompleteShadowReviewInput): Promise<ShadowReview>
+  listDraftReviews(): Promise<DraftReview[]>
+  getDraftReview(id: string): Promise<DraftReview | null>
+  recordDraftReviewItem(input: RecordDraftReviewItemInput): Promise<DraftReview>
+  completeDraftReview(input: CompleteDraftReviewInput): Promise<DraftReview>
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
@@ -268,6 +277,14 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   }
   async completeShadowReview(_input: CompleteShadowReviewInput): Promise<ShadowReview> {
     throw new Error('SHADOW_REVIEW_NOT_FOUND')
+  }
+  async listDraftReviews(): Promise<DraftReview[]> { return [] }
+  async getDraftReview(_id: string): Promise<DraftReview | null> { return null }
+  async recordDraftReviewItem(_input: RecordDraftReviewItemInput): Promise<DraftReview> {
+    throw new Error('DRAFT_REVIEW_NOT_FOUND')
+  }
+  async completeDraftReview(_input: CompleteDraftReviewInput): Promise<DraftReview> {
+    throw new Error('DRAFT_REVIEW_NOT_FOUND')
   }
 
   async getPolicyReviewState(): Promise<PolicyReviewState> {

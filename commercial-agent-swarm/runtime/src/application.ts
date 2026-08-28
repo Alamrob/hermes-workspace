@@ -26,6 +26,7 @@ import {
 } from './assignment-plan.js'
 import type { DispatchQueuePort } from './dispatch-queue.js'
 import type { ShadowDecisionDimension, ShadowDecisionValue } from './shadow-review.js'
+import type { DraftReviewDecision } from './draft-review.js'
 import { PolicyReviewError, type PolicyReviewAttestations, type PolicyReviewDecision, type PolicyReviewKind } from './policy-review.js'
 
 export interface ApplicationRequest {
@@ -377,6 +378,40 @@ export class BrokerApplication {
         }),
       }
     }
+    if (route.action === 'listDraftReviews') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      return { status: 200, body: await this.options.repository.listDraftReviews() }
+    }
+    if (route.action === 'getDraftReview') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const review = await this.options.repository.getDraftReview(route.id!)
+      return review ? { status: 200, body: review } : { status: 404, body: { error: 'not_found' } }
+    }
+    if (route.action === 'recordDraftReviewItem') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const input = validateDraftReviewItemRequest(request.body, route.slot)
+      return {
+        status: 200,
+        body: await this.options.repository.recordDraftReviewItem({
+          ...input,
+          reviewId: route.id!,
+          itemSlot: route.slot!,
+          requestSha256: hashAction({ review_id: route.id!, item_slot: route.slot!, ...input }),
+        }),
+      }
+    }
+    if (route.action === 'completeDraftReview') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const input = validateDraftReviewCompletionRequest(request.body)
+      return {
+        status: 200,
+        body: await this.options.repository.completeDraftReview({
+          ...input,
+          reviewId: route.id!,
+          requestSha256: hashAction({ review_id: route.id!, ...input }),
+        }),
+      }
+    }
     if (route.action === 'getPolicyReview') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       return { status: 200, body: await this.options.repository.getPolicyReviewState() }
@@ -543,6 +578,17 @@ function matchRoute(method: string, path: string): Route | null {
   const shadowComplete = /^\/internal\/v1\/shadow-reviews\/([^/]+)\/complete$/.exec(path)
   if (method === 'POST' && shadowComplete)
     return { action: 'completeShadowReview', auditAction: 'shadow_review.complete', id: shadowComplete[1] }
+  if (method === 'GET' && path === '/internal/v1/draft-reviews')
+    return { action: 'listDraftReviews', auditAction: 'draft_review.list' }
+  const draftReview = /^\/internal\/v1\/draft-reviews\/([^/]+)$/.exec(path)
+  if (method === 'GET' && draftReview)
+    return { action: 'getDraftReview', auditAction: 'draft_review.get', id: draftReview[1] }
+  const draftItem = /^\/internal\/v1\/draft-reviews\/([^/]+)\/items\/(\d+)$/.exec(path)
+  if (method === 'PUT' && draftItem)
+    return { action: 'recordDraftReviewItem', auditAction: 'draft_review.item.record', id: draftItem[1], slot: Number(draftItem[2]) }
+  const draftComplete = /^\/internal\/v1\/draft-reviews\/([^/]+)\/complete$/.exec(path)
+  if (method === 'POST' && draftComplete)
+    return { action: 'completeDraftReview', auditAction: 'draft_review.complete', id: draftComplete[1] }
   if (method === 'GET' && path === '/internal/v1/policy-reviews/proptimiza/policy-v2')
     return { action: 'getPolicyReview', auditAction: 'policy_review.get' }
   if (method === 'POST' && path === '/internal/v1/policy-reviews/proptimiza/policy-v2/decision')
@@ -1068,6 +1114,81 @@ function validateShadowCompletionRequest(value: unknown): {
   }
 }
 
+function validateDraftReviewItemRequest(
+  value: unknown,
+  slot?: number,
+): {
+  decision: DraftReviewDecision
+  rationale: string
+  revisedSubject: string | null
+  revisedBody: string | null
+  expectedVersion: number
+  actorId: string
+  idempotencyKey: string
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new ValidationError(['draft review item must be an object'])
+  const record = value as Record<string, unknown>
+  const allowed = new Set(['decision','rationale','revised_subject','revised_body','expected_version','actor_id','idempotency_key'])
+  const decision = string(record.decision)
+  const rationale = string(record.rationale).trim()
+  const revisedSubject = record.revised_subject === null ? null : string(record.revised_subject).trim()
+  const revisedBody = record.revised_body === null ? null : string(record.revised_body).trim()
+  const isRevision = decision === 'revised_internal'
+  if (
+    Object.keys(record).some((field) => !allowed.has(field)) ||
+    !Number.isSafeInteger(slot) || slot! < 1 || slot! > 3 ||
+    !['accepted_internal','revised_internal','rejected'].includes(decision) ||
+    rationale.length < 10 || rationale.length > 1000 || unsafeReviewText(rationale) ||
+    !Number.isSafeInteger(record.expected_version) || Number(record.expected_version) < 0 ||
+    !/^[A-Za-z0-9._:@+-]{3,254}$/.test(string(record.actor_id)) ||
+    !/^draft-review:[A-Za-z0-9._:-]{8,114}$/.test(string(record.idempotency_key)) ||
+    (isRevision && !validInternalDraftRevision(revisedSubject, revisedBody)) ||
+    (!isRevision && (revisedSubject !== null || revisedBody !== null))
+  ) throw new ValidationError(['draft review item is invalid'])
+  return {
+    decision: decision as DraftReviewDecision,
+    rationale,
+    revisedSubject,
+    revisedBody,
+    expectedVersion: Number(record.expected_version),
+    actorId: string(record.actor_id),
+    idempotencyKey: string(record.idempotency_key),
+  }
+}
+
+function validateDraftReviewCompletionRequest(value: unknown): {
+  expectedVersion: number
+  actorId: string
+  idempotencyKey: string
+} {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new ValidationError(['draft review completion must be an object'])
+  const record = value as Record<string, unknown>
+  const allowed = new Set(['expected_version','actor_id','idempotency_key'])
+  if (Object.keys(record).some((field) => !allowed.has(field)) ||
+      !Number.isSafeInteger(record.expected_version) || Number(record.expected_version) < 0 ||
+      !/^[A-Za-z0-9._:@+-]{3,254}$/.test(string(record.actor_id)) ||
+      !/^draft-review:[A-Za-z0-9._:-]{8,114}$/.test(string(record.idempotency_key)))
+    throw new ValidationError(['draft review completion is invalid'])
+  return {
+    expectedVersion: Number(record.expected_version),
+    actorId: string(record.actor_id),
+    idempotencyKey: string(record.idempotency_key),
+  }
+}
+
+function validInternalDraftRevision(subject: string | null, body: string | null): boolean {
+  if (!subject || !body || subject.length < 10 || subject.length > 200 || body.length < 30 || body.length > 2000)
+    return false
+  if (unsafeReviewText(subject) || unsafeReviewText(body)) return false
+  return /hipótesis/i.test(body) && /operación sin planillas/i.test(body) && /CLP 1\.800\.000/i.test(body)
+}
+
+function unsafeReviewText(value: string): boolean {
+  return /[\u0000-\u001f\u007f]|https?:\/\/|www\.|@|```|\||-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:sk|oc_sk)-[A-Za-z0-9_-]{16,}|\bBearer\s+[A-Za-z0-9._~-]{20,}|\+?\d[\d ()-]{7,}\d/i.test(value)
+}
+
 function validatePolicyReviewRequest(value: unknown, now: Date): {
   kind: PolicyReviewKind
   decision: PolicyReviewDecision
@@ -1184,14 +1305,14 @@ function publicFailure(error: unknown): {
   }
   if (
     error instanceof Error &&
-    ['IDEMPOTENCY_CONFLICT', 'INSTRUCTION_IDEMPOTENCY_CONFLICT', 'INSTRUCTION_REVIEW_CONFLICT', 'EXECUTION_IN_PROGRESS', 'APPROVAL_GRANT_CONFLICT', 'SHADOW_REVIEW_IDEMPOTENCY_CONFLICT', 'SHADOW_REVIEW_VERSION_CONFLICT', 'SHADOW_REVIEW_NOT_OPEN'].includes(
+    ['IDEMPOTENCY_CONFLICT', 'INSTRUCTION_IDEMPOTENCY_CONFLICT', 'INSTRUCTION_REVIEW_CONFLICT', 'EXECUTION_IN_PROGRESS', 'APPROVAL_GRANT_CONFLICT', 'SHADOW_REVIEW_IDEMPOTENCY_CONFLICT', 'SHADOW_REVIEW_VERSION_CONFLICT', 'SHADOW_REVIEW_NOT_OPEN', 'DRAFT_REVIEW_IDEMPOTENCY_CONFLICT', 'DRAFT_REVIEW_VERSION_CONFLICT', 'DRAFT_REVIEW_NOT_OPEN'].includes(
       error.message,
     )
   )
     return { status: 409, error: error.message }
   if (
     error instanceof Error &&
-    ['INSTRUCTION_REVIEW_INVALID','INSTRUCTION_REQUEST_EXPIRED','SHADOW_REVIEW_DECISION_INVALID','SHADOW_REVIEW_COMPLETION_INVALID','SHADOW_REVIEW_INCOMPLETE','SHADOW_REVIEW_DECISION_NOT_FOUND'].includes(error.message)
+    ['INSTRUCTION_REVIEW_INVALID','INSTRUCTION_REQUEST_EXPIRED','SHADOW_REVIEW_DECISION_INVALID','SHADOW_REVIEW_COMPLETION_INVALID','SHADOW_REVIEW_INCOMPLETE','SHADOW_REVIEW_DECISION_NOT_FOUND','DRAFT_REVIEW_ITEM_INVALID','DRAFT_REVIEW_COMPLETION_INVALID','DRAFT_REVIEW_INCOMPLETE','DRAFT_REVIEW_ITEM_NOT_FOUND'].includes(error.message)
   )
     return { status: 400, error: error.message }
   return { status: 500, error: 'internal_error' }

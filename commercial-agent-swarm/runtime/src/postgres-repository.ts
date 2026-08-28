@@ -25,6 +25,13 @@ import {
   type RecordShadowDecisionInput,
   type ShadowReview,
 } from './shadow-review.js'
+import {
+  validateDraftReview,
+  validateDraftReviewList,
+  type CompleteDraftReviewInput,
+  type DraftReview,
+  type RecordDraftReviewItemInput,
+} from './draft-review.js'
 import { PolicyReviewError, validatePolicyReviewState, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import { validatePolicyActivationDossierState, type PolicyActivationDossierState } from './policy-activation-dossier.js'
 
@@ -240,6 +247,38 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       [input.reviewId,input.expectedVersion,input.actorId,input.idempotencyKey,input.requestSha256],
     )
     return validateShadowReview(result.rows[0]?.review)
+  }
+
+  async listDraftReviews(): Promise<DraftReview[]> {
+    const result = await this.pool.query<{ reviews: unknown }>(
+      'SELECT control.list_draft_reviews() AS reviews',
+    )
+    return validateDraftReviewList(result.rows[0]?.reviews)
+  }
+
+  async getDraftReview(id: string): Promise<DraftReview | null> {
+    const result = await this.pool.query<{ review: unknown }>(
+      'SELECT control.get_draft_review($1::uuid) AS review',
+      [id],
+    )
+    const review = result.rows[0]?.review
+    return review === null || review === undefined ? null : validateDraftReview(review)
+  }
+
+  async recordDraftReviewItem(input: RecordDraftReviewItemInput): Promise<DraftReview> {
+    const result = await this.pool.query<{ review: unknown }>(
+      'SELECT control.record_draft_review_item($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10) AS review',
+      [input.reviewId,input.itemSlot,input.decision,input.rationale,input.revisedSubject,input.revisedBody,input.expectedVersion,input.actorId,input.idempotencyKey,input.requestSha256],
+    )
+    return validateDraftReview(result.rows[0]?.review)
+  }
+
+  async completeDraftReview(input: CompleteDraftReviewInput): Promise<DraftReview> {
+    const result = await this.pool.query<{ review: unknown }>(
+      'SELECT control.complete_draft_review($1::uuid,$2,$3,$4,$5) AS review',
+      [input.reviewId,input.expectedVersion,input.actorId,input.idempotencyKey,input.requestSha256],
+    )
+    return validateDraftReview(result.rows[0]?.review)
   }
 
   async getPolicyReviewState(): Promise<PolicyReviewState> {
