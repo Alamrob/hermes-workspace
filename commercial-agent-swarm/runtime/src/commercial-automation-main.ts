@@ -57,24 +57,7 @@ export function loadCommercialAutomationConfig(environment: Record<string, strin
 
 export async function startCommercialAutomation(environment: Record<string, string | undefined> = process.env) {
   assertServiceIdentity()
-  const config = loadCommercialAutomationConfig(environment)
-  const read = async (path: string) => validateSecret(await readGroupSecretFile(path, SERVICE_GID))
-  const [trigger, paperclipToken, brokerControl, brokerInternal, workOrderSecret] = await Promise.all([
-    read(config.triggerFile), read(config.paperclipFile), read(config.brokerControlFile),
-    read(config.brokerInternalFile), read(config.workOrderHmacFile),
-  ])
-  const values = [trigger, paperclipToken, brokerControl, brokerInternal, workOrderSecret]
-  for (let left = 0; left < values.length; left++)
-    for (let right = left + 1; right < values.length; right++)
-      if (constantTimeSecretEqual(values[left], values[right])) throw new Error('AUTOMATION_SECRET_VALUE_REUSE')
-
-  const paperclip = new PaperclipHttpClient(config.paperclipBase, config.companyId, () => read(config.paperclipFile))
-  const broker = new BrokerHttpClient(config.brokerBase, () => read(config.brokerControlFile), () => read(config.brokerInternalFile))
-  const automation = new CommercialAutomation({
-    paperclip, broker, mode: config.mode, humanHold: config.humanHold,
-    companyId: config.companyId, projectId: config.projectId,
-    authority: { issuer: config.issuer, audience: config.audience, keyId: config.keyId, secret: workOrderSecret },
-  })
+  const { config, trigger, automation } = await initializeCommercialAutomation(environment)
   const server = createServer(async (request, response) => {
     response.setHeader('cache-control', 'no-store')
     response.setHeader('x-content-type-options', 'nosniff')
@@ -106,6 +89,34 @@ export async function startCommercialAutomation(environment: Record<string, stri
     server.listen(config.port, config.host, () => { server.off('error', reject); resolve() })
   })
   return { close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())) }
+}
+
+export async function runCommercialAutomationPreflight(environment: Record<string, string | undefined> = process.env) {
+  assertServiceIdentity()
+  const { automation } = await initializeCommercialAutomation(environment)
+  return automation.preflightAla52()
+}
+
+async function initializeCommercialAutomation(environment: Record<string, string | undefined>) {
+  const config = loadCommercialAutomationConfig(environment)
+  const read = async (path: string) => validateSecret(await readGroupSecretFile(path, SERVICE_GID))
+  const [trigger, paperclipToken, brokerControl, brokerInternal, workOrderSecret] = await Promise.all([
+    read(config.triggerFile), read(config.paperclipFile), read(config.brokerControlFile),
+    read(config.brokerInternalFile), read(config.workOrderHmacFile),
+  ])
+  const values = [trigger, paperclipToken, brokerControl, brokerInternal, workOrderSecret]
+  for (let left = 0; left < values.length; left++)
+    for (let right = left + 1; right < values.length; right++)
+      if (constantTimeSecretEqual(values[left], values[right])) throw new Error('AUTOMATION_SECRET_VALUE_REUSE')
+
+  const paperclip = new PaperclipHttpClient(config.paperclipBase, config.companyId, () => read(config.paperclipFile))
+  const broker = new BrokerHttpClient(config.brokerBase, () => read(config.brokerControlFile), () => read(config.brokerInternalFile))
+  const automation = new CommercialAutomation({
+    paperclip, broker, mode: config.mode, humanHold: config.humanHold,
+    companyId: config.companyId, projectId: config.projectId,
+    authority: { issuer: config.issuer, audience: config.audience, keyId: config.keyId, secret: workOrderSecret },
+  })
+  return { config, trigger, automation }
 }
 
 const SAFE_AUTOMATION_TICK_ERRORS = new Set([

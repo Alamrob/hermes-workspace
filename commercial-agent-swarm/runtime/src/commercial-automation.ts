@@ -56,6 +56,22 @@ export type AutomationTickResult = {
   external_actions: 0
 }
 
+export type AutomationPreflightResult = {
+  schema_version: '1.0'
+  stage: 'ALA-52'
+  stage_status: PaperclipIssue['status']
+  predecessor: 'ALA-51'
+  predecessor_status: PaperclipIssue['status']
+  predecessor_evidence: 'verified' | 'unverified'
+  technical_prerequisites_ready: boolean
+  execution_mode: 'human_gated_one_shot'
+  human_hold_active: boolean
+  automatic_dispatch_allowed: false
+  external_actions_allowed: false
+  explicit_human_authorization_required: true
+  blockers: string[]
+}
+
 export interface CommercialAutomationOptions {
   paperclip: PaperclipAutomationPort
   broker: BrokerAutomationPort
@@ -307,6 +323,36 @@ export class CommercialAutomation {
       return await this.tickExclusive()
     } finally {
       this.running = false
+    }
+  }
+
+  async preflightAla52(): Promise<AutomationPreflightResult> {
+    const issues = await this.options.paperclip.listIssues()
+    const targetMatches = issues.filter((issue) => issue.identifier === 'ALA-52' && issue.projectId === this.options.projectId)
+    const predecessorMatches = issues.filter((issue) => issue.identifier === 'ALA-51' && issue.projectId === this.options.projectId)
+    if (targetMatches.length !== 1 || predecessorMatches.length !== 1) throw new Error('AUTOMATION_PREFLIGHT_ISSUE_SET_INVALID')
+    const target = targetMatches[0]!
+    const predecessor = predecessorMatches[0]!
+    const execution = await this.verifiedPredecessorExecution(predecessor, 'post_account_draft')
+    const evidenceVerified = execution !== null
+    const blockers = ['explicit_human_authorization_required']
+    if (this.options.humanHold === true) blockers.push('human_hold_active')
+    if (target.status === 'cancelled') blockers.push('next_stage_cancelled')
+    if (!evidenceVerified) blockers.push('predecessor_evidence_unverified')
+    return {
+      schema_version: '1.0',
+      stage: 'ALA-52',
+      stage_status: target.status,
+      predecessor: 'ALA-51',
+      predecessor_status: predecessor.status,
+      predecessor_evidence: evidenceVerified ? 'verified' : 'unverified',
+      technical_prerequisites_ready: evidenceVerified,
+      execution_mode: 'human_gated_one_shot',
+      human_hold_active: this.options.humanHold === true,
+      automatic_dispatch_allowed: false,
+      external_actions_allowed: false,
+      explicit_human_authorization_required: true,
+      blockers,
     }
   }
 

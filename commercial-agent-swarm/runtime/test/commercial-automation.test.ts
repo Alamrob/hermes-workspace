@@ -721,6 +721,36 @@ describe('Paperclip commercial automation', () => {
     assert.equal((await service.tick()).status, 'review_ready')
     paperclip.values.find((item) => item.identifier === 'ALA-51')!.status = 'done'
 
+    paperclip.values.find((item) => item.identifier === 'ALA-52')!.status = 'cancelled'
+    const ordersBeforePreflight = broker.orders.length
+    const plansBeforePreflight = broker.plans.length
+    const updatesBeforePreflight = paperclip.updates.length
+    const commentsBeforePreflight = structuredClone([...paperclip.comments.entries()])
+    const preflight = await new CommercialAutomation({
+      paperclip,
+      broker,
+      mode: 'dispatch',
+      humanHold: true,
+      companyId: '387d4503-0f7b-4708-bb62-8295a1e23e1b',
+      projectId,
+      authority: {
+        issuer: 'codex', audience: 'hermes-commercial-orchestrator', keyId: 'control-key-1',
+        secret: 'test-control-key-with-at-least-32-bytes',
+      },
+    }).preflightAla52()
+    assert.deepEqual(preflight, {
+      schema_version: '1.0', stage: 'ALA-52', stage_status: 'cancelled', predecessor: 'ALA-51', predecessor_status: 'done',
+      predecessor_evidence: 'verified', technical_prerequisites_ready: true, execution_mode: 'human_gated_one_shot',
+      human_hold_active: true, automatic_dispatch_allowed: false, external_actions_allowed: false,
+      explicit_human_authorization_required: true,
+      blockers: ['explicit_human_authorization_required', 'human_hold_active', 'next_stage_cancelled'],
+    })
+    assert.equal(broker.orders.length, ordersBeforePreflight)
+    assert.equal(broker.plans.length, plansBeforePreflight)
+    assert.equal(paperclip.updates.length, updatesBeforePreflight)
+    assert.deepEqual([...paperclip.comments.entries()], commentsBeforePreflight)
+    paperclip.values.find((item) => item.identifier === 'ALA-52')!.status = 'backlog'
+
     const ala52 = await service.tick()
     assert.equal(ala52.status, 'dispatched')
     assert.equal(ala52.issue, 'ALA-52')
@@ -804,6 +834,22 @@ describe('Paperclip commercial automation', () => {
       status: 'idle', issue: null, mission_id: null, external_actions: 0,
     })
     assert.equal(broker.orders.length, 0)
+  })
+
+  it('reports an unverified ALA-51 predecessor without creating or changing anything', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-51', 'done'), issue('ALA-52', 'cancelled'), issue('ALA-53', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const value = await automation(paperclip, broker).preflightAla52()
+    assert.equal(value.predecessor_evidence, 'unverified')
+    assert.equal(value.technical_prerequisites_ready, false)
+    assert.equal(value.automatic_dispatch_allowed, false)
+    assert.equal(value.external_actions_allowed, false)
+    assert.ok(value.blockers.includes('predecessor_evidence_unverified'))
+    assert.equal(broker.orders.length, 0)
+    assert.equal(broker.plans.length, 0)
+    assert.equal(paperclip.updates.length, 0)
   })
 
   it('does not trust ALA-52 done status without its signed terminal evidence', async () => {
