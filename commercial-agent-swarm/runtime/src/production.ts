@@ -175,6 +175,8 @@ const EXPECTED_FUNCTIONS: Record<
     'control.record_draft_review_item(uuid,integer,text,text,text,text,integer,text,text,text)',
     'control.complete_draft_review(uuid,integer,text,text,text)',
     'control.build_a1_research_dossier(uuid)',
+    'control.build_a1_research_authorization_state(uuid,text)',
+    'control.record_a1_research_authorization(uuid,uuid,text,text,text,text,timestamp with time zone,timestamp with time zone,text,jsonb,text,text)',
     'control.create_pilot_cohort(uuid,text,text)',
     'control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamp with time zone,text)',
     'control.get_mission(uuid)',

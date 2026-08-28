@@ -155,6 +155,18 @@ describe('runtime persistence composition', () => {
       ),
       true,
     )
+    assert.equal(
+      expectedFunctionSets[0].includes(
+        'control.build_a1_research_authorization_state(uuid,text)',
+      ),
+      true,
+    )
+    assert.equal(
+      expectedFunctionSets[0].includes(
+        'control.record_a1_research_authorization(uuid,uuid,text,text,text,text,timestamp with time zone,timestamp with time zone,text,jsonb,text,text)',
+      ),
+      true,
+    )
     await verifyProductionDatabasePrincipals([
       {
         pool: fake('evidence_login', ['commercial_approval_evidence']) as never,
