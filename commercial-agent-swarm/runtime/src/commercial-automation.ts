@@ -50,7 +50,7 @@ export type ShadowReviewGate = {
 }
 
 export type AutomationTickResult = {
-  status: 'idle' | 'observed' | 'dispatched' | 'running' | 'review_ready' | 'blocked'
+  status: 'idle' | 'held' | 'observed' | 'dispatched' | 'running' | 'review_ready' | 'blocked'
   issue: string | null
   mission_id: string | null
   external_actions: 0
@@ -60,6 +60,7 @@ export interface CommercialAutomationOptions {
   paperclip: PaperclipAutomationPort
   broker: BrokerAutomationPort
   mode: 'observe' | 'dispatch'
+  humanHold?: boolean
   companyId: string
   projectId: string
   authority: {
@@ -299,6 +300,10 @@ export class CommercialAutomation {
     if (this.running) throw new Error('AUTOMATION_TICK_IN_PROGRESS')
     this.running = true
     try {
+      // A host-controlled human hold is checked before Paperclip or broker
+      // reads. This closes the race where a timer tick was already queued
+      // when an operator paused automation and completed a predecessor issue.
+      if (this.options.humanHold === true) return result('held', null, null)
       return await this.tickExclusive()
     } finally {
       this.running = false

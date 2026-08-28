@@ -87,6 +87,30 @@ function automation(
 }
 
 describe('Paperclip commercial automation', () => {
+  it('honors the host-controlled human hold before reading Paperclip or calling the broker', async () => {
+    const paperclip = new PaperclipFake()
+    paperclip.listIssues = async () => { throw new Error('PAPERCLIP_MUST_NOT_BE_READ_WHILE_HELD') }
+    const broker = new BrokerFake()
+    const service = new CommercialAutomation({
+      paperclip,
+      broker,
+      mode: 'dispatch',
+      humanHold: true,
+      companyId: '387d4503-0f7b-4708-bb62-8295a1e23e1b',
+      projectId,
+      authority: {
+        issuer: 'codex', audience: 'hermes-commercial-orchestrator', keyId: 'control-key-1',
+        secret: 'test-control-key-with-at-least-32-bytes',
+      },
+    })
+    assert.deepEqual(await service.tick(), {
+      status: 'held', issue: null, mission_id: null, external_actions: 0,
+    })
+    assert.equal(broker.orders.length, 0)
+    assert.equal(broker.plans.length, 0)
+    assert.equal(paperclip.updates.length, 0)
+  })
+
   it('observes one eligible issue without writes, broker calls, or external actions', async () => {
     const paperclip = new PaperclipFake()
     const broker = new BrokerFake()

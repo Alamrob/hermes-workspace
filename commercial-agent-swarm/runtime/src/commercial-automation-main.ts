@@ -16,6 +16,9 @@ export function loadCommercialAutomationConfig(environment: Record<string, strin
   const configuredMode = environment.AUTOMATION_MODE
   if (configuredMode !== 'observe' && configuredMode !== 'dispatch') throw new Error('AUTOMATION_MODE_INVALID')
   const mode: 'observe' | 'dispatch' = configuredMode
+  const configuredHumanHold = environment.AUTOMATION_HUMAN_HOLD
+  if (configuredHumanHold !== 'true' && configuredHumanHold !== 'false') throw new Error('AUTOMATION_HUMAN_HOLD_INVALID')
+  const humanHold = configuredHumanHold === 'true'
   const host = environment.AUTOMATION_HOST
   const port = Number(environment.AUTOMATION_PORT)
   if (host !== '0.0.0.0' || !Number.isSafeInteger(port) || port !== 8090) throw new Error('AUTOMATION_LISTENER_INVALID')
@@ -38,7 +41,7 @@ export function loadCommercialAutomationConfig(environment: Record<string, strin
   const keyId = environment.WORK_ORDER_KEY_ID
   if (!keyId || !/^[A-Za-z0-9._:-]{1,128}$/.test(keyId)) throw new Error('WORK_ORDER_KEY_ID_INVALID')
   return {
-    mode, host, port, companyId, projectId,
+    mode, humanHold, host, port, companyId, projectId,
     paperclipBase: environment.PAPERCLIP_API_BASE,
     brokerBase: environment.BROKER_API_BASE,
     issuer: environment.WORK_ORDER_ISSUER,
@@ -68,14 +71,17 @@ export async function startCommercialAutomation(environment: Record<string, stri
   const paperclip = new PaperclipHttpClient(config.paperclipBase, config.companyId, () => read(config.paperclipFile))
   const broker = new BrokerHttpClient(config.brokerBase, () => read(config.brokerControlFile), () => read(config.brokerInternalFile))
   const automation = new CommercialAutomation({
-    paperclip, broker, mode: config.mode, companyId: config.companyId, projectId: config.projectId,
+    paperclip, broker, mode: config.mode, humanHold: config.humanHold,
+    companyId: config.companyId, projectId: config.projectId,
     authority: { issuer: config.issuer, audience: config.audience, keyId: config.keyId, secret: workOrderSecret },
   })
   const server = createServer(async (request, response) => {
     response.setHeader('cache-control', 'no-store')
     response.setHeader('x-content-type-options', 'nosniff')
     if (request.method === 'GET' && request.url === '/healthz') return json(response, 200, { status: 'ok' })
-    if (request.method === 'GET' && request.url === '/readyz') return json(response, 200, { status: 'ready', mode: config.mode })
+    if (request.method === 'GET' && request.url === '/readyz') return json(response, 200, {
+      status: 'ready', mode: config.mode, human_hold: config.humanHold,
+    })
     if (request.method !== 'POST' || request.url !== '/internal/v1/tick') return json(response, 404, { error: 'not_found' })
     if (!authorized(request.headers.authorization, trigger)) return json(response, 401, { error: 'unauthorized' })
     let size = 0

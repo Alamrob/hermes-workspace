@@ -10,11 +10,14 @@ describe('commercial automation HTTP boundaries', () => {
   it('accepts only exact internal Paperclip/Broker origins and file-backed separate credentials', () => {
     const config = loadCommercialAutomationConfig(environment())
     assert.equal(config.mode, 'observe')
+    assert.equal(config.humanHold, true)
     for (const mutate of [
       (env: Record<string, string | undefined>) => { env.PAPERCLIP_API_BASE = 'http://127.0.0.1:3100' },
       (env: Record<string, string | undefined>) => { env.BROKER_API_BASE = 'https://broker:8080' },
       (env: Record<string, string | undefined>) => { env.PAPERCLIP_BOARD_API_KEY = '' },
       (env: Record<string, string | undefined>) => { env.BROKER_CONTROL_PLANE_BEARER_FILE = env.BROKER_INTERNAL_BEARER_FILE },
+      (env: Record<string, string | undefined>) => { delete env.AUTOMATION_HUMAN_HOLD },
+      (env: Record<string, string | undefined>) => { env.AUTOMATION_HUMAN_HOLD = 'TRUE' },
     ]) {
       const changed = environment()
       mutate(changed)
@@ -87,6 +90,7 @@ describe('commercial automation HTTP boundaries', () => {
 function environment(): Record<string, string | undefined> {
   return {
     NODE_ENV: 'production', COMMERCIAL_MODE: 'simulation', AUTOMATION_MODE: 'observe',
+    AUTOMATION_HUMAN_HOLD: 'true',
     AUTOMATION_HOST: '0.0.0.0', AUTOMATION_PORT: '8090',
     AUTOMATION_TRIGGER_BEARER_FILE: '/run/secrets/automation-trigger',
     PAPERCLIP_BOARD_API_KEY_FILE: '/run/secrets/paperclip-board-key',
