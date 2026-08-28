@@ -56,6 +56,8 @@ export type AutomationTickResult = {
   external_actions: 0
 }
 
+export type AuthorizedAutomationStage = 'ALA-52' | 'ALA-53'
+
 export type AutomationPreflightResult = {
   schema_version: '1.0'
   stage: 'ALA-52'
@@ -326,6 +328,17 @@ export class CommercialAutomation {
     }
   }
 
+  async runAuthorizedOneShot(stage: AuthorizedAutomationStage): Promise<AutomationTickResult> {
+    if (this.running) throw new Error('AUTOMATION_TICK_IN_PROGRESS')
+    if (this.options.humanHold === true) throw new Error('AUTOMATION_ONE_SHOT_HOLD_ACTIVE')
+    this.running = true
+    try {
+      return await this.tickExclusive(stage)
+    } finally {
+      this.running = false
+    }
+  }
+
   async preflightAla52(): Promise<AutomationPreflightResult> {
     const issues = await this.options.paperclip.listIssues()
     const targetMatches = issues.filter((issue) => issue.identifier === 'ALA-52' && issue.projectId === this.options.projectId)
@@ -356,11 +369,12 @@ export class CommercialAutomation {
     }
   }
 
-  private async tickExclusive(): Promise<AutomationTickResult> {
+  private async tickExclusive(authorizedStage?: AuthorizedAutomationStage): Promise<AutomationTickResult> {
     const issues = await this.options.paperclip.listIssues()
     const issueByIdentifier = new Map(issues.map((issue) => [issue.identifier, issue]))
 
     for (const workflow of WORKFLOWS) {
+      if (authorizedStage !== undefined && workflow.identifier !== authorizedStage) continue
       const issue = issueByIdentifier.get(workflow.identifier)
       const predecessor = issueByIdentifier.get(workflow.predecessor)
       if (!issue || issue.projectId !== this.options.projectId) continue

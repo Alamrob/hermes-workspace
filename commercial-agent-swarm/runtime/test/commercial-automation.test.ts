@@ -721,6 +721,15 @@ describe('Paperclip commercial automation', () => {
     assert.equal((await service.tick()).status, 'review_ready')
     paperclip.values.find((item) => item.identifier === 'ALA-51')!.status = 'done'
 
+    const ordersBeforeWrongStage = broker.orders.length
+    const plansBeforeWrongStage = broker.plans.length
+    const updatesBeforeWrongStage = paperclip.updates.length
+    const wrongStage = await service.runAuthorizedOneShot('ALA-53')
+    assert.deepEqual(wrongStage, { status: 'idle', issue: null, mission_id: null, external_actions: 0 })
+    assert.equal(broker.orders.length, ordersBeforeWrongStage)
+    assert.equal(broker.plans.length, plansBeforeWrongStage)
+    assert.equal(paperclip.updates.length, updatesBeforeWrongStage)
+
     paperclip.values.find((item) => item.identifier === 'ALA-52')!.status = 'cancelled'
     const ordersBeforePreflight = broker.orders.length
     const plansBeforePreflight = broker.plans.length
@@ -850,6 +859,27 @@ describe('Paperclip commercial automation', () => {
     assert.equal(broker.orders.length, 0)
     assert.equal(broker.plans.length, 0)
     assert.equal(paperclip.updates.length, 0)
+  })
+
+  it('runs only the explicitly authorized internal stage and never advances another stage', async () => {
+    const paperclip = new PaperclipFake([
+      issue('ALA-51', 'done'), issue('ALA-52', 'backlog'), issue('ALA-53', 'backlog'),
+    ])
+    const broker = new BrokerFake()
+    const held = new CommercialAutomation({
+      paperclip, broker, mode: 'dispatch', humanHold: true,
+      companyId: '387d4503-0f7b-4708-bb62-8295a1e23e1b', projectId,
+      authority: { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keyId: 'control-key-1', secret: 'test-control-key-with-at-least-32-bytes' },
+    })
+    await assert.rejects(() => held.runAuthorizedOneShot('ALA-52'), /AUTOMATION_ONE_SHOT_HOLD_ACTIVE/)
+    assert.equal(paperclip.updates.length, 0)
+    assert.equal(broker.orders.length, 0)
+
+    const service = automation(paperclip, broker)
+    const wrongSuccessor = await service.runAuthorizedOneShot('ALA-53')
+    assert.deepEqual(wrongSuccessor, { status: 'idle', issue: null, mission_id: null, external_actions: 0 })
+    assert.equal(paperclip.updates.length, 0)
+    assert.equal(broker.orders.length, 0)
   })
 
   it('does not trust ALA-52 done status without its signed terminal evidence', async () => {

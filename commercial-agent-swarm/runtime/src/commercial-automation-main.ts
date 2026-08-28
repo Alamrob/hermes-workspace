@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 import { pathToFileURL } from 'node:url'
 import { BrokerHttpClient, PaperclipHttpClient } from './automation-http-clients.js'
-import { CommercialAutomation } from './commercial-automation.js'
+import { CommercialAutomation, type AuthorizedAutomationStage } from './commercial-automation.js'
 import { constantTimeSecretEqual } from './security.js'
 import { readGroupSecretFile } from './secret-file.js'
 
@@ -95,6 +95,15 @@ export async function runCommercialAutomationPreflight(environment: Record<strin
   assertServiceIdentity()
   const { automation } = await initializeCommercialAutomation(environment)
   return automation.preflightAla52()
+}
+
+export async function runCommercialAutomationAuthorizedOneShot(environment: Record<string, string | undefined> = process.env) {
+  assertServiceIdentity()
+  const stage = environment.AUTOMATION_AUTHORIZED_STAGE
+  if (stage !== 'ALA-52' && stage !== 'ALA-53') throw new Error('AUTOMATION_AUTHORIZED_STAGE_INVALID')
+  const { config, automation } = await initializeCommercialAutomation(environment)
+  if (config.humanHold !== false) throw new Error('AUTOMATION_ONE_SHOT_HOLD_ACTIVE')
+  return automation.runAuthorizedOneShot(stage as AuthorizedAutomationStage)
 }
 
 async function initializeCommercialAutomation(environment: Record<string, string | undefined>) {
