@@ -87,6 +87,7 @@ export async function startCommercialAutomation(environment: Record<string, stri
       return json(response, 200, await automation.tick())
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTOMATION_TICK_IN_PROGRESS') return json(response, 409, { error: 'tick_in_progress' })
+      reportCommercialAutomationError(error)
       return json(response, 503, { error: 'automation_unavailable' })
     }
   })
@@ -99,6 +100,49 @@ export async function startCommercialAutomation(environment: Record<string, stri
     server.listen(config.port, config.host, () => { server.off('error', reject); resolve() })
   })
   return { close: () => new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())) }
+}
+
+const SAFE_AUTOMATION_TICK_ERRORS = new Set([
+  'PAPERCLIP_RESPONSE_INVALID',
+  'PAPERCLIP_COMMENT_INVALID',
+  'PAPERCLIP_UNAVAILABLE',
+  'BROKER_RESPONSE_INVALID',
+  'BROKER_UNAVAILABLE',
+  'AUTOMATION_PREDECESSOR_EVIDENCE_REQUIRED',
+  'AUTOMATION_PREDECESSOR_NOT_COMPLETED',
+  'AUTOMATION_PREDECESSOR_QA_DENIED',
+  'AUTOMATION_PREDECESSOR_DRAFT_URL_INVALID',
+  'AUTOMATION_PREDECESSOR_DRAFT_INVALID',
+  'AUTOMATION_PREDECESSOR_DRAFT_DUPLICATE',
+  'AUTOMATION_PREDECESSOR_DRAFT_TEXT_INVALID',
+  'AUTOMATION_PREDECESSOR_DRAFT_COUNT_INVALID',
+  'AUTOMATION_PREDECESSOR_ASSIGNMENT_INVALID',
+  'AUTOMATION_PREDECESSOR_RESULT_INVALID',
+  'AUTOMATION_PREDECESSOR_QA_INCOMPLETE',
+  'AUTOMATION_PREDECESSOR_ACCOUNT_URL_INVALID',
+  'AUTOMATION_PREDECESSOR_ACCOUNT_INVALID',
+  'AUTOMATION_PREDECESSOR_ACCOUNT_DUPLICATE',
+  'AUTOMATION_PREDECESSOR_ACCOUNT_COUNT_INVALID',
+])
+
+export function normalizeCommercialAutomationError(error: unknown): string {
+  if (!(error instanceof Error)) return 'AUTOMATION_UNEXPECTED_ERROR'
+  if (SAFE_AUTOMATION_TICK_ERRORS.has(error.message)) return error.message
+  if (/^(?:PAPERCLIP|BROKER)_HTTP_[45][0-9]{2}$/.test(error.message)) return error.message
+  return 'AUTOMATION_UNEXPECTED_ERROR'
+}
+
+export function reportCommercialAutomationError(
+  error: unknown,
+  write: (line: string) => void = (line) => console.error(line),
+): void {
+  write(JSON.stringify({
+    schema_version: '1.0',
+    event: 'commercial_automation_tick_failed',
+    component: 'commercial-automation',
+    error_code: normalizeCommercialAutomationError(error),
+    external_actions: 0,
+  }))
 }
 
 function assertServiceIdentity(): void {
