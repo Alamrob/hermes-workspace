@@ -291,7 +291,10 @@ export class BrokerApplication {
         throw new ValidationError(['mission_id does not match route'])
       const mission = await this.options.repository.getMission(plan.mission_id)
       if (!mission) return { status: 404, body: { error: 'not_found' } }
+      const admissionTime = this.now()
       assertInternalExecutionMission(mission, plan.trace_id)
+      assertMissionExecutionWindow(mission, admissionTime)
+      await this.requireA1ResearchAdmission(mission as unknown as WorkOrder, admissionTime)
       assertAssignmentPlanAuthority(mission, plan)
       const assignmentIds: string[] = []
       for (const assignment of plan.assignments) {
@@ -766,6 +769,15 @@ function assertInternalExecutionMission(
     requiredProhibitions.some((action) => !prohibited.includes(action))
   )
     throw new AuthenticationError('INTERNAL_EXECUTION_POLICY_REQUIRED')
+}
+
+function assertMissionExecutionWindow(
+  mission: Record<string, unknown>,
+  now: Date,
+): void {
+  const expiresAt = Date.parse(String(mission.expires_at))
+  if (!Number.isFinite(expiresAt) || expiresAt <= now.getTime())
+    throw new AuthenticationError('EXPIRED_AUTHORITY')
 }
 
 const PROFILE_CAPABILITIES = {

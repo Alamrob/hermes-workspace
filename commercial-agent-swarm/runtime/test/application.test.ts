@@ -908,6 +908,47 @@ describe('broker application routes', () => {
     assert.equal((execution.body as MissionExecution).assignments.length, 2)
   })
 
+  it('rejects assignment creation for an expired mission before enqueue', async () => {
+    const state = setup('either', false, false)
+    const order = signedInternalWorkOrder()
+    assert.equal((await state.app.handle({
+      method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: order,
+    })).status, 201)
+    await state.repository.saveMission({
+      ...(await state.repository.getMission(order.mission_id))!,
+      expires_at: '2026-08-15T19:59:59.999Z',
+    })
+
+    const response = await state.app.handle({
+      method: 'POST', path: `/v1/missions/${order.mission_id}/assignments`,
+      headers: headers('control-plane-token'), body: assignmentPlan(),
+    })
+
+    assert.deepEqual(response, { status: 403, body: { error: 'EXPIRED_AUTHORITY' } })
+    assert.equal(state.dispatched.length, 0)
+  })
+
+  it('revalidates the human A1 gate before creating assignments', async () => {
+    const state = setup('either', false, false)
+    const order = signedUnboundPublicResearchOrder()
+    await state.repository.saveMission({
+      ...order,
+      mission_id: order.mission_id,
+      a3_enabled: false,
+    })
+
+    const response = await state.app.handle({
+      method: 'POST', path: `/v1/missions/${order.mission_id}/assignments`,
+      headers: headers('control-plane-token'), body: assignmentPlan(),
+    })
+
+    assert.deepEqual(response, {
+      status: 403,
+      body: { error: 'A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED' },
+    })
+    assert.equal(state.dispatched.length, 0)
+  })
+
   it('rejects an assignment DAG whose aggregate usage reservation exceeds the signed mission budget', async () => {
     const state = setup('either', false, false)
     const order = signedInternalWorkOrder()
