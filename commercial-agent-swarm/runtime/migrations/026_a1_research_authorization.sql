@@ -30,7 +30,7 @@ CREATE OR REPLACE FUNCTION control.build_a1_research_authorization_state(uuid,te
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE
   dossier jsonb;
-  authorization control.a1_research_authorizations%ROWTYPE;
+  authorization_row control.a1_research_authorizations%ROWTYPE;
   authorization_json jsonb := NULL;
   current_dossier boolean := true;
   next_gate text;
@@ -38,18 +38,18 @@ BEGIN
   IF $2!~'^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'A1_RESEARCH_AUTHORIZATION_INVALID'; END IF;
   dossier:=control.build_a1_research_dossier($1);
   IF dossier IS NULL THEN RETURN NULL; END IF;
-  SELECT * INTO authorization FROM control.a1_research_authorizations WHERE review_id=$1;
+  SELECT * INTO authorization_row FROM control.a1_research_authorizations WHERE review_id=$1;
   IF FOUND THEN
-    current_dossier:=authorization.dossier_sha256=$2;
+    current_dossier:=authorization_row.dossier_sha256=$2;
     authorization_json:=jsonb_build_object(
-      'authorizationId',authorization.authorization_id,
-      'decision',authorization.decision,
-      'rationale',authorization.rationale,
-      'reviewerId',authorization.reviewer_id,
-      'reviewerEmail',authorization.reviewer_email,
-      'reviewedAt',to_char(authorization.reviewed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-      'expiresAt',to_char(authorization.expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-      'dossierSha256',authorization.dossier_sha256,
+      'authorizationId',authorization_row.authorization_id,
+      'decision',authorization_row.decision,
+      'rationale',authorization_row.rationale,
+      'reviewerId',authorization_row.reviewer_id,
+      'reviewerEmail',authorization_row.reviewer_email,
+      'reviewedAt',to_char(authorization_row.reviewed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'expiresAt',to_char(authorization_row.expires_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+      'dossierSha256',authorization_row.dossier_sha256,
       'attestations',jsonb_build_object(
         'noContact',true,
         'noCrmWrite',true,
@@ -62,9 +62,9 @@ BEGIN
   next_gate:=CASE
     WHEN dossier->>'status'='review_incomplete' THEN 'complete_draft_review'
     WHEN dossier->>'status'='no_eligible_accounts' THEN 'no_eligible_accounts'
-    WHEN authorization.authorization_id IS NULL THEN 'human_authorization'
+    WHEN authorization_row.authorization_id IS NULL THEN 'human_authorization'
     WHEN NOT current_dossier THEN 'stale_dossier_review'
-    WHEN authorization.decision='rejected' THEN 'authorization_rejected'
+    WHEN authorization_row.decision='rejected' THEN 'authorization_rejected'
     ELSE 'separate_signed_work_order'
   END;
   RETURN jsonb_build_object(
@@ -75,7 +75,7 @@ BEGIN
     'dossierSha256',$2,
     'dossierStatus',dossier->>'status',
     'eligibleAccountCount',(dossier->>'eligibleAccountCount')::integer,
-    'authorizationRecorded',authorization.authorization_id IS NOT NULL,
+    'authorizationRecorded',authorization_row.authorization_id IS NOT NULL,
     'dossierCurrent',current_dossier,
     'authorization',authorization_json,
     'executionAuthorized',false,

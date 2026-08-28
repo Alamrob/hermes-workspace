@@ -95,6 +95,7 @@ describe('dormant A1 research authorization gate', () => {
     assert.match(sql, /'providerCreditSpendAllowed',false/)
     assert.match(sql, /'maximumExternalActions',0/)
     assert.match(sql, /'separateSignedWorkOrderRequired',true/)
+    assert.doesNotMatch(sql, /\bauthorization\.[a-z_]+/)
     assert.match(sql, /GRANT EXECUTE ON FUNCTION[\s\S]*TO commercial_runtime/)
     assert.doesNotMatch(sql, /control\.save_mission|control\.enqueue_dispatch|control\.request_approval|mail\.external_actions|mail\.send/i)
     const rollback = await readFile(new URL('../migrations/026_a1_research_authorization.rollback.sql', import.meta.url), 'utf8')
