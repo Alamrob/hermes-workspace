@@ -69,7 +69,7 @@ export function buildA1WorkOrderPreview(
   let nextRequiredGate: A1WorkOrderPreviewGate
   if (dossier.status === 'review_incomplete') nextRequiredGate = 'complete_draft_review'
   else if (dossier.status === 'no_eligible_accounts') nextRequiredGate = 'no_eligible_accounts'
-  else if (!authorization) nextRequiredGate = 'human_authorization'
+  else if (!authorization || !authorization.authorizationRecorded || authorization.authorization === null) nextRequiredGate = 'human_authorization'
   else if (!authorizationMatches) nextRequiredGate = 'stale_dossier_review'
   else if (authorization.authorization?.decision === 'rejected') nextRequiredGate = 'authorization_rejected'
   else if (!authorization.authorization || Date.parse(authorization.authorization.expiresAt) <= now.getTime()) nextRequiredGate = 'authorization_expired'

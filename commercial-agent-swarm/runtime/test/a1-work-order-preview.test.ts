@@ -36,6 +36,18 @@ function authorization(expiresAt = '2026-08-28T15:30:00.000Z'): A1ResearchAuthor
   }
 }
 
+function emptyAuthorizationState(): A1ResearchAuthorizationState {
+  const sha = hashA1ResearchDossier(dossier())
+  return {
+    reviewId: REVIEW, projectId: 'proptimiza', offerId: 'operacion-sin-planillas', offerVersion: 'v1', dossierSha256: sha,
+    dossierStatus: 'authorization_required', eligibleAccountCount: 1, authorizationRecorded: false, dossierCurrent: true,
+    authorization: null, executionAuthorized: false, missionCreated: false, internetAccessAllowed: false,
+    providerCreditSpendAllowed: false, contactPermitted: false, crmWriteAllowed: false, maximumExternalActions: 0,
+    productionGate: 'blocked', separateSignedWorkOrderRequired: true, nextRequiredGate: 'human_authorization',
+    provenance: { source: 'control-broker', sourceId: `a1-research-authorization:${REVIEW}`, observedAt: NOW.toISOString(), synthetic: false },
+  }
+}
+
 describe('A1 work-order preview', () => {
   it('produces a stable, unsigned and undispatchable preview after a current human authorization', () => {
     const preview = buildA1WorkOrderPreview(dossier(), authorization(), NOW)
@@ -54,6 +66,7 @@ describe('A1 work-order preview', () => {
 
   it('fails closed when authorization is missing or expired', () => {
     assert.equal(buildA1WorkOrderPreview(dossier(), null, NOW).nextRequiredGate, 'human_authorization')
+    assert.equal(buildA1WorkOrderPreview(dossier(), emptyAuthorizationState(), NOW).nextRequiredGate, 'human_authorization')
     const expired = buildA1WorkOrderPreview(dossier(), authorization('2026-08-28T14:59:59.000Z'), NOW)
     assert.equal(expired.nextRequiredGate, 'authorization_expired')
     assert.equal(expired.executionAuthorized, false)
