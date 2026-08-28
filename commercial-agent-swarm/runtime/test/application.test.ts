@@ -138,15 +138,15 @@ function signedWorkOrder() {
 
 function signedInternalWorkOrder() {
   const order = validWorkOrder()
-  order.autonomy_level = 'A1'
+  order.autonomy_level = 'A2'
   order.dry_run = true
-  order.allowed_actions = ['research.public', 'analysis.internal']
+  order.allowed_actions = ['analysis.internal']
   order.prohibited_actions = [
     'mail.send', 'message.send', 'campaign.activate', 'crm.write',
     'price.change', 'proposal.send', 'contract.commit',
   ]
-  order.approved_channels = ['internal', 'public_web']
-  order.approved_tools = ['hermes.research', 'hermes.analysis']
+  order.approved_channels = ['internal']
+  order.approved_tools = ['hermes.analysis']
   order.budget_limit = { currency: 'USD', maximum: 0.5 }
   order.volume_limits = {
     maximum_accounts: 10,
@@ -159,6 +159,19 @@ function signedInternalWorkOrder() {
   ;(order as unknown as { metadata: Record<string, unknown> }).metadata = {
     paperclip_issue: 'ALA-31',
   }
+  order.authority.signature = signWorkOrder(
+    order as never,
+    'test-control-key-with-at-least-32-bytes',
+  )
+  return order
+}
+
+function signedUnboundPublicResearchOrder() {
+  const order = signedInternalWorkOrder()
+  order.autonomy_level = 'A1'
+  order.allowed_actions = ['analysis.internal', 'research.public.read']
+  order.approved_channels = ['internal', 'public_web']
+  order.approved_tools = ['hermes.analysis', 'hermes.web']
   order.authority.signature = signWorkOrder(
     order as never,
     'test-control-key-with-at-least-32-bytes',
@@ -226,8 +239,10 @@ function instructionConversionOrder() {
   order.offer_id = 'operacion-sin-planillas'
   order.requested_by = 'codex-auditor'
   order.idempotency_key = `instruction:${request.request_id}:v1`
-  order.allowed_actions = ['analysis.internal', 'research.public.read']
-  order.approved_tools = ['hermes.analysis', 'hermes.web']
+  order.autonomy_level = 'A0'
+  order.allowed_actions = ['analysis.internal']
+  order.approved_channels = ['internal']
+  order.approved_tools = ['hermes.analysis']
   order.expires_at = request.expires_at
   ;(order as unknown as { metadata: Record<string, unknown> }).metadata = {
     instruction_request_id: request.request_id,
@@ -371,6 +386,43 @@ describe('broker application routes', () => {
     assert.equal(state.audit.events.at(-1)?.external_action, false)
   })
 
+  it('rejects an instruction conversion that tries to introduce unbound public A1 research', async () => {
+    const state = setup()
+    const request = instructionRequest()
+    await state.app.handle({
+      method: 'POST', path: '/v1/instruction-requests',
+      headers: headers('instruction-inbox-token'), body: request,
+    })
+    const order = signedUnboundPublicResearchOrder()
+    order.requested_by = 'codex-auditor'
+    order.expires_at = request.expires_at
+    ;(order as unknown as { metadata: Record<string, unknown> }).metadata = {
+      instruction_request_id: request.request_id,
+      instruction_sha256: instructionSha256(),
+    }
+    order.authority.signature = signWorkOrder(
+      order as never,
+      'test-control-key-with-at-least-32-bytes',
+    )
+
+    const response = await state.app.handle({
+      method: 'POST', path: `/v1/instruction-requests/${request.request_id}/decision`,
+      headers: headers('control-plane-token'),
+      body: {
+        decision: 'convert', actor_id: 'codex-auditor',
+        reason: 'La orden pública debe quedar vinculada al expediente y la autorización humana vigentes.',
+        reviewed_at: NOW.toISOString(), idempotency_key: 'codex-review:unbound-public-a1-0001',
+        expected_instruction_sha256: instructionSha256(), work_order: order,
+      },
+    })
+
+    assert.deepEqual(response, {
+      status: 403,
+      body: { error: 'A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED' },
+    })
+    assert.equal(await state.repository.getMission(order.mission_id), null)
+  })
+
   it('rejects unbound conversion, over-ceiling autonomy, and conflicting review replay', async () => {
     const state = setup()
     const request = instructionRequest()
@@ -504,6 +556,25 @@ describe('broker application routes', () => {
       body: { error: 'INVALID_SIGNATURE' },
     })
     assert.equal(await state.repository.getMission(order.mission_id), null)
+  })
+
+  it('rejects a signed public A1 work order that is not bound to the human dossier and authorization', async () => {
+    const state = setup()
+    const order = signedUnboundPublicResearchOrder()
+
+    const response = await state.app.handle({
+      method: 'POST',
+      path: '/v1/work-orders',
+      headers: headers('control-plane-token'),
+      body: order,
+    })
+
+    assert.deepEqual(response, {
+      status: 403,
+      body: { error: 'A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED' },
+    })
+    assert.equal(await state.repository.getMission(order.mission_id), null)
+    assert.equal(state.dispatched.length, 0)
   })
 
   it('rejects a validly signed work order whose created_at is in the future', async () => {

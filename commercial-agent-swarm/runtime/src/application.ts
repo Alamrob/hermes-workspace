@@ -34,6 +34,7 @@ import {
   validateA1ResearchAuthorizationRequest,
 } from './a1-research-authorization.js'
 import { buildA1WorkOrderPreview } from './a1-work-order-preview.js'
+import { a1ResearchReviewId, assertA1ResearchWorkOrderAdmission } from './a1-research-work-order.js'
 
 export interface ApplicationRequest {
   method: string
@@ -132,9 +133,11 @@ export class BrokerApplication {
     if (route.action === 'createWorkOrder') {
       const workOrder = validateWorkOrder(request.body)
       requireBearer(request.headers?.authorization, this.options.authentication.controlPlane)
-      verifyWorkOrder(workOrder, this.options.authentication.workOrders, this.now())
+      const admissionTime = this.now()
+      verifyWorkOrder(workOrder, this.options.authentication.workOrders, admissionTime)
       if (workOrder.autonomy_level === 'A3' && !this.options.a3AdmissionEnabled)
         throw new AuthenticationError('A3_ADMISSION_DISABLED')
+      await this.requireA1ResearchAdmission(workOrder, admissionTime)
       await this.options.repository.saveMission({
         ...workOrder,
         mission_id: workOrder.mission_id,
@@ -186,8 +189,10 @@ export class BrokerApplication {
       let mission: MissionRecord | null = null
       if (input.decision === 'convert') {
         const workOrder = validateWorkOrder(input.workOrder)
-        verifyWorkOrder(workOrder, this.options.authentication.workOrders, this.now())
+        const admissionTime = this.now()
+        verifyWorkOrder(workOrder, this.options.authentication.workOrders, admissionTime)
         assertInstructionWorkOrder(current, workOrder)
+        await this.requireA1ResearchAdmission(workOrder, admissionTime)
         mission = {
           ...workOrder,
           mission_id: workOrder.mission_id,
@@ -542,6 +547,16 @@ export class BrokerApplication {
         rawBody: request.rawBody ?? JSON.stringify(request.body ?? {}),
       }),
     }
+  }
+
+  private async requireA1ResearchAdmission(workOrder: WorkOrder, now: Date): Promise<void> {
+    const reviewId = a1ResearchReviewId(workOrder)
+    if (reviewId === null) return
+    const dossier = await this.options.repository.getA1ResearchDossier(reviewId)
+    const authorization = dossier
+      ? await this.options.repository.getA1ResearchAuthorizationState(reviewId, hashA1ResearchDossier(dossier))
+      : null
+    assertA1ResearchWorkOrderAdmission(workOrder, dossier, authorization, now)
   }
 
   private async audit(
@@ -1323,6 +1338,7 @@ function publicFailure(error: unknown): {
       'A3_ADMISSION_DISABLED',
       'INTERNAL_EXECUTION_POLICY_REQUIRED',
       'INSTRUCTION_CONVERSION_POLICY_REQUIRED',
+      'A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED',
     ])
     return {
       status: 403,
