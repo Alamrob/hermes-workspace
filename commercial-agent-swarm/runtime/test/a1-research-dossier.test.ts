@@ -58,5 +58,7 @@ describe('dormant A1 corporate-channel research dossier', () => {
     assert.match(sql, /'maximumExternalActions',0/)
     assert.match(sql, /GRANT EXECUTE ON FUNCTION control\.build_a1_research_dossier\(uuid\) TO commercial_runtime/)
     assert.doesNotMatch(sql, /INSERT|UPDATE|DELETE|control\.save_mission|control\.enqueue_dispatch|control\.request_approval|mail\.external_actions/i)
+    const rollback = await readFile(new URL('../migrations/025_a1_research_dossier.rollback.sql', import.meta.url), 'utf8')
+    assert.match(rollback, /DELETE FROM control\.schema_migrations WHERE version='025_a1_research_dossier'/)
   })
 })
