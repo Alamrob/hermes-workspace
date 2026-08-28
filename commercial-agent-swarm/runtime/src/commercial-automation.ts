@@ -807,7 +807,7 @@ export class CommercialAutomation {
           depends_on: [],
           usage_value_reservation_usd: 0.1,
           maximum_tokens: 75_000,
-          maximum_api_calls: 3,
+          maximum_api_calls: 6,
           max_attempts: 1,
         },
         {
@@ -855,7 +855,7 @@ export class CommercialAutomation {
           depends_on: [],
           usage_value_reservation_usd: 0.1,
           maximum_tokens: 75_000,
-          maximum_api_calls: 3,
+          maximum_api_calls: 6,
           max_attempts: 1,
         },
         {

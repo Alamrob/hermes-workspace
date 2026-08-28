@@ -779,6 +779,8 @@ describe('Paperclip commercial automation', () => {
     assert.match(draftPlan.assignments[0].instruction, /^RUNTIME_OUTPUT_CONTRACT_JSON=\{"type":"account_draft_batch_v1","maximum_accounts":10,"source_artifact_sha256":"a{64}"\}/)
     assert.match(draftPlan.assignments[0].evidence, /"approved_accounts"/)
     assert.match(draftPlan.assignments[1].instruction, /approval_state=not_eligible/)
+    assert.equal(draftPlan.assignments[0].maximum_api_calls, 6)
+    assert.equal(draftPlan.assignments[1].maximum_api_calls, 3)
     assert.doesNotMatch(draftPlan.assignments[0].instruction, /mail\.send|send this email/i)
 
     const draftAssignment = draftPlan.assignments[0]
@@ -831,6 +833,8 @@ describe('Paperclip commercial automation', () => {
     assert.match(admissionPlan.assignments[0].instruction, /external_action_eligible=false/)
     assert.match(admissionPlan.assignments[0].evidence, /"draft_sha256":"[a-f0-9]{64}"/)
     assert.match(admissionPlan.assignments[1].instruction, /approval_requests_created=0/)
+    assert.equal(admissionPlan.assignments[0].maximum_api_calls, 6)
+    assert.equal(admissionPlan.assignments[1].maximum_api_calls, 3)
     assert.doesNotMatch(admissionPlan.assignments[0].instruction, /mail\.send|request approval token/i)
   })
 
