@@ -82,7 +82,7 @@ function automation(
       secret: 'test-control-key-with-at-least-32-bytes',
     },
     now: () => new Date('2026-08-21T18:00:00.000Z'),
-    workflowVersion,
+    workflowVersion: workflowVersion ?? 'commercial-v16',
   })
 }
 
@@ -777,6 +777,9 @@ describe('Paperclip commercial automation', () => {
       'outreach-draft-manager', 'commercial-qa-compliance',
     ])
     assert.match(draftPlan.assignments[0].instruction, /^RUNTIME_OUTPUT_CONTRACT_JSON=\{"type":"account_draft_batch_v1","maximum_accounts":10,"source_artifact_sha256":"a{64}"\}/)
+    assert.match(draftPlan.assignments[0].instruction, /exactly the top-level keys status and drafts/)
+    assert.match(draftPlan.assignments[0].instruction, /slot, company, url, state, evidence_basis, subject, body, withheld_reason, offer_reference, approval_state/)
+    assert.match(draftPlan.assignments[0].instruction, /Every non-empty free-text value must be a single line/)
     assert.match(draftPlan.assignments[0].evidence, /"approved_accounts"/)
     assert.match(draftPlan.assignments[1].instruction, /approval_state=not_eligible/)
     assert.equal(draftPlan.assignments[0].maximum_api_calls, 6)

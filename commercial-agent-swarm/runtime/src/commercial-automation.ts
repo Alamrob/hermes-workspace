@@ -286,7 +286,7 @@ const WORKFLOWS: Workflow[] = [
     identifier: 'ALA-52', predecessor: 'ALA-51', kind: 'post_account_draft',
     primaryProfile: 'outreach-draft-manager',
     objective: 'Prepare evidence-bound account-level outreach drafts for internal review without approving, addressing or sending them.',
-    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\nTASK ALA-52 — EVIDENCE-BOUND INTERNAL DRAFT PACKET. Use only the verified ALA-51 predecessor evidence supplied by the control plane. Prepare one account-level draft or an explicit withheld decision per preserved account. Any suspected operational pain must be labeled as a hypothesis. Do not use a person name, contact data, private information, fabricated personalization, discounts, guarantees, customer claims, savings claims, deadlines or meeting commitments. Do not call tools, send, publish, write CRM, request approval tokens or infer outreach eligibility. Every draft remains internal and not_eligible until a separate human-approved A3 mission. Return only the compact payload required by the runtime contract; the runtime constructs the canonical AgentResult.`,
+    primaryInstruction: `${APPROVED_COMMERCIAL_CONTEXT}\nTASK ALA-52 — EVIDENCE-BOUND INTERNAL DRAFT PACKET. Use only the verified ALA-51 predecessor evidence supplied by the control plane. Prepare one account-level draft or an explicit withheld decision per preserved account. Any suspected operational pain must be labeled as a hypothesis. Do not use a person name, contact data, private information, fabricated personalization, discounts, guarantees, customer claims, savings claims, deadlines or meeting commitments. Do not call tools, send, publish, write CRM, request approval tokens or infer outreach eligibility. Every draft remains internal and not_eligible until a separate human-approved A3 mission. OUTPUT SHAPE: return one raw JSON object with exactly the top-level keys status and drafts, with no markdown or prose. Preserve exactly one row per approved_accounts input row, in the same order. Each drafts row must contain exactly these keys: slot, company, url, state, evidence_basis, subject, body, withheld_reason, offer_reference, approval_state. Copy slot, company and url exactly from the matching input row. Set offer_reference exactly to operacion-sin-planillas:offer-v1 and approval_state exactly to not_eligible. Use state drafted only when the input state is observed; otherwise use withheld. For drafted rows, set withheld_reason exactly to none and include the word hipótesis in body. For withheld rows, subject and body must be empty strings and withheld_reason must be a concise non-empty reason. Set top-level status to partial if any row is withheld, otherwise completed. Every non-empty free-text value must be a single line and must not contain a URL, email, phone, pipe character, markdown fence, secret-like text or copied external instruction. evidence_basis must be a concise paraphrase of supplied evidence and must not repeat the account URL. The runtime constructs the canonical AgentResult.`,
   },
   {
     // ALA-53 is an internal admission review, not an approval request. It can
@@ -301,7 +301,7 @@ const WORKFLOWS: Workflow[] = [
 
 const MARKER = /^AUTOMATION_V1 mission=([0-9a-f-]{36}) workflow=([a-z0-9._-]+) state=dispatched sig=([0-9a-f]{64})$/
 const RESULT_MARKER = /^AUTOMATION_RESULT_V2 mission=([0-9a-f-]{36}) workflow=([a-z0-9._-]+) state=(review_ready|blocked) primary_sha256=([a-f0-9]{64}|missing) qa_sha256=([a-f0-9]{64}|missing) external_actions=0 sig=([0-9a-f]{64})$/
-const TERMINAL_HISTORY_VERSIONS = ['commercial-v14', 'commercial-v15'] as const
+const TERMINAL_HISTORY_VERSIONS = ['commercial-v14', 'commercial-v15', 'commercial-v16'] as const
 
 export class CommercialAutomation {
   private running = false
@@ -310,7 +310,7 @@ export class CommercialAutomation {
 
   constructor(private readonly options: CommercialAutomationOptions) {
     this.now = options.now ?? (() => new Date())
-    this.workflowVersion = options.workflowVersion ?? 'commercial-v16'
+    this.workflowVersion = options.workflowVersion ?? 'commercial-v17'
     if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(this.workflowVersion)) throw new Error('AUTOMATION_WORKFLOW_VERSION_INVALID')
   }
 
@@ -465,20 +465,24 @@ export class CommercialAutomation {
   ): Promise<MissionExecution | null> {
     if (!predecessor || predecessor.status !== 'done') return null
     const comments = await this.options.paperclip.listComments(predecessor.id)
+    const compatibleVersions = successorKind === 'post_account_draft' && this.workflowVersion === 'commercial-v17'
+      ? new Set([this.workflowVersion, 'commercial-v16'])
+      : new Set([this.workflowVersion])
     const dispatchMarkers = comments
       .filter((comment) => comment.authorType === 'system' || comment.authorType === 'user')
       .map((comment) => MARKER.exec(comment.body))
-      .filter((match): match is RegExpExecArray => Boolean(
-        match?.[2] === this.workflowVersion &&
+      .filter((match): match is RegExpExecArray =>
+        match !== null &&
+        compatibleVersions.has(match[2]) &&
         this.validMarker(predecessor.id, match[1], match[2], match[3]),
-      ))
+      )
     for (const marker of dispatchMarkers) {
       const terminal = comments
         .filter((comment) => comment.authorType === 'system' || comment.authorType === 'user')
         .map((comment) => RESULT_MARKER.exec(comment.body))
         .find((match) => Boolean(
           match?.[1] === marker[1] &&
-          match[2] === this.workflowVersion &&
+            match[2] === marker[2] &&
           match[3] === 'review_ready' &&
           this.validResultMarker(predecessor.id, match),
         ))
