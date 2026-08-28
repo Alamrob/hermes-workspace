@@ -381,7 +381,14 @@ export class CommercialAutomation {
       if (issue.status === 'done' || issue.status === 'cancelled') continue
 
       const comments = await this.options.paperclip.listComments(issue.id)
+      const explicitV17Ala52Retry =
+        authorizedStage === 'ALA-52' &&
+        issue.identifier === 'ALA-52' &&
+        this.workflowVersion === 'commercial-v17' &&
+        this.hasTerminalMarker(issue.id, comments, 'commercial-v16', 'blocked') &&
+        !this.hasTerminalMarker(issue.id, comments, 'commercial-v16', 'review_ready')
       if (
+        !explicitV17Ala52Retry &&
         issue.identifier !== 'ALA-51' &&
         TERMINAL_HISTORY_VERSIONS.some(
           (version) => version !== this.workflowVersion && this.hasTerminalMarker(issue.id, comments, version),
@@ -579,6 +586,7 @@ export class CommercialAutomation {
     issueId: string,
     comments: PaperclipComment[],
     workflowVersion: string,
+    requiredState?: 'review_ready' | 'blocked',
   ): boolean {
     const trusted = comments.filter(
       (comment) => comment.authorType === 'system' || comment.authorType === 'user',
@@ -594,6 +602,7 @@ export class CommercialAutomation {
       .some((terminal) => Boolean(
         terminal?.[1] === dispatch[1] &&
         terminal[2] === workflowVersion &&
+        (requiredState === undefined || terminal[3] === requiredState) &&
         this.validResultMarker(issueId, terminal),
       )))
   }

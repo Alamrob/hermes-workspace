@@ -661,6 +661,22 @@ describe('Paperclip commercial automation', () => {
     assert.equal(broker.orders.at(-1)?.metadata?.workflow_version, 'commercial-v16')
   })
 
+  it('distinguishes a signed blocked v16 terminal from a successful terminal for the explicit v17 ALA-52 retry', () => {
+    const paperclip = new PaperclipFake([issue('ALA-52', 'backlog')])
+    const broker = new BrokerFake()
+    const service = automation(paperclip, broker, 'dispatch', 'commercial-v17') as any
+    const issueId = paperclip.values[0]!.id
+    const missionId = deterministicUuid('ala52-v16-blocked-history')
+    const workflow = 'commercial-v16'
+    const markerPrefix = `AUTOMATION_V1 mission=${missionId} workflow=${workflow} state=dispatched`
+    const marker = `${markerPrefix} sig=${service.markerSignature(issueId, missionId, workflow)}`
+    const resultPrefix = `AUTOMATION_RESULT_V2 mission=${missionId} workflow=${workflow} state=blocked primary_sha256=missing qa_sha256=missing external_actions=0`
+    const result = `${resultPrefix} sig=${service.resultMarkerSignature(issueId, missionId, 'blocked', 'missing', 'missing', workflow)}`
+    const comments = [{ authorType: 'user' as const, body: marker }, { authorType: 'user' as const, body: result }]
+    assert.equal(service.hasTerminalMarker(issueId, comments, workflow, 'blocked'), true)
+    assert.equal(service.hasTerminalMarker(issueId, comments, workflow, 'review_ready'), false)
+  })
+
   it('retries only ALA-51 after a signed v15 failure and does not replay other v15 terminal work', async () => {
     const paperclip = new PaperclipFake([
       issue('ALA-36', 'done'), issue('ALA-51', 'backlog'), issue('ALA-52', 'backlog'),
