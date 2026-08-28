@@ -57,6 +57,7 @@ export async function loadMigrationSources() {
       '023_policy_activation_dossier',
       '024_draft_internal_review',
       '025_a1_research_dossier',
+      '026_a1_research_authorization',
     ].map(async (version) => ({
       version,
       sql: await readFile(

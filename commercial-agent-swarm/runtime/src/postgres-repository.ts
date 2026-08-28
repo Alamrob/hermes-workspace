@@ -35,6 +35,12 @@ import {
 import { PolicyReviewError, validatePolicyReviewState, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import { validatePolicyActivationDossierState, type PolicyActivationDossierState } from './policy-activation-dossier.js'
 import { validateA1ResearchDossier, type A1ResearchDossier } from './a1-research-dossier.js'
+import {
+  A1ResearchAuthorizationError,
+  validateA1ResearchAuthorizationState,
+  type A1ResearchAuthorizationState,
+  type RecordA1ResearchAuthorizationInput,
+} from './a1-research-authorization.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -289,6 +295,37 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     )
     const dossier = result.rows[0]?.dossier
     return dossier === null || dossier === undefined ? null : validateA1ResearchDossier(dossier)
+  }
+
+  async getA1ResearchAuthorizationState(reviewId: string, dossierSha256: string): Promise<A1ResearchAuthorizationState | null> {
+    const result = await this.pool.query<{ state: unknown }>(
+      'SELECT control.build_a1_research_authorization_state($1::uuid,$2) AS state',
+      [reviewId,dossierSha256],
+    )
+    const state = result.rows[0]?.state
+    return state === null || state === undefined ? null : validateA1ResearchAuthorizationState(state)
+  }
+
+  async recordA1ResearchAuthorization(input: RecordA1ResearchAuthorizationInput): Promise<A1ResearchAuthorizationState> {
+    const attestations = {
+      no_contact: input.attestations.noContact,
+      no_crm_write: input.attestations.noCrmWrite,
+      no_external_actions: input.attestations.noExternalActions,
+      no_provider_credit_spend: input.attestations.noProviderCreditSpend,
+      separate_signed_work_order_required: input.attestations.separateSignedWorkOrderRequired,
+    }
+    try {
+      const result = await this.pool.query<{ state: unknown }>(
+        'SELECT control.record_a1_research_authorization($1::uuid,$2::uuid,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,$9,$10::jsonb,$11,$12) AS state',
+        [input.authorizationId,input.reviewId,input.decision,input.rationale,input.reviewerId,input.reviewerEmail,input.reviewedAt,input.expiresAt,input.expectedDossierSha256,JSON.stringify(attestations),input.idempotencyKey,input.requestSha256],
+      )
+      return validateA1ResearchAuthorizationState(result.rows[0]?.state)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      const code = ['A1_RESEARCH_AUTHORIZATION_IMMUTABLE_CONFLICT','A1_RESEARCH_AUTHORIZATION_INVALID','A1_RESEARCH_AUTHORIZATION_GATE_CLOSED','A1_RESEARCH_DOSSIER_NOT_FOUND'].find((candidate) => message.includes(candidate))
+      if (code) throw new A1ResearchAuthorizationError(code)
+      throw error
+    }
   }
 
   async getPolicyReviewState(): Promise<PolicyReviewState> {

@@ -28,6 +28,11 @@ import type { DispatchQueuePort } from './dispatch-queue.js'
 import type { ShadowDecisionDimension, ShadowDecisionValue } from './shadow-review.js'
 import type { DraftReviewDecision } from './draft-review.js'
 import { PolicyReviewError, type PolicyReviewAttestations, type PolicyReviewDecision, type PolicyReviewKind } from './policy-review.js'
+import {
+  A1ResearchAuthorizationError,
+  hashA1ResearchDossier,
+  validateA1ResearchAuthorizationRequest,
+} from './a1-research-authorization.js'
 
 export interface ApplicationRequest {
   method: string
@@ -392,6 +397,32 @@ export class BrokerApplication {
       const dossier = await this.options.repository.getA1ResearchDossier(route.id!)
       return dossier ? { status: 200, body: dossier } : { status: 404, body: { error: 'not_found' } }
     }
+    if (route.action === 'getA1ResearchAuthorization') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const dossier = await this.options.repository.getA1ResearchDossier(route.id!)
+      if (!dossier) return { status: 404, body: { error: 'not_found' } }
+      const state = await this.options.repository.getA1ResearchAuthorizationState(route.id!, hashA1ResearchDossier(dossier))
+      return state ? { status: 200, body: state } : { status: 404, body: { error: 'not_found' } }
+    }
+    if (route.action === 'recordA1ResearchAuthorization') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const input = validateA1ResearchAuthorizationRequest(request.body, this.now())
+      const dossier = await this.options.repository.getA1ResearchDossier(route.id!)
+      if (!dossier) return { status: 404, body: { error: 'not_found' } }
+      const dossierSha256 = hashA1ResearchDossier(dossier)
+      if (dossier.status !== 'authorization_required' || dossierSha256 !== input.expectedDossierSha256)
+        throw new A1ResearchAuthorizationError('A1_RESEARCH_AUTHORIZATION_GATE_CLOSED')
+      const requestSha256 = hashAction({ review_id: route.id!, ...input })
+      return {
+        status: 200,
+        body: await this.options.repository.recordA1ResearchAuthorization({
+          ...input,
+          authorizationId: deterministicUuid(hashAction({ review_id: route.id!, idempotency_key: input.idempotencyKey })),
+          reviewId: route.id!,
+          requestSha256,
+        }),
+      }
+    }
     if (route.action === 'recordDraftReviewItem') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       const input = validateDraftReviewItemRequest(request.body, route.slot)
@@ -591,6 +622,11 @@ function matchRoute(method: string, path: string): Route | null {
   const a1ResearchDossier = /^\/internal\/v1\/a1-research-dossiers\/([^/]+)$/.exec(path)
   if (method === 'GET' && a1ResearchDossier)
     return { action: 'getA1ResearchDossier', auditAction: 'a1_research_dossier.get', id: a1ResearchDossier[1] }
+  const a1ResearchAuthorization = /^\/internal\/v1\/a1-research-authorizations\/([^/]+)$/.exec(path)
+  if (method === 'GET' && a1ResearchAuthorization)
+    return { action: 'getA1ResearchAuthorization', auditAction: 'a1_research_authorization.get', id: a1ResearchAuthorization[1] }
+  if (method === 'POST' && a1ResearchAuthorization)
+    return { action: 'recordA1ResearchAuthorization', auditAction: 'a1_research_authorization.record', id: a1ResearchAuthorization[1] }
   const draftItem = /^\/internal\/v1\/draft-reviews\/([^/]+)\/items\/(\d+)$/.exec(path)
   if (method === 'PUT' && draftItem)
     return { action: 'recordDraftReviewItem', auditAction: 'draft_review.item.record', id: draftItem[1], slot: Number(draftItem[2]) }
@@ -1257,7 +1293,7 @@ function resolveApprovalChannel(
 }
 
 function publicFailure(error: unknown): {
-  status: 400 | 401 | 403 | 409 | 500 | 503
+  status: 400 | 401 | 403 | 404 | 409 | 500 | 503
   error: string
   issues?: string[]
 } {
@@ -1284,6 +1320,11 @@ function publicFailure(error: unknown): {
   }
   if (error instanceof PolicyReviewError) {
     if (error.code === 'POLICY_REVIEW_INVALID') return { status: 400, error: error.code }
+    return { status: 409, error: error.code }
+  }
+  if (error instanceof A1ResearchAuthorizationError) {
+    if (error.code === 'A1_RESEARCH_AUTHORIZATION_INVALID') return { status: 400, error: error.code }
+    if (error.code === 'A1_RESEARCH_DOSSIER_NOT_FOUND') return { status: 404, error: 'not_found' }
     return { status: 409, error: error.code }
   }
   if (error instanceof ApprovalError) {
@@ -1324,4 +1365,12 @@ function publicFailure(error: unknown): {
   )
     return { status: 400, error: error.message }
   return { status: 500, error: 'internal_error' }
+}
+
+function deterministicUuid(sha256: string): string {
+  const hex = sha256.slice(0, 32).split('')
+  hex[12] = '5'
+  hex[16] = ['8','9','a','b'][Number.parseInt(hex[16]!, 16) % 4]!
+  const value = hex.join('')
+  return `${value.slice(0,8)}-${value.slice(8,12)}-${value.slice(12,16)}-${value.slice(16,20)}-${value.slice(20,32)}`
 }

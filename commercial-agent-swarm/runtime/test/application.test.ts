@@ -16,6 +16,7 @@ import { createBrokerHttpServer } from '../src/server.js'
 import { signWorkOrder } from '../src/security.js'
 import { validWorkOrder } from './fixtures.js'
 import type { EnqueueJob, MissionExecution } from '../src/dispatch-queue.js'
+import { hashA1ResearchDossier } from '../src/a1-research-authorization.js'
 
 const NOW = new Date('2026-08-15T20:00:00.000Z')
 
@@ -1132,6 +1133,74 @@ describe('broker application routes', () => {
     assert.equal((response.body as any).missionCreated, false)
     assert.equal(await state.repository.getMission('11111111-1111-4111-8111-111111111111'), null)
     assert.equal(state.audit.events.filter((event) => event.tool_action === 'a1_research_dossier.get').every((event) => event.external_action === false), true)
+  })
+
+  it('records only an inert, short-lived A1 authorization and never creates a mission', async () => {
+    const state = setup()
+    const reviewId = 'a2500000-0000-4500-8500-000000000053'
+    const dossier: any = {
+      reviewId, projectId: 'proptimiza', offerId: 'operacion-sin-planillas', offerVersion: 'v1',
+      status: 'authorization_required', reviewCompleted: true, eligibleAccountCount: 1,
+      accounts: [{ slot: 1, companyName: 'Cuenta Uno', sourceUrl: 'https://cuenta-uno.cl/', decision: 'accepted_internal', decisionVersion: 1 }],
+      autonomyLevel: 'A1', allowedActions: ['analysis.internal','research.public.read'],
+      prohibitedActions: ['credit.consume','personal_contact.discover','personal_email.infer','crm.write','mail.send','message.send','campaign.activate','a3.enable'],
+      approvedChannels: ['internal','public_web'], requestedTools: ['hermes.analysis','hermes.web'],
+      allowedDataCategories: ['public_company_identity','public_business_information','public_source_provenance','published_role_based_corporate_channel'],
+      maximumAccounts: 1, maximumContacts: 0, maximumExternalActions: 0, maximumBudgetUsd: 0.5,
+      providerCreditSpendAllowed: false, internetAccessAllowed: false, contactPermitted: false, crmWriteAllowed: false,
+      authorizationRequired: true, missionCreated: false, productionGate: 'blocked', externalActions: 0,
+      provenance: { source: 'control-broker', sourceId: `a1-research-dossier:${reviewId}`, observedAt: NOW.toISOString(), synthetic: false },
+    }
+    const dossierSha256 = hashA1ResearchDossier(dossier)
+    state.repository.getA1ResearchDossier = async () => dossier
+    let recorded: any = null
+    const responseState = (authorization: any = null) => ({
+      reviewId, projectId: 'proptimiza', offerId: 'operacion-sin-planillas', offerVersion: 'v1',
+      dossierSha256, dossierStatus: 'authorization_required', eligibleAccountCount: 1,
+      authorizationRecorded: authorization !== null, dossierCurrent: true, authorization,
+      executionAuthorized: false, missionCreated: false, internetAccessAllowed: false,
+      providerCreditSpendAllowed: false, contactPermitted: false, crmWriteAllowed: false,
+      maximumExternalActions: 0, productionGate: 'blocked', separateSignedWorkOrderRequired: true,
+      nextRequiredGate: authorization === null ? 'human_authorization' : 'separate_signed_work_order',
+      provenance: { source: 'control-broker', sourceId: `a1-research-authorization:${reviewId}`, observedAt: NOW.toISOString(), synthetic: false },
+    }) as any
+    state.repository.getA1ResearchAuthorizationState = async () => responseState()
+    state.repository.recordA1ResearchAuthorization = async (input) => {
+      recorded = input
+      return responseState({
+        authorizationId: input.authorizationId, decision: input.decision, rationale: input.rationale,
+        reviewerId: input.reviewerId, reviewerEmail: input.reviewerEmail, reviewedAt: input.reviewedAt,
+        expiresAt: input.expiresAt, dossierSha256: input.expectedDossierSha256,
+        attestations: input.attestations,
+      })
+    }
+    const path = `/internal/v1/a1-research-authorizations/${reviewId}`
+    assert.equal((await state.app.handle({ method: 'GET', path })).status, 401)
+    const pending = await state.app.handle({ method: 'GET', path, headers: headers('shadow-review-token') })
+    assert.equal(pending.status, 200)
+    assert.equal((pending.body as any).nextRequiredGate, 'human_authorization')
+    const body = {
+      decision: 'approved',
+      rationale: 'Autorizo registrar el gate interno sin crear ni ejecutar una misión.',
+      reviewer_id: 'cloudflare-director-subject', reviewer_email: 'proptimizaspa@gmail.com',
+      reviewed_at: NOW.toISOString(), expires_at: '2026-08-15T20:30:00.000Z',
+      expected_dossier_sha256: dossierSha256,
+      attestations: { no_contact: true, no_crm_write: true, no_external_actions: true, no_provider_credit_spend: true, separate_signed_work_order_required: true },
+      idempotency_key: 'a1-research-auth:review-00000053',
+    }
+    const response = await state.app.handle({ method: 'POST', path, headers: headers('shadow-review-token'), body })
+    assert.equal(response.status, 200)
+    assert.equal((response.body as any).executionAuthorized, false)
+    assert.equal((response.body as any).missionCreated, false)
+    assert.equal((response.body as any).nextRequiredGate, 'separate_signed_work_order')
+    assert.match(recorded.authorizationId, /^[0-9a-f-]{36}$/)
+    assert.equal(recorded.expectedDossierSha256, dossierSha256)
+    assert.equal(await state.repository.getMission('11111111-1111-4111-8111-111111111111'), null)
+    assert.equal(state.audit.events.filter((event) => event.tool_action === 'a1_research_authorization.record').every((event) => event.external_action === false), true)
+
+    const stale = await state.app.handle({ method: 'POST', path, headers: headers('shadow-review-token'), body: { ...body, expected_dossier_sha256: '0'.repeat(64), idempotency_key: 'a1-research-auth:stale-00000053' } })
+    assert.equal(stale.status, 409)
+    assert.deepEqual(stale.body, { error: 'A1_RESEARCH_AUTHORIZATION_GATE_CLOSED' })
   })
 
   it('exposes an authenticated, inert internal-mail test plan without mission or approval', async () => {
