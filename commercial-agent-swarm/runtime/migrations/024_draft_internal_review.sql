@@ -129,9 +129,9 @@ BEGIN
     RETURN existing.result;
   END IF;
   IF $2 NOT BETWEEN 1 AND 3 OR $3 NOT IN('accepted_internal','revised_internal','rejected') OR length(btrim($4)) NOT BETWEEN 10 AND 1000 OR $8!~'^[A-Za-z0-9._:@+-]{3,254}$' OR $9!~'^draft-review:[A-Za-z0-9._:-]{8,114}$' OR $10!~'^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'DRAFT_REVIEW_ITEM_INVALID'; END IF;
-  IF $4~E'[\\x00-\\x1F\\x7F]' OR $4~*'(https?://|www\\.|@|```|\\||-----BEGIN [A-Z ]*PRIVATE KEY-----|\\m(sk|oc_sk)-[A-Za-z0-9_-]{16,}|\\mBearer[[:space:]]+[A-Za-z0-9._~-]{20,})' THEN RAISE EXCEPTION 'DRAFT_REVIEW_ITEM_INVALID'; END IF;
+  IF $4~'[[:cntrl:]]' OR $4~*'(https?://|www[.]|@|```|[|]|-----BEGIN [A-Z ]*PRIVATE KEY-----|(sk|oc_sk)-[A-Za-z0-9_-]{16,}|Bearer[[:space:]]+[A-Za-z0-9._~-]{20,})' THEN RAISE EXCEPTION 'DRAFT_REVIEW_ITEM_INVALID'; END IF;
   IF $3='revised_internal' THEN
-    IF length(btrim(coalesce($5,''))) NOT BETWEEN 10 AND 200 OR length(btrim(coalesce($6,''))) NOT BETWEEN 30 AND 2000 OR $5~E'[\\x00-\\x1F\\x7F]' OR $6~E'[\\x00-\\x1F\\x7F]' OR ($5||' '||$6)~*'(https?://|www\\.|@|```|\\||-----BEGIN [A-Z ]*PRIVATE KEY-----|\\m(sk|oc_sk)-[A-Za-z0-9_-]{16,}|\\mBearer[[:space:]]+[A-Za-z0-9._~-]{20,})' OR $6!~*'hipótesis' OR $6!~*'operación sin planillas' OR $6!~*'CLP 1\\.800\\.000' THEN RAISE EXCEPTION 'DRAFT_REVIEW_ITEM_INVALID'; END IF;
+    IF length(btrim(coalesce($5,''))) NOT BETWEEN 10 AND 200 OR length(btrim(coalesce($6,''))) NOT BETWEEN 30 AND 2000 OR $5~'[[:cntrl:]]' OR $6~'[[:cntrl:]]' OR ($5||' '||$6)~*'(https?://|www[.]|@|```|[|]|-----BEGIN [A-Z ]*PRIVATE KEY-----|(sk|oc_sk)-[A-Za-z0-9_-]{16,}|Bearer[[:space:]]+[A-Za-z0-9._~-]{20,})' OR $6!~*'hipótesis' OR $6!~*'operación sin planillas' OR $6!~*'CLP 1[.]800[.]000' THEN RAISE EXCEPTION 'DRAFT_REVIEW_ITEM_INVALID'; END IF;
   ELSIF $5 IS NOT NULL OR $6 IS NOT NULL THEN RAISE EXCEPTION 'DRAFT_REVIEW_ITEM_INVALID';
   END IF;
   IF NOT EXISTS(SELECT 1 FROM control.draft_review_sessions WHERE review_id=$1 AND status='open') THEN RAISE EXCEPTION 'DRAFT_REVIEW_NOT_OPEN'; END IF;
