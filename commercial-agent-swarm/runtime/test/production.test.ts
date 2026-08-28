@@ -149,6 +149,12 @@ describe('runtime persistence composition', () => {
       ),
       true,
     )
+    assert.equal(
+      expectedFunctionSets[0].includes(
+        'control.record_draft_review_item(uuid,integer,text,text,text,text,integer,text,text,text)',
+      ),
+      true,
+    )
     await verifyProductionDatabasePrincipals([
       {
         pool: fake('evidence_login', ['commercial_approval_evidence']) as never,
