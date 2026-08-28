@@ -34,6 +34,7 @@ import {
 } from './draft-review.js'
 import { PolicyReviewError, validatePolicyReviewState, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import { validatePolicyActivationDossierState, type PolicyActivationDossierState } from './policy-activation-dossier.js'
+import { validateA1ResearchDossier, type A1ResearchDossier } from './a1-research-dossier.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -279,6 +280,15 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       [input.reviewId,input.expectedVersion,input.actorId,input.idempotencyKey,input.requestSha256],
     )
     return validateDraftReview(result.rows[0]?.review)
+  }
+
+  async getA1ResearchDossier(reviewId: string): Promise<A1ResearchDossier | null> {
+    const result = await this.pool.query<{ dossier: unknown }>(
+      'SELECT control.build_a1_research_dossier($1::uuid) AS dossier',
+      [reviewId],
+    )
+    const dossier = result.rows[0]?.dossier
+    return dossier === null || dossier === undefined ? null : validateA1ResearchDossier(dossier)
   }
 
   async getPolicyReviewState(): Promise<PolicyReviewState> {

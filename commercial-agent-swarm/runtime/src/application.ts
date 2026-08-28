@@ -387,6 +387,11 @@ export class BrokerApplication {
       const review = await this.options.repository.getDraftReview(route.id!)
       return review ? { status: 200, body: review } : { status: 404, body: { error: 'not_found' } }
     }
+    if (route.action === 'getA1ResearchDossier') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const dossier = await this.options.repository.getA1ResearchDossier(route.id!)
+      return dossier ? { status: 200, body: dossier } : { status: 404, body: { error: 'not_found' } }
+    }
     if (route.action === 'recordDraftReviewItem') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       const input = validateDraftReviewItemRequest(request.body, route.slot)
@@ -583,6 +588,9 @@ function matchRoute(method: string, path: string): Route | null {
   const draftReview = /^\/internal\/v1\/draft-reviews\/([^/]+)$/.exec(path)
   if (method === 'GET' && draftReview)
     return { action: 'getDraftReview', auditAction: 'draft_review.get', id: draftReview[1] }
+  const a1ResearchDossier = /^\/internal\/v1\/a1-research-dossiers\/([^/]+)$/.exec(path)
+  if (method === 'GET' && a1ResearchDossier)
+    return { action: 'getA1ResearchDossier', auditAction: 'a1_research_dossier.get', id: a1ResearchDossier[1] }
   const draftItem = /^\/internal\/v1\/draft-reviews\/([^/]+)\/items\/(\d+)$/.exec(path)
   if (method === 'PUT' && draftItem)
     return { action: 'recordDraftReviewItem', auditAction: 'draft_review.item.record', id: draftItem[1], slot: Number(draftItem[2]) }

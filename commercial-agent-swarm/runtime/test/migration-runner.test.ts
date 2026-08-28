@@ -30,6 +30,7 @@ describe('versioned migration runner', () => {
       { version: '022_policy_human_review', sql: 'SELECT 22;' },
       { version: '023_policy_activation_dossier', sql: 'SELECT 23;' },
       { version: '024_draft_internal_review', sql: 'SELECT 24;' },
+      { version: '025_a1_research_dossier', sql: 'SELECT 25;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -61,6 +62,7 @@ describe('versioned migration runner', () => {
         '022_policy_human_review',
         '023_policy_activation_dossier',
         '024_draft_internal_review',
+        '025_a1_research_dossier',
       ],
     )
     assert.equal(
@@ -69,13 +71,13 @@ describe('versioned migration runner', () => {
     )
   })
 
-  it('loads the complete production migration set through the internal draft-review gate', async () => {
+  it('loads the complete production migration set through the dormant A1 research dossier', async () => {
     const migrations = await loadMigrationSources()
-    assert.equal(migrations.length, 24)
-    assert.equal(migrations.at(-1)?.version, '024_draft_internal_review')
+    assert.equal(migrations.length, 25)
+    assert.equal(migrations.at(-1)?.version, '025_a1_research_dossier')
     assert.match(
       migrations.at(-1)?.sql ?? '',
-      /control\.build_draft_review/,
+      /control\.build_a1_research_dossier/,
     )
     assert.doesNotMatch(
       migrations.at(-1)?.sql ?? '',

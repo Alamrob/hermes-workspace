@@ -10,6 +10,7 @@ import type {
   DraftReview,
   RecordDraftReviewItemInput,
 } from './draft-review.js'
+import type { A1ResearchDossier } from './a1-research-dossier.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
 
@@ -44,6 +45,7 @@ export interface RuntimeRepository {
   getDraftReview(id: string): Promise<DraftReview | null>
   recordDraftReviewItem(input: RecordDraftReviewItemInput): Promise<DraftReview>
   completeDraftReview(input: CompleteDraftReviewInput): Promise<DraftReview>
+  getA1ResearchDossier(reviewId: string): Promise<A1ResearchDossier | null>
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
@@ -286,6 +288,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   async completeDraftReview(_input: CompleteDraftReviewInput): Promise<DraftReview> {
     throw new Error('DRAFT_REVIEW_NOT_FOUND')
   }
+  async getA1ResearchDossier(_reviewId: string): Promise<A1ResearchDossier | null> { return null }
 
   async getPolicyReviewState(): Promise<PolicyReviewState> {
     return inMemoryPolicyReviewState(this.policyReviews)
