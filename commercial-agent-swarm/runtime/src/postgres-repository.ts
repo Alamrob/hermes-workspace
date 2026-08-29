@@ -41,6 +41,12 @@ import {
   type A1ResearchAuthorizationState,
   type RecordA1ResearchAuthorizationInput,
 } from './a1-research-authorization.js'
+import {
+  A1ResearchOrderAuthorizationError,
+  validateA1ResearchOrderAuthorizationState,
+  type A1ResearchOrderAuthorizationState,
+  type RecordA1ResearchOrderAuthorizationInput,
+} from './a1-research-order-authorization.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -324,6 +330,42 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       const message = error instanceof Error ? error.message : ''
       const code = ['A1_RESEARCH_AUTHORIZATION_IMMUTABLE_CONFLICT','A1_RESEARCH_AUTHORIZATION_INVALID','A1_RESEARCH_AUTHORIZATION_GATE_CLOSED','A1_RESEARCH_DOSSIER_NOT_FOUND'].find((candidate) => message.includes(candidate))
       if (code) throw new A1ResearchAuthorizationError(code)
+      throw error
+    }
+  }
+
+  async getA1ResearchOrderAuthorizationState(orderAuthorizationId: string): Promise<A1ResearchOrderAuthorizationState | null> {
+    const result = await this.pool.query<{ state: unknown }>(
+      'SELECT control.get_a1_research_order_authorization($1::uuid) AS state',
+      [orderAuthorizationId],
+    )
+    const state = result.rows[0]?.state
+    return state === null || state === undefined ? null : validateA1ResearchOrderAuthorizationState(state)
+  }
+
+  async recordA1ResearchOrderAuthorization(input: RecordA1ResearchOrderAuthorizationInput): Promise<A1ResearchOrderAuthorizationState> {
+    const attestations = {
+      exact_work_order_confirmed: input.attestations.exactWorkOrderConfirmed,
+      no_contact: input.attestations.noContact,
+      no_crm_write: input.attestations.noCrmWrite,
+      no_external_actions: input.attestations.noExternalActions,
+      no_provider_credit_spend: input.attestations.noProviderCreditSpend,
+    }
+    try {
+      const result = await this.pool.query<{ state: unknown }>(
+        'SELECT control.record_a1_research_order_authorization($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8::timestamptz,$9::timestamptz,$10,$11,$12::uuid,$13,$14::jsonb,$15,$16) AS state',
+        [input.orderAuthorizationId,input.reviewId,input.parentAuthorizationId,input.decision,input.rationale,input.reviewerId,input.reviewerEmail,input.reviewedAt,input.expiresAt,input.expectedDossierSha256,input.unsignedWorkOrderSha256,input.missionId,input.userAuthorizationSha256,JSON.stringify(attestations),input.idempotencyKey,input.requestSha256],
+      )
+      return validateA1ResearchOrderAuthorizationState(result.rows[0]?.state)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      const code = [
+        'A1_RESEARCH_ORDER_AUTHORIZATION_IMMUTABLE_CONFLICT',
+        'A1_RESEARCH_ORDER_AUTHORIZATION_INVALID',
+        'A1_RESEARCH_ORDER_AUTHORIZATION_GATE_CLOSED',
+        'A1_RESEARCH_ORDER_AUTHORIZATION_NOT_FOUND',
+      ].find((candidate)=>message.includes(candidate))
+      if (code) throw new A1ResearchOrderAuthorizationError(code)
       throw error
     }
   }

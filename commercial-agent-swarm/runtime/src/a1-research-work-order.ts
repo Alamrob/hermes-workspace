@@ -7,6 +7,11 @@ import {
 import { validateA1ResearchDossier, type A1ResearchDossier } from './a1-research-dossier.js'
 import { AuthenticationError } from './security.js'
 import type { WorkOrder } from './work-orders.js'
+import {
+  hashUnsignedA1ResearchWorkOrder,
+  validateA1ResearchOrderAuthorizationState,
+  type A1ResearchOrderAuthorizationState,
+} from './a1-research-order-authorization.js'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const SHA256 = /^[a-f0-9]{64}$/
@@ -16,6 +21,9 @@ export interface A1ResearchOrderEvidence {
   dossierSha256: string
   authorizationId: string
   authorizationExpiresAt: string
+  orderAuthorizationId: string
+  orderAuthorizationExpiresAt: string
+  unsignedWorkOrderSha256: string
   userAuthorizationSha256: string
   userAuthorizedAt: string
   userAuthorizedBy: 'proptimizaspa@gmail.com'
@@ -33,7 +41,42 @@ export function a1ResearchReviewId(workOrder: WorkOrder): string | null {
   return reviewId as string
 }
 
+export function a1ResearchOrderAuthorizationId(workOrder: WorkOrder): string | null {
+  if (a1ResearchReviewId(workOrder) === null) return null
+  const value = record(workOrder.metadata)?.a1_research_order_authorization_id
+  if (typeof value !== 'string' || !UUID.test(value)) deny()
+  return value
+}
+
 export function assertA1ResearchWorkOrderAdmission(
+  workOrder: WorkOrder,
+  dossierValue: A1ResearchDossier | null,
+  authorizationValue: A1ResearchAuthorizationState | null,
+  orderAuthorizationValue: A1ResearchOrderAuthorizationState | null,
+  now: Date,
+): void {
+  assertA1ResearchWorkOrderCandidate(workOrder, dossierValue, authorizationValue, now)
+  if (!orderAuthorizationValue) deny()
+  const orderAuthorization = validateA1ResearchOrderAuthorizationState(orderAuthorizationValue)
+  const metadata = record(workOrder.metadata)
+  const expiresAt = Date.parse(orderAuthorization.expiresAt)
+  if (
+    orderAuthorization.orderAuthorizationId !== metadata?.a1_research_order_authorization_id ||
+    orderAuthorization.reviewId !== metadata.a1_research_review_id ||
+    orderAuthorization.parentAuthorizationId !== metadata.a1_research_authorization_id ||
+    orderAuthorization.dossierSha256 !== metadata.a1_research_dossier_sha256 ||
+    orderAuthorization.unsignedWorkOrderSha256 !== metadata.a1_research_order_unsigned_sha256 ||
+    orderAuthorization.unsignedWorkOrderSha256 !== hashUnsignedA1ResearchWorkOrder(workOrder) ||
+    orderAuthorization.missionId !== workOrder.mission_id || orderAuthorization.decision !== 'approved' ||
+    orderAuthorization.reviewerEmail !== 'proptimizaspa@gmail.com' ||
+    orderAuthorization.expiresAt !== metadata.a1_research_order_authorization_expires_at ||
+    orderAuthorization.userAuthorizationSha256 !== metadata.a1_research_order_authorization_sha256 ||
+    orderAuthorization.reviewedAt !== metadata.a1_research_order_authorized_at ||
+    expiresAt <= now.getTime() || Date.parse(String(workOrder.expires_at)) > expiresAt
+  ) deny()
+}
+
+export function assertA1ResearchWorkOrderCandidate(
   workOrder: WorkOrder,
   dossierValue: A1ResearchDossier | null,
   authorizationValue: A1ResearchAuthorizationState | null,
@@ -80,9 +123,13 @@ export function assertA1ResearchWorkOrderAdmission(
     metadata?.a1_research_dossier_sha256 !== dossierSha256 ||
     metadata.a1_research_authorization_id !== authorization.authorizationId ||
     metadata.a1_research_authorization_expires_at !== authorization.expiresAt ||
+    typeof metadata.a1_research_order_authorization_id !== 'string' || !UUID.test(metadata.a1_research_order_authorization_id) ||
+    typeof metadata.a1_research_order_authorization_expires_at !== 'string' || !Number.isFinite(Date.parse(metadata.a1_research_order_authorization_expires_at)) ||
+    typeof metadata.a1_research_order_unsigned_sha256 !== 'string' || !SHA256.test(metadata.a1_research_order_unsigned_sha256) ||
+    metadata.a1_research_order_unsigned_sha256 !== hashUnsignedA1ResearchWorkOrder(workOrder) ||
     metadata.a1_research_order_authorized_by !== 'proptimizaspa@gmail.com' ||
     typeof metadata.a1_research_order_authorization_sha256 !== 'string' || !SHA256.test(metadata.a1_research_order_authorization_sha256) ||
-    !Number.isFinite(userAuthorizedAt) || userAuthorizedAt < Date.parse(authorization.reviewedAt) || userAuthorizedAt > orderCreatedAt ||
+    !Number.isFinite(userAuthorizedAt) || userAuthorizedAt < Date.parse(authorization.reviewedAt) || userAuthorizedAt > now.getTime() ||
     canonicalJson(metadata.a1_research_accounts) !== canonicalJson(expectedAccounts(dossier))
   ) deny()
 }
@@ -90,7 +137,13 @@ export function assertA1ResearchWorkOrderAdmission(
 export function expectedA1ResearchOrderEvidence(
   dossierValue: A1ResearchDossier,
   authorizationValue: A1ResearchAuthorizationState,
-  input: { userAuthorizationSha256: string; userAuthorizedAt: string },
+  input: {
+    orderAuthorizationId: string
+    orderAuthorizationExpiresAt: string
+    unsignedWorkOrderSha256: string
+    userAuthorizationSha256: string
+    userAuthorizedAt: string
+  },
 ): A1ResearchOrderEvidence {
   const dossier = validateA1ResearchDossier(dossierValue)
   const state = validateA1ResearchAuthorizationState(authorizationValue)
@@ -98,7 +151,9 @@ export function expectedA1ResearchOrderEvidence(
   const dossierSha256 = hashA1ResearchDossier(dossier)
   if (
     !authorization || authorization.decision !== 'approved' || !state.authorizationRecorded || !state.dossierCurrent ||
-    state.dossierSha256 !== dossierSha256 || !SHA256.test(input.userAuthorizationSha256) ||
+    state.dossierSha256 !== dossierSha256 || !UUID.test(input.orderAuthorizationId) ||
+    !Number.isFinite(Date.parse(input.orderAuthorizationExpiresAt)) ||
+    !SHA256.test(input.unsignedWorkOrderSha256) || !SHA256.test(input.userAuthorizationSha256) ||
     !Number.isFinite(Date.parse(input.userAuthorizedAt))
   ) deny()
   return {
@@ -106,6 +161,9 @@ export function expectedA1ResearchOrderEvidence(
     dossierSha256,
     authorizationId: authorization.authorizationId,
     authorizationExpiresAt: authorization.expiresAt,
+    orderAuthorizationId: input.orderAuthorizationId,
+    orderAuthorizationExpiresAt: new Date(input.orderAuthorizationExpiresAt).toISOString(),
+    unsignedWorkOrderSha256: input.unsignedWorkOrderSha256,
     userAuthorizationSha256: input.userAuthorizationSha256,
     userAuthorizedAt: new Date(input.userAuthorizedAt).toISOString(),
     userAuthorizedBy: 'proptimizaspa@gmail.com',
@@ -122,6 +180,9 @@ export function a1ResearchOrderMetadata(
     a1_research_dossier_sha256: evidence.dossierSha256,
     a1_research_authorization_id: evidence.authorizationId,
     a1_research_authorization_expires_at: evidence.authorizationExpiresAt,
+    a1_research_order_authorization_id: evidence.orderAuthorizationId,
+    a1_research_order_authorization_expires_at: evidence.orderAuthorizationExpiresAt,
+    a1_research_order_unsigned_sha256: evidence.unsignedWorkOrderSha256,
     a1_research_order_authorization_sha256: evidence.userAuthorizationSha256,
     a1_research_order_authorized_at: evidence.userAuthorizedAt,
     a1_research_order_authorized_by: evidence.userAuthorizedBy,

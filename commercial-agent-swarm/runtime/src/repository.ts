@@ -15,6 +15,10 @@ import type {
   A1ResearchAuthorizationState,
   RecordA1ResearchAuthorizationInput,
 } from './a1-research-authorization.js'
+import type {
+  A1ResearchOrderAuthorizationState,
+  RecordA1ResearchOrderAuthorizationInput,
+} from './a1-research-order-authorization.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
 
@@ -52,6 +56,8 @@ export interface RuntimeRepository {
   getA1ResearchDossier(reviewId: string): Promise<A1ResearchDossier | null>
   getA1ResearchAuthorizationState(reviewId: string, dossierSha256: string): Promise<A1ResearchAuthorizationState | null>
   recordA1ResearchAuthorization(input: RecordA1ResearchAuthorizationInput): Promise<A1ResearchAuthorizationState>
+  getA1ResearchOrderAuthorizationState(orderAuthorizationId: string): Promise<A1ResearchOrderAuthorizationState | null>
+  recordA1ResearchOrderAuthorization(input: RecordA1ResearchOrderAuthorizationInput): Promise<A1ResearchOrderAuthorizationState>
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
@@ -167,6 +173,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly webhookEvents = new Map<string, WebhookEventRecord>()
   private readonly externalActions = new Map<string, { action_hash: string; channel: string; receipt_id?: string; approval_id?: string }>()
   private readonly policyReviews = new Map<string, RecordPolicyReviewInput>()
+  private readonly a1OrderAuthorizations = new Map<string, A1ResearchOrderAuthorizationState>()
 
   async ready(): Promise<boolean> {
     return true
@@ -276,6 +283,52 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
       this.killSwitches.has(`mission:${input.missionId}`) ||
       this.killSwitches.has(`channel:${input.channel}`)
     )
+  }
+
+  async getA1ResearchOrderAuthorizationState(orderAuthorizationId: string): Promise<A1ResearchOrderAuthorizationState | null> {
+    const state = this.a1OrderAuthorizations.get(orderAuthorizationId)
+    return state ? structuredClone(state) : null
+  }
+
+  async recordA1ResearchOrderAuthorization(input: RecordA1ResearchOrderAuthorizationInput): Promise<A1ResearchOrderAuthorizationState> {
+    const state: A1ResearchOrderAuthorizationState = {
+      orderAuthorizationId: input.orderAuthorizationId,
+      reviewId: input.reviewId,
+      parentAuthorizationId: input.parentAuthorizationId,
+      decision: input.decision,
+      rationale: input.rationale,
+      reviewerId: input.reviewerId,
+      reviewerEmail: input.reviewerEmail,
+      reviewedAt: input.reviewedAt,
+      expiresAt: input.expiresAt,
+      dossierSha256: input.expectedDossierSha256,
+      unsignedWorkOrderSha256: input.unsignedWorkOrderSha256,
+      missionId: input.missionId,
+      userAuthorizationSha256: input.userAuthorizationSha256,
+      attestations: input.attestations,
+      idempotencyKey: input.idempotencyKey,
+      executionAuthorized: false,
+      missionCreated: false,
+      dispatchQueued: false,
+      internetAccessAllowed: false,
+      providerCreditSpendAllowed: false,
+      contactPermitted: false,
+      crmWriteAllowed: false,
+      maximumExternalActions: 0,
+      productionGate: 'blocked',
+      nextRequiredGate: 'sign_exact_work_order',
+      provenance: {
+        source: 'control-broker',
+        sourceId: `a1-research-order-authorization:${input.orderAuthorizationId}`,
+        observedAt: input.reviewedAt,
+        synthetic: false,
+      },
+    }
+    const existing = this.a1OrderAuthorizations.get(input.orderAuthorizationId)
+    if (existing && JSON.stringify(existing) !== JSON.stringify(state))
+      throw new Error('A1_RESEARCH_ORDER_AUTHORIZATION_IMMUTABLE_CONFLICT')
+    this.a1OrderAuthorizations.set(input.orderAuthorizationId, structuredClone(state))
+    return structuredClone(state)
   }
 
   async listShadowReviews(): Promise<ShadowReview[]> { return [] }

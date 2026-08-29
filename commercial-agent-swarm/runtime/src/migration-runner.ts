@@ -28,6 +28,7 @@ const EXPECTED_MIGRATIONS = [
   '024_draft_internal_review',
   '025_a1_research_dossier',
   '026_a1_research_authorization',
+  '027_a1_research_order_authorization',
 ] as const
 
 export interface MigrationSource {

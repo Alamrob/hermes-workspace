@@ -34,7 +34,17 @@ import {
   validateA1ResearchAuthorizationRequest,
 } from './a1-research-authorization.js'
 import { buildA1WorkOrderPreview } from './a1-work-order-preview.js'
-import { a1ResearchReviewId, assertA1ResearchWorkOrderAdmission } from './a1-research-work-order.js'
+import {
+  a1ResearchOrderAuthorizationId,
+  a1ResearchReviewId,
+  assertA1ResearchWorkOrderCandidate,
+  assertA1ResearchWorkOrderAdmission,
+} from './a1-research-work-order.js'
+import {
+  A1ResearchOrderAuthorizationError,
+  hashUnsignedA1ResearchWorkOrder,
+  validateA1ResearchOrderAuthorizationRequest,
+} from './a1-research-order-authorization.js'
 
 export interface ApplicationRequest {
   method: string
@@ -439,6 +449,43 @@ export class BrokerApplication {
         }),
       }
     }
+    if (route.action === 'recordA1ResearchOrderAuthorization') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const now = this.now()
+      const input = validateA1ResearchOrderAuthorizationRequest(request.body, now)
+      const workOrder = validateWorkOrder(input.workOrder)
+      const dossier = await this.options.repository.getA1ResearchDossier(route.id!)
+      if (!dossier) return { status: 404, body: { error: 'not_found' } }
+      const dossierSha256 = hashA1ResearchDossier(dossier)
+      const parent = await this.options.repository.getA1ResearchAuthorizationState(route.id!, dossierSha256)
+      const metadata = workOrder.metadata
+      const authority = workOrder.authority as Record<string, unknown>
+      const orderAuthorizationId = a1ResearchOrderAuthorizationId(workOrder)
+      const unsignedWorkOrderSha256 = hashUnsignedA1ResearchWorkOrder(workOrder)
+      if (
+        dossierSha256 !== input.expectedDossierSha256 || parent?.authorization?.authorizationId !== input.expectedParentAuthorizationId ||
+        authority.signature !== '0'.repeat(64) || metadata?.a1_research_order_authorization_id !== orderAuthorizationId ||
+        metadata.a1_research_order_unsigned_sha256 !== unsignedWorkOrderSha256 ||
+        metadata.a1_research_order_authorization_expires_at !== input.expiresAt ||
+        metadata.a1_research_order_authorization_sha256 !== input.userAuthorizationSha256 ||
+        metadata.a1_research_order_authorized_at !== input.reviewedAt ||
+        Date.parse(String(workOrder.expires_at)) > Date.parse(input.expiresAt)
+      ) throw new A1ResearchOrderAuthorizationError('A1_RESEARCH_ORDER_AUTHORIZATION_GATE_CLOSED')
+      assertA1ResearchWorkOrderCandidate(workOrder, dossier, parent, now)
+      return {
+        status: 200,
+        body: await this.options.repository.recordA1ResearchOrderAuthorization({
+          orderAuthorizationId: orderAuthorizationId!, reviewId: route.id!,
+          parentAuthorizationId: input.expectedParentAuthorizationId,
+          decision: input.decision, rationale: input.rationale, reviewerId: input.reviewerId,
+          reviewerEmail: input.reviewerEmail, reviewedAt: input.reviewedAt, expiresAt: input.expiresAt,
+          expectedDossierSha256: dossierSha256, unsignedWorkOrderSha256,
+          missionId: workOrder.mission_id, userAuthorizationSha256: input.userAuthorizationSha256,
+          attestations: input.attestations, idempotencyKey: input.idempotencyKey,
+          requestSha256: hashAction({ review_id: route.id!, ...input, workOrder }),
+        }),
+      }
+    }
     if (route.action === 'recordDraftReviewItem') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       const input = validateDraftReviewItemRequest(request.body, route.slot)
@@ -555,11 +602,15 @@ export class BrokerApplication {
   private async requireA1ResearchAdmission(workOrder: WorkOrder, now: Date): Promise<void> {
     const reviewId = a1ResearchReviewId(workOrder)
     if (reviewId === null) return
+    const orderAuthorizationId = a1ResearchOrderAuthorizationId(workOrder)
     const dossier = await this.options.repository.getA1ResearchDossier(reviewId)
     const authorization = dossier
       ? await this.options.repository.getA1ResearchAuthorizationState(reviewId, hashA1ResearchDossier(dossier))
       : null
-    assertA1ResearchWorkOrderAdmission(workOrder, dossier, authorization, now)
+    const orderAuthorization = orderAuthorizationId
+      ? await this.options.repository.getA1ResearchOrderAuthorizationState(orderAuthorizationId)
+      : null
+    assertA1ResearchWorkOrderAdmission(workOrder, dossier, authorization, orderAuthorization, now)
   }
 
   private async audit(
@@ -656,6 +707,9 @@ function matchRoute(method: string, path: string): Route | null {
   const a1WorkOrderPreview = /^\/internal\/v1\/a1-work-order-previews\/([^/]+)$/.exec(path)
   if (method === 'GET' && a1WorkOrderPreview)
     return { action: 'getA1WorkOrderPreview', auditAction: 'a1_work_order_preview.get', id: a1WorkOrderPreview[1] }
+  const a1OrderAuthorization = /^\/internal\/v1\/a1-order-authorizations\/([^/]+)$/.exec(path)
+  if (method === 'POST' && a1OrderAuthorization)
+    return { action: 'recordA1ResearchOrderAuthorization', auditAction: 'a1_research_order_authorization.record', id: a1OrderAuthorization[1] }
   const draftItem = /^\/internal\/v1\/draft-reviews\/([^/]+)\/items\/(\d+)$/.exec(path)
   if (method === 'PUT' && draftItem)
     return { action: 'recordDraftReviewItem', auditAction: 'draft_review.item.record', id: draftItem[1], slot: Number(draftItem[2]) }
@@ -1364,6 +1418,11 @@ function publicFailure(error: unknown): {
   if (error instanceof A1ResearchAuthorizationError) {
     if (error.code === 'A1_RESEARCH_AUTHORIZATION_INVALID') return { status: 400, error: error.code }
     if (error.code === 'A1_RESEARCH_DOSSIER_NOT_FOUND') return { status: 404, error: 'not_found' }
+    return { status: 409, error: error.code }
+  }
+  if (error instanceof A1ResearchOrderAuthorizationError) {
+    if (error.code === 'A1_RESEARCH_ORDER_AUTHORIZATION_INVALID') return { status: 400, error: error.code }
+    if (error.code === 'A1_RESEARCH_ORDER_AUTHORIZATION_NOT_FOUND') return { status: 404, error: 'not_found' }
     return { status: 409, error: error.code }
   }
   if (error instanceof ApprovalError) {

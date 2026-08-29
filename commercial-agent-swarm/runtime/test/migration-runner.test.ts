@@ -32,6 +32,7 @@ describe('versioned migration runner', () => {
       { version: '024_draft_internal_review', sql: 'SELECT 24;' },
       { version: '025_a1_research_dossier', sql: 'SELECT 25;' },
       { version: '026_a1_research_authorization', sql: 'SELECT 26;' },
+      { version: '027_a1_research_order_authorization', sql: 'SELECT 27;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -65,6 +66,7 @@ describe('versioned migration runner', () => {
         '024_draft_internal_review',
         '025_a1_research_dossier',
         '026_a1_research_authorization',
+        '027_a1_research_order_authorization',
       ],
     )
     assert.equal(
@@ -75,11 +77,11 @@ describe('versioned migration runner', () => {
 
   it('loads the complete production migration set through the dormant A1 authorization gate', async () => {
     const migrations = await loadMigrationSources()
-    assert.equal(migrations.length, 26)
-    assert.equal(migrations.at(-1)?.version, '026_a1_research_authorization')
+    assert.equal(migrations.length, 27)
+    assert.equal(migrations.at(-1)?.version, '027_a1_research_order_authorization')
     assert.match(
       migrations.at(-1)?.sql ?? '',
-      /control\.record_a1_research_authorization/,
+      /control\.record_a1_research_order_authorization/,
     )
     assert.doesNotMatch(
       migrations.at(-1)?.sql ?? '',

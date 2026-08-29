@@ -6,12 +6,14 @@ import {
   assertA1ResearchWorkOrderAdmission,
   expectedA1ResearchOrderEvidence,
 } from '../src/a1-research-work-order.js'
+import { hashUnsignedA1ResearchWorkOrder, type A1ResearchOrderAuthorizationState } from '../src/a1-research-order-authorization.js'
 import { hashA1ResearchDossier, type A1ResearchAuthorizationState } from '../src/a1-research-authorization.js'
 import type { A1ResearchDossier } from '../src/a1-research-dossier.js'
 import type { WorkOrder } from '../src/work-orders.js'
 import { validWorkOrder } from './fixtures.js'
 
 const REVIEW = 'a2500000-0000-4500-8500-000000000053'
+const ORDER_AUTH = '72500000-0000-4500-8500-000000000053'
 const NOW = new Date('2026-08-28T20:15:00.000Z')
 
 function dossier(): A1ResearchDossier {
@@ -51,6 +53,8 @@ function authorization(expiresAt = '2026-08-28T20:30:00.000Z'): A1ResearchAuthor
 function order(): WorkOrder {
   const value: any = validWorkOrder()
   const evidence = expectedA1ResearchOrderEvidence(dossier(), authorization(), {
+    orderAuthorizationId: ORDER_AUTH, orderAuthorizationExpiresAt: '2026-08-28T20:30:00.000Z',
+    unsignedWorkOrderSha256: '0'.repeat(64),
     userAuthorizationSha256: 'c'.repeat(64), userAuthorizedAt: '2026-08-28T20:05:00.000Z',
   })
   value.created_at = '2026-08-28T20:10:00.000Z'
@@ -77,31 +81,50 @@ function order(): WorkOrder {
   }
   value.dry_run = true
   value.metadata = a1ResearchOrderMetadata(dossier(), evidence)
+  value.metadata.a1_research_order_unsigned_sha256 = hashUnsignedA1ResearchWorkOrder(value as WorkOrder)
   return value as WorkOrder
+}
+
+function orderAuthorization(value: WorkOrder = order()): A1ResearchOrderAuthorizationState {
+  return {
+    orderAuthorizationId: ORDER_AUTH, reviewId: REVIEW,
+    parentAuthorizationId: '62500000-0000-4500-8500-000000000053', decision: 'approved',
+    rationale: 'Autoriza solamente la orden A1 exacta y sus límites internos.',
+    reviewerId: 'director', reviewerEmail: 'proptimizaspa@gmail.com',
+    reviewedAt: '2026-08-28T20:05:00.000Z', expiresAt: '2026-08-28T20:30:00.000Z',
+    dossierSha256: hashA1ResearchDossier(dossier()),
+    unsignedWorkOrderSha256: hashUnsignedA1ResearchWorkOrder(value), missionId: value.mission_id,
+    userAuthorizationSha256: 'c'.repeat(64),
+    attestations: { exactWorkOrderConfirmed:true,noContact:true,noCrmWrite:true,noExternalActions:true,noProviderCreditSpend:true },
+    idempotencyKey: 'a1-order-auth:review-00000053', executionAuthorized:false,missionCreated:false,
+    dispatchQueued:false,internetAccessAllowed:false,providerCreditSpendAllowed:false,contactPermitted:false,
+    crmWriteAllowed:false,maximumExternalActions:0,productionGate:'blocked',nextRequiredGate:'sign_exact_work_order',
+    provenance: { source:'control-broker',sourceId:`a1-research-order-authorization:${ORDER_AUTH}`,observedAt:NOW.toISOString(),synthetic:false },
+  }
 }
 
 describe('A1 research work-order admission', () => {
   it('admits only a current signed-order candidate bound to the dossier, authorization and exact accounts', () => {
     const value = order()
     assert.equal(a1ResearchReviewId(value), REVIEW)
-    assert.doesNotThrow(() => assertA1ResearchWorkOrderAdmission(value, dossier(), authorization(), NOW))
+    assert.doesNotThrow(() => assertA1ResearchWorkOrderAdmission(value, dossier(), authorization(), orderAuthorization(value), NOW))
   })
 
   it('fails closed for missing authorization, expired authorization or changed account scope', () => {
-    assert.throws(() => assertA1ResearchWorkOrderAdmission(order(), dossier(), null, NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
-    assert.throws(() => assertA1ResearchWorkOrderAdmission(order(), dossier(), authorization('2026-08-28T20:14:59.000Z'), NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
+    assert.throws(() => assertA1ResearchWorkOrderAdmission(order(), dossier(), null, null, NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
+    assert.throws(() => assertA1ResearchWorkOrderAdmission(order(), dossier(), authorization('2026-08-28T20:14:59.000Z'), orderAuthorization(), NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
     const changed = order()
     ;(changed.metadata!.a1_research_accounts as Array<Record<string, unknown>>)[0]!.company_name = 'Cuenta Distinta'
-    assert.throws(() => assertA1ResearchWorkOrderAdmission(changed, dossier(), authorization(), NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
+    assert.throws(() => assertA1ResearchWorkOrderAdmission(changed, dossier(), authorization(), orderAuthorization(), NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
   })
 
   it('rejects budget, contact or public-research orders not bound to a review', () => {
     const overBudget = order()
     overBudget.budget_limit = { currency: 'USD', maximum: 0.51 }
-    assert.throws(() => assertA1ResearchWorkOrderAdmission(overBudget, dossier(), authorization(), NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
+    assert.throws(() => assertA1ResearchWorkOrderAdmission(overBudget, dossier(), authorization(), orderAuthorization(), NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
     const contact = order()
     ;(contact.contact_policy as Record<string, unknown>).contact_permitted = true
-    assert.throws(() => assertA1ResearchWorkOrderAdmission(contact, dossier(), authorization(), NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
+    assert.throws(() => assertA1ResearchWorkOrderAdmission(contact, dossier(), authorization(), orderAuthorization(), NOW), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)
     const unbound = order()
     delete unbound.metadata!.a1_research_review_id
     assert.throws(() => a1ResearchReviewId(unbound), /A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED/)

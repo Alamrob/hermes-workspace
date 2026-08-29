@@ -17,6 +17,9 @@ import { signWorkOrder } from '../src/security.js'
 import { validWorkOrder } from './fixtures.js'
 import type { EnqueueJob, MissionExecution } from '../src/dispatch-queue.js'
 import { hashA1ResearchDossier } from '../src/a1-research-authorization.js'
+import { hashUnsignedA1ResearchWorkOrder } from '../src/a1-research-order-authorization.js'
+import type { A1ResearchDossier } from '../src/a1-research-dossier.js'
+import type { A1ResearchAuthorizationState } from '../src/a1-research-authorization.js'
 
 const NOW = new Date('2026-08-15T20:00:00.000Z')
 
@@ -176,6 +179,61 @@ function signedUnboundPublicResearchOrder() {
     order as never,
     'test-control-key-with-at-least-32-bytes',
   )
+  return order
+}
+
+const A1_REVIEW_ID = 'a2500000-0000-4500-8500-000000000053'
+const A1_PARENT_AUTH_ID = '62500000-0000-4500-8500-000000000053'
+const A1_ORDER_AUTH_ID = '72500000-0000-4500-8500-000000000053'
+
+function boundA1Dossier(): A1ResearchDossier {
+  return {
+    reviewId:A1_REVIEW_ID,projectId:'proptimiza',offerId:'operacion-sin-planillas',offerVersion:'v1',
+    status:'authorization_required',reviewCompleted:true,eligibleAccountCount:1,
+    accounts:[{slot:1,companyName:'Cuenta Uno',sourceUrl:'https://cuenta-uno.cl/',decision:'accepted_internal',decisionVersion:2}],
+    autonomyLevel:'A1',allowedActions:['analysis.internal','research.public.read'],
+    prohibitedActions:['credit.consume','personal_contact.discover','personal_email.infer','crm.write','mail.send','message.send','campaign.activate','a3.enable'],
+    approvedChannels:['internal','public_web'],requestedTools:['hermes.analysis','hermes.web'],
+    allowedDataCategories:['public_company_identity','public_business_information','public_source_provenance','published_role_based_corporate_channel'],
+    maximumAccounts:1,maximumContacts:0,maximumExternalActions:0,maximumBudgetUsd:0.5,
+    providerCreditSpendAllowed:false,internetAccessAllowed:false,contactPermitted:false,crmWriteAllowed:false,
+    authorizationRequired:true,missionCreated:false,productionGate:'blocked',externalActions:0,
+    provenance:{source:'control-broker',sourceId:`a1-research-dossier:${A1_REVIEW_ID}`,observedAt:NOW.toISOString(),synthetic:false},
+  }
+}
+
+function boundA1ParentAuthorization(): A1ResearchAuthorizationState {
+  const sha = hashA1ResearchDossier(boundA1Dossier())
+  return {
+    reviewId:A1_REVIEW_ID,projectId:'proptimiza',offerId:'operacion-sin-planillas',offerVersion:'v1',dossierSha256:sha,
+    dossierStatus:'authorization_required',eligibleAccountCount:1,authorizationRecorded:true,dossierCurrent:true,
+    authorization:{authorizationId:A1_PARENT_AUTH_ID,decision:'approved',rationale:'Autoriza preparar una orden A1 separada y exacta.',reviewerId:'director',reviewerEmail:'proptimizaspa@gmail.com',reviewedAt:'2026-08-15T19:50:00.000Z',expiresAt:'2026-08-15T20:25:00.000Z',dossierSha256:sha,attestations:{noContact:true,noCrmWrite:true,noExternalActions:true,noProviderCreditSpend:true,separateSignedWorkOrderRequired:true}},
+    executionAuthorized:false,missionCreated:false,internetAccessAllowed:false,providerCreditSpendAllowed:false,
+    contactPermitted:false,crmWriteAllowed:false,maximumExternalActions:0,productionGate:'blocked',
+    separateSignedWorkOrderRequired:true,nextRequiredGate:'separate_signed_work_order',
+    provenance:{source:'control-broker',sourceId:`a1-research-authorization:${A1_REVIEW_ID}`,observedAt:NOW.toISOString(),synthetic:false},
+  }
+}
+
+function unsignedBoundA1Order() {
+  const order:any = signedUnboundPublicResearchOrder()
+  const dossier = boundA1Dossier()
+  order.created_at='2026-08-15T19:55:00.000Z';order.expires_at='2026-08-15T20:15:00.000Z'
+  order.offer_version='v1';order.policy_version='policy-v1';order.icp_version='icp-v1';order.requested_by='codex-auditor'
+  order.prohibited_actions=[...dossier.prohibitedActions];order.budget_limit={currency:'USD',maximum:0.5}
+  order.volume_limits={maximum_accounts:1,maximum_contacts:0,maximum_external_actions:0,maximum_per_contact:0,period:'mission'}
+  order.data_policy={classification:'public',allowed_countries:['CL'],legal_basis:['public_source_reviewed'],retention_days:30,sensitive_data_allowed:false,allowed_data_categories:[...dossier.allowedDataCategories]}
+  order.contact_policy={contact_permitted:false,suppression_check_required:true,consent_check_required:false,maximum_frequency_days:0,quiet_hours_timezone:'America/Santiago'}
+  order.authority.signature='0'.repeat(64)
+  order.metadata={
+    a1_research_review_id:A1_REVIEW_ID,a1_research_dossier_sha256:hashA1ResearchDossier(dossier),
+    a1_research_authorization_id:A1_PARENT_AUTH_ID,a1_research_authorization_expires_at:'2026-08-15T20:25:00.000Z',
+    a1_research_order_authorization_id:A1_ORDER_AUTH_ID,a1_research_order_authorization_expires_at:'2026-08-15T20:15:00.000Z',
+    a1_research_order_authorization_sha256:'d'.repeat(64),a1_research_order_authorized_at:NOW.toISOString(),
+    a1_research_order_authorized_by:'proptimizaspa@gmail.com',
+    a1_research_accounts:[{slot:1,company_name:'Cuenta Uno',source_url:'https://cuenta-uno.cl/',decision_version:2}],
+  }
+  order.metadata.a1_research_order_unsigned_sha256=hashUnsignedA1ResearchWorkOrder(order)
   return order
 }
 
@@ -1313,6 +1371,46 @@ describe('broker application routes', () => {
     const stale = await state.app.handle({ method: 'POST', path, headers: headers('shadow-review-token'), body: { ...body, expected_dossier_sha256: '0'.repeat(64), idempotency_key: 'a1-research-auth:stale-00000053' } })
     assert.equal(stale.status, 409)
     assert.deepEqual(stale.body, { error: 'A1_RESEARCH_AUTHORIZATION_GATE_CLOSED' })
+  })
+
+  it('records a second inert authorization for one exact unsigned A1 order before accepting its signature', async () => {
+    const state = setup()
+    const dossier = boundA1Dossier()
+    const parent = boundA1ParentAuthorization()
+    state.repository.getA1ResearchDossier = async () => dossier
+    state.repository.getA1ResearchAuthorizationState = async () => parent
+    const candidate = unsignedBoundA1Order()
+    const path = `/internal/v1/a1-order-authorizations/${A1_REVIEW_ID}`
+    const body = {
+      decision:'approved',rationale:'Autorizo únicamente la orden A1 exacta identificada por su digest.',
+      reviewer_id:'cloudflare-director-subject',reviewer_email:'proptimizaspa@gmail.com',
+      reviewed_at:NOW.toISOString(),expires_at:'2026-08-15T20:15:00.000Z',
+      expected_dossier_sha256:hashA1ResearchDossier(dossier),expected_parent_authorization_id:A1_PARENT_AUTH_ID,
+      user_authorization_sha256:'d'.repeat(64),
+      attestations:{exact_work_order_confirmed:true,no_contact:true,no_crm_write:true,no_external_actions:true,no_provider_credit_spend:true},
+      idempotency_key:'a1-order-auth:review-00000053',work_order:candidate,
+    }
+    assert.equal((await state.app.handle({method:'POST',path,body})).status,401)
+    const recorded = await state.app.handle({method:'POST',path,headers:headers('shadow-review-token'),body})
+    assert.equal(recorded.status,200)
+    assert.equal((recorded.body as any).nextRequiredGate,'sign_exact_work_order')
+    assert.equal((recorded.body as any).missionCreated,false)
+    assert.equal((recorded.body as any).dispatchQueued,false)
+    assert.equal(await state.repository.getMission(candidate.mission_id),null)
+    assert.equal(state.dispatched.length,0)
+
+    const changed = structuredClone(candidate)
+    changed.objective='Objetivo modificado después de la autorización humana'
+    changed.authority.signature=signWorkOrder(changed as never,'test-control-key-with-at-least-32-bytes')
+    const denied = await state.app.handle({method:'POST',path:'/v1/work-orders',headers:headers('control-plane-token'),body:changed})
+    assert.deepEqual(denied,{status:403,body:{error:'A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED'}})
+    assert.equal(await state.repository.getMission(candidate.mission_id),null)
+
+    candidate.authority.signature=signWorkOrder(candidate as never,'test-control-key-with-at-least-32-bytes')
+    const accepted = await state.app.handle({method:'POST',path:'/v1/work-orders',headers:headers('control-plane-token'),body:candidate})
+    assert.equal(accepted.status,201)
+    assert.equal((await state.repository.getMission(candidate.mission_id))?.mission_id,candidate.mission_id)
+    assert.equal(state.dispatched.length,0)
   })
 
   it('exposes only an unsigned A1 work-order preview without persistence or dispatch', async () => {
