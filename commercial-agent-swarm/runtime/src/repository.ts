@@ -31,6 +31,10 @@ import type {
   A1AssignmentExecutionAuthorizationState,
   RecordA1AssignmentExecutionAuthorizationInput,
 } from './a1-assignment-execution-authorization.js'
+import type {
+  A1DispatchExecutionArmState,
+  RecordA1DispatchExecutionArmInput,
+} from './a1-dispatch-execution-arm.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
 
@@ -76,6 +80,8 @@ export interface RuntimeRepository {
   recordA1AssignmentEnqueueAuthorization(input: RecordA1AssignmentEnqueueAuthorizationInput): Promise<A1AssignmentEnqueueAuthorizationState>
   getA1AssignmentExecutionAuthorizationState(missionId: string): Promise<A1AssignmentExecutionAuthorizationState | null>
   recordA1AssignmentExecutionAuthorization(input: RecordA1AssignmentExecutionAuthorizationInput): Promise<A1AssignmentExecutionAuthorizationState>
+  getA1DispatchExecutionArmState(missionId: string): Promise<A1DispatchExecutionArmState | null>
+  recordA1DispatchExecutionArm(input: RecordA1DispatchExecutionArmInput): Promise<A1DispatchExecutionArmState>
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
@@ -196,6 +202,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly a1DispatchAuthorizations = new Map<string, A1DispatchAuthorizationState>()
   private readonly a1AssignmentEnqueueAuthorizations = new Map<string, A1AssignmentEnqueueAuthorizationState>()
   private readonly a1AssignmentExecutionAuthorizations = new Map<string, A1AssignmentExecutionAuthorizationState>()
+  private readonly a1DispatchExecutionArms = new Map<string, A1DispatchExecutionArmState>()
 
   async ready(): Promise<boolean> {
     return true
@@ -442,6 +449,15 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
     const existing=this.a1AssignmentExecutionAuthorizations.get(input.missionId)
     if(existing&&JSON.stringify(existing)!==JSON.stringify(state))throw new Error('A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_IMMUTABLE_CONFLICT')
     this.a1AssignmentExecutionAuthorizations.set(input.missionId,structuredClone(state));return structuredClone(state)
+  }
+
+  async getA1DispatchExecutionArmState(missionId:string):Promise<A1DispatchExecutionArmState|null>{
+    const state=this.a1DispatchExecutionArms.get(missionId);return state?structuredClone(state):null
+  }
+
+  async recordA1DispatchExecutionArm(input:RecordA1DispatchExecutionArmInput):Promise<A1DispatchExecutionArmState>{
+    const state:A1DispatchExecutionArmState={armId:input.armId,authorizationId:input.authorizationId,missionId:input.missionId,traceId:input.traceId,planVersion:input.planVersion,executionAuthorizationId:input.executionAuthorizationId,decision:'approved',rationale:input.rationale,reviewerId:input.reviewerId,reviewerEmail:input.reviewerEmail,reviewedAt:input.reviewedAt,startsAt:input.startsAt,expiresAt:input.expiresAt,missionSha256:input.missionSha256,assignmentPlanSha256:input.assignmentPlanSha256,jobSetSha256:input.jobSetSha256,assignmentIds:[...input.assignmentIds],workerId:input.workerId,maximumClaims:input.maximumClaims,maximumProviderCreditSpendUsd:input.maximumProviderCreditSpendUsd,userAuthorizationSha256:input.userAuthorizationSha256,attestations:input.attestations,idempotencyKey:input.idempotencyKey,armAuthorizationRecorded:true,executionArmCreated:true,claimsUsed:0,executionWindowEnabled:false,dispatchClaimingPermitted:false,jobsClaimed:false,executionStarted:false,internetAccessAllowed:false,providerCreditSpendAllowed:false,contactPermitted:false,crmWriteAllowed:false,maximumExternalActions:0,globalKillSwitchActive:true,externalChannelsBlocked:true,dispatcherTimerDisabled:true,productionGate:'blocked',nextRequiredGate:'open_single_mission_execution_window_separately',provenance:{source:'control-broker',sourceId:`a1-dispatch-execution-arm:${input.armId}`,observedAt:input.reviewedAt,synthetic:false}}
+    const existing=this.a1DispatchExecutionArms.get(input.missionId);if(existing&&JSON.stringify(existing)!==JSON.stringify(state))throw new Error('A1_DISPATCH_EXECUTION_ARM_IMMUTABLE_CONFLICT');this.a1DispatchExecutionArms.set(input.missionId,structuredClone(state));return structuredClone(state)
   }
 
   async listShadowReviews(): Promise<ShadowReview[]> { return [] }

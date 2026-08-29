@@ -57,6 +57,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       '030_a1_dispatch_authorization',
       '031_a1_assignment_enqueue_authorization',
       '032_a1_assignment_execution_authorization',
+      '033_a1_dispatch_execution_arm',
     ]
     await runVersionedMigrations(leftPool, await Promise.all(versions.map(async (version) => ({
       version,
@@ -65,6 +66,10 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     // This suite isolates the underlying budget ledger. R126's production claim
     // interlock has its own PostgreSQL integration suite and is rolled back here
     // before any test job exists.
+    await leftPool.query(await readFile(
+      new URL('../migrations/033_a1_dispatch_execution_arm.rollback.sql', import.meta.url),
+      'utf8',
+    ))
     await leftPool.query(await readFile(
       new URL('../migrations/032_a1_assignment_execution_authorization.rollback.sql', import.meta.url),
       'utf8',

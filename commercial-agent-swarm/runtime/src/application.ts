@@ -66,6 +66,11 @@ import {
   sumA1PlanReservations,
   validateA1AssignmentExecutionAuthorizationRequest,
 } from './a1-assignment-execution-authorization.js'
+import {
+  A1DispatchExecutionArmError,
+  assertA1DispatchExecutionArmAdmission,
+  validateA1DispatchExecutionArmRequest,
+} from './a1-dispatch-execution-arm.js'
 
 export interface ApplicationRequest {
   method: string
@@ -573,6 +578,25 @@ export class BrokerApplication {
       assertA1AssignmentExecutionAuthorizationAdmission(mission,plan,enqueueAuthorization,state,now)
       return{status:200,body:state}
     }
+    if(route.action==='getA1DispatchExecutionArm'){
+      requireBearer(request.headers?.authorization,this.options.authentication.shadowReview)
+      const state=await this.options.repository.getA1DispatchExecutionArmState(route.id!)
+      return state?{status:200,body:state}:{status:404,body:{error:'not_found'}}
+    }
+    if(route.action==='recordA1DispatchExecutionArm'){
+      requireBearer(request.headers?.authorization,this.options.authentication.shadowReview)
+      const now=this.now(),input=validateA1DispatchExecutionArmRequest(request.body,now),mission=await this.options.repository.getMission(route.id!)
+      if(!mission)return{status:404,body:{error:'not_found'}}
+      const plan=input.assignmentPlan
+      if(plan.mission_id!==route.id!||plan.trace_id!==mission.trace_id)throw new A1DispatchExecutionArmError('A1_DISPATCH_EXECUTION_ARM_GATE_CLOSED')
+      await this.requireA1ResearchAdmission(mission as unknown as WorkOrder,now)
+      const executionAuthorization=await this.options.repository.getA1AssignmentExecutionAuthorizationState(route.id!)
+      assertA1DispatchExecutionArmAdmission(mission,plan,executionAuthorization,input,now)
+      const execution=await this.options.dispatchQueue.getMissionExecution(route.id!),expectedIds=plan.assignments.map(item=>item.assignment_id),actualIds=execution.assignments.map(item=>item.assignment_id)
+      if(actualIds.length!==expectedIds.length||actualIds.some((id,index)=>id!==expectedIds[index])||execution.assignments.some(item=>item.status!=='queued'||item.attempts!==0)||await this.options.repository.getA1DispatchExecutionArmState(route.id!)||!(await this.options.repository.isGlobalKillSwitchActive())||!(await this.options.repository.externalActionsBlocked()))throw new A1DispatchExecutionArmError('A1_DISPATCH_EXECUTION_ARM_GATE_CLOSED')
+      const state=await this.options.repository.recordA1DispatchExecutionArm({armId:deterministicUuid(hashAction({type:'a1-dispatch-execution-arm',mission_id:route.id!,idempotency_key:input.idempotencyKey})),authorizationId:deterministicUuid(hashAction({type:'a1-dispatch-execution-arm-authorization',mission_id:route.id!,idempotency_key:input.idempotencyKey})),missionId:route.id!,traceId:plan.trace_id,planVersion:plan.plan_version,executionAuthorizationId:input.expectedExecutionAuthorizationId,decision:'approved',rationale:input.rationale,reviewerId:input.reviewerId,reviewerEmail:input.reviewerEmail,reviewedAt:input.reviewedAt,startsAt:input.startsAt,expiresAt:input.expiresAt,missionSha256:input.expectedMissionSha256,assignmentPlanSha256:input.expectedAssignmentPlanSha256,jobSetSha256:input.expectedJobSetSha256,assignmentIds:expectedIds,workerId:input.workerId,maximumClaims:input.maximumClaims,maximumProviderCreditSpendUsd:input.maximumProviderCreditSpendUsd,userAuthorizationSha256:input.userAuthorizationSha256,attestations:input.attestations,idempotencyKey:input.idempotencyKey,requestSha256:hashAction({mission_id:route.id!,...input,assignmentPlan:plan})})
+      return{status:200,body:state}
+    }
     if (route.action === 'getA1AuthorizedOrderCandidate') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       const orderAuthorization = await this.options.repository.getA1ResearchOrderAuthorizationState(route.id!)
@@ -925,6 +949,9 @@ function matchRoute(method: string, path: string): Route | null {
   const a1AssignmentExecutionAuthorization=/^\/internal\/v1\/a1-assignment-execution-authorizations\/([^/]+)$/.exec(path)
   if(method==='GET'&&a1AssignmentExecutionAuthorization)return{action:'getA1AssignmentExecutionAuthorization',auditAction:'a1_assignment_execution_authorization.get',id:a1AssignmentExecutionAuthorization[1]}
   if(method==='POST'&&a1AssignmentExecutionAuthorization)return{action:'recordA1AssignmentExecutionAuthorization',auditAction:'a1_assignment_execution_authorization.record',id:a1AssignmentExecutionAuthorization[1]}
+  const a1DispatchExecutionArm=/^\/internal\/v1\/a1-dispatch-execution-arms\/([^/]+)$/.exec(path)
+  if(method==='GET'&&a1DispatchExecutionArm)return{action:'getA1DispatchExecutionArm',auditAction:'a1_dispatch_execution_arm.get',id:a1DispatchExecutionArm[1]}
+  if(method==='POST'&&a1DispatchExecutionArm)return{action:'recordA1DispatchExecutionArm',auditAction:'a1_dispatch_execution_arm.record',id:a1DispatchExecutionArm[1]}
   const draftItem = /^\/internal\/v1\/draft-reviews\/([^/]+)\/items\/(\d+)$/.exec(path)
   if (method === 'PUT' && draftItem)
     return { action: 'recordDraftReviewItem', auditAction: 'draft_review.item.record', id: draftItem[1], slot: Number(draftItem[2]) }
@@ -1651,6 +1678,7 @@ function publicFailure(error: unknown): {
     return { status: 409, error: error.code }
   }
   if(error instanceof A1AssignmentExecutionAuthorizationError){if(error.code==='A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_INVALID')return{status:400,error:error.code};if(error.code==='A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_NOT_FOUND')return{status:404,error:'not_found'};return{status:409,error:error.code}}
+  if(error instanceof A1DispatchExecutionArmError){if(error.code==='A1_DISPATCH_EXECUTION_ARM_INVALID')return{status:400,error:error.code};if(error.code==='A1_DISPATCH_EXECUTION_ARM_NOT_FOUND')return{status:404,error:'not_found'};return{status:409,error:error.code}}
   if (error instanceof ApprovalError) {
     if (error.code === 'INVALID_ACTION' || error.code === 'INVALID_TTL')
       return { status: 400, error: error.code }
