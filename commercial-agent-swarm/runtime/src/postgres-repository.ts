@@ -59,6 +59,12 @@ import {
   type A1AssignmentEnqueueAuthorizationState,
   type RecordA1AssignmentEnqueueAuthorizationInput,
 } from './a1-assignment-enqueue-authorization.js'
+import {
+  A1AssignmentExecutionAuthorizationError,
+  validateA1AssignmentExecutionAuthorizationState,
+  type A1AssignmentExecutionAuthorizationState,
+  type RecordA1AssignmentExecutionAuthorizationInput,
+} from './a1-assignment-execution-authorization.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -460,6 +466,15 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       if (code) throw new A1AssignmentEnqueueAuthorizationError(code)
       throw error
     }
+  }
+
+  async getA1AssignmentExecutionAuthorizationState(missionId:string):Promise<A1AssignmentExecutionAuthorizationState|null>{
+    const result=await this.pool.query<{state:unknown}>('SELECT control.get_a1_assignment_execution_authorization($1::uuid) AS state',[missionId]);const state=result.rows[0]?.state;return state===null||state===undefined?null:validateA1AssignmentExecutionAuthorizationState(state)
+  }
+
+  async recordA1AssignmentExecutionAuthorization(input:RecordA1AssignmentExecutionAuthorizationInput):Promise<A1AssignmentExecutionAuthorizationState>{
+    const attestations={exact_job_set_confirmed:input.attestations.exactJobSetConfirmed,authorization_record_only:input.attestations.authorizationRecordOnly,no_jobs_claimed_by_authorization:input.attestations.noJobsClaimedByAuthorization,no_execution:input.attestations.noExecution,no_internet:input.attestations.noInternet,no_contact:input.attestations.noContact,no_crm_write:input.attestations.noCrmWrite,no_external_actions:input.attestations.noExternalActions,no_provider_credit_spend:input.attestations.noProviderCreditSpend,global_kill_switch_required:input.attestations.globalKillSwitchRequired,execution_arm_requires_separate_gate:input.attestations.executionArmRequiresSeparateGate}
+    try{const result=await this.pool.query<{state:unknown}>('SELECT control.record_a1_assignment_execution_authorization($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8,$9,$10::timestamptz,$11::timestamptz,$12,$13,$14,$15::uuid[],$16::numeric,$17,$18::jsonb,$19,$20) AS state',[input.authorizationId,input.missionId,input.traceId,input.planVersion,input.enqueueAuthorizationId,input.decision,input.rationale,input.reviewerId,input.reviewerEmail,input.reviewedAt,input.expiresAt,input.missionSha256,input.assignmentPlanSha256,input.jobSetSha256,input.assignmentIds,input.maximumProviderCreditSpendUsd,input.userAuthorizationSha256,JSON.stringify(attestations),input.idempotencyKey,input.requestSha256]);return validateA1AssignmentExecutionAuthorizationState(result.rows[0]?.state)}catch(error){const message=error instanceof Error?error.message:'';const code=['A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_IMMUTABLE_CONFLICT','A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_INVALID','A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_GATE_CLOSED','A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_NOT_FOUND'].find(candidate=>message.includes(candidate));if(code)throw new A1AssignmentExecutionAuthorizationError(code);throw error}
   }
 
   async getPolicyReviewState(): Promise<PolicyReviewState> {

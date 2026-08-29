@@ -37,6 +37,7 @@ describe('versioned migration runner', () => {
       { version: '029_a1_authorization_renewal', sql: 'SELECT 29;' },
       { version: '030_a1_dispatch_authorization', sql: 'SELECT 30;' },
       { version: '031_a1_assignment_enqueue_authorization', sql: 'SELECT 31;' },
+      { version: '032_a1_assignment_execution_authorization', sql: 'SELECT 32;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -75,6 +76,7 @@ describe('versioned migration runner', () => {
         '029_a1_authorization_renewal',
         '030_a1_dispatch_authorization',
         '031_a1_assignment_enqueue_authorization',
+        '032_a1_assignment_execution_authorization',
       ],
     )
     assert.equal(
@@ -83,15 +85,15 @@ describe('versioned migration runner', () => {
     )
   })
 
-  it('loads the complete production migration set through the exact A1 enqueue authorization gate', async () => {
+  it('loads the complete production migration set through the exact A1 execution authorization gate', async () => {
     const migrations = await loadMigrationSources()
-    assert.equal(migrations.length, 31)
-    assert.equal(migrations.at(-1)?.version, '031_a1_assignment_enqueue_authorization')
+    assert.equal(migrations.length, 32)
+    assert.equal(migrations.at(-1)?.version, '032_a1_assignment_execution_authorization')
     assert.match(
-      migrations.at(-4)?.sql ?? '',
+      migrations.at(-5)?.sql ?? '',
       /A1_ED25519_SIGNATURE_REQUIRED/,
     )
-    assert.match(migrations.at(-1)?.sql ?? '', /A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_GATE_CLOSED/)
+    assert.match(migrations.at(-1)?.sql ?? '', /A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_GATE_CLOSED/)
     assert.doesNotMatch(
       migrations.at(-1)?.sql ?? '',
       /control\.enqueue_dispatch|mail\.send|integration\.enqueue_crm_change/i,

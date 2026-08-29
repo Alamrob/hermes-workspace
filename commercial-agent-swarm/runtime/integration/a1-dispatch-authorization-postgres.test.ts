@@ -82,6 +82,8 @@ integration('PostgreSQL exact A1 assignment-plan authorization', () => {
       changed[11] = 'e'.repeat(64)
       await assert.rejects(pool.query(query, changed), /A1_DISPATCH_AUTHORIZATION_IMMUTABLE_CONFLICT/)
       await pool.query('ROLLBACK')
+      await pool.query(await readFile(new URL('../migrations/032_a1_assignment_execution_authorization.rollback.sql', import.meta.url),'utf8'))
+      await pool.query(await readFile(new URL('../migrations/031_a1_assignment_enqueue_authorization.rollback.sql', import.meta.url),'utf8'))
       const rollback = await readFile(
         new URL('../migrations/030_a1_dispatch_authorization.rollback.sql', import.meta.url),
         'utf8',
@@ -98,6 +100,10 @@ integration('PostgreSQL exact A1 assignment-plan authorization', () => {
     const { admin, pool, database } = fixture
     try {
       await runVersionedMigrations(pool, await loadMigrationSources())
+      await pool.query(await readFile(
+        new URL('../migrations/032_a1_assignment_execution_authorization.rollback.sql', import.meta.url),
+        'utf8',
+      ))
       const enqueueRollback = await readFile(
         new URL('../migrations/031_a1_assignment_enqueue_authorization.rollback.sql', import.meta.url),
         'utf8',

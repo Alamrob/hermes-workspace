@@ -27,6 +27,10 @@ import type {
   A1AssignmentEnqueueAuthorizationState,
   RecordA1AssignmentEnqueueAuthorizationInput,
 } from './a1-assignment-enqueue-authorization.js'
+import type {
+  A1AssignmentExecutionAuthorizationState,
+  RecordA1AssignmentExecutionAuthorizationInput,
+} from './a1-assignment-execution-authorization.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
 
@@ -70,6 +74,8 @@ export interface RuntimeRepository {
   recordA1DispatchAuthorization(input: RecordA1DispatchAuthorizationInput): Promise<A1DispatchAuthorizationState>
   getA1AssignmentEnqueueAuthorizationState(missionId: string): Promise<A1AssignmentEnqueueAuthorizationState | null>
   recordA1AssignmentEnqueueAuthorization(input: RecordA1AssignmentEnqueueAuthorizationInput): Promise<A1AssignmentEnqueueAuthorizationState>
+  getA1AssignmentExecutionAuthorizationState(missionId: string): Promise<A1AssignmentExecutionAuthorizationState | null>
+  recordA1AssignmentExecutionAuthorization(input: RecordA1AssignmentExecutionAuthorizationInput): Promise<A1AssignmentExecutionAuthorizationState>
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
@@ -189,6 +195,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly a1OrderAuthorizations = new Map<string, A1ResearchOrderAuthorizationState>()
   private readonly a1DispatchAuthorizations = new Map<string, A1DispatchAuthorizationState>()
   private readonly a1AssignmentEnqueueAuthorizations = new Map<string, A1AssignmentEnqueueAuthorizationState>()
+  private readonly a1AssignmentExecutionAuthorizations = new Map<string, A1AssignmentExecutionAuthorizationState>()
 
   async ready(): Promise<boolean> {
     return true
@@ -423,6 +430,18 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
       throw new Error('A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_IMMUTABLE_CONFLICT')
     this.a1AssignmentEnqueueAuthorizations.set(input.missionId, structuredClone(state))
     return structuredClone(state)
+  }
+
+  async getA1AssignmentExecutionAuthorizationState(missionId: string): Promise<A1AssignmentExecutionAuthorizationState | null> {
+    const state=this.a1AssignmentExecutionAuthorizations.get(missionId)
+    return state?structuredClone(state):null
+  }
+
+  async recordA1AssignmentExecutionAuthorization(input: RecordA1AssignmentExecutionAuthorizationInput): Promise<A1AssignmentExecutionAuthorizationState> {
+    const state:A1AssignmentExecutionAuthorizationState={authorizationId:input.authorizationId,missionId:input.missionId,traceId:input.traceId,planVersion:input.planVersion,enqueueAuthorizationId:input.enqueueAuthorizationId,decision:input.decision,rationale:input.rationale,reviewerId:input.reviewerId,reviewerEmail:input.reviewerEmail,reviewedAt:input.reviewedAt,expiresAt:input.expiresAt,missionSha256:input.missionSha256,assignmentPlanSha256:input.assignmentPlanSha256,jobSetSha256:input.jobSetSha256,assignmentIds:[...input.assignmentIds],maximumProviderCreditSpendUsd:input.maximumProviderCreditSpendUsd,userAuthorizationSha256:input.userAuthorizationSha256,attestations:input.attestations,idempotencyKey:input.idempotencyKey,executionAuthorizationRecorded:true,dispatchExecutionEligible:input.decision==='approved',executionArmCreated:false,dispatchClaimingPermitted:false,jobsClaimed:false,executionStarted:false,internetAccessAllowed:false,providerCreditSpendAllowed:false,contactPermitted:false,crmWriteAllowed:false,maximumExternalActions:0,globalKillSwitchRequired:true,productionGate:'blocked',nextRequiredGate:'arm_single_mission_execution_separately',provenance:{source:'control-broker',sourceId:`a1-assignment-execution-authorization:${input.authorizationId}`,observedAt:input.reviewedAt,synthetic:false}}
+    const existing=this.a1AssignmentExecutionAuthorizations.get(input.missionId)
+    if(existing&&JSON.stringify(existing)!==JSON.stringify(state))throw new Error('A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_IMMUTABLE_CONFLICT')
+    this.a1AssignmentExecutionAuthorizations.set(input.missionId,structuredClone(state));return structuredClone(state)
   }
 
   async listShadowReviews(): Promise<ShadowReview[]> { return [] }

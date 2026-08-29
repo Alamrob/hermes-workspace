@@ -184,6 +184,8 @@ const EXPECTED_FUNCTIONS: Record<
     'control.is_global_kill_switch_active()',
     'control.get_a1_assignment_enqueue_authorization(uuid)',
     'control.record_a1_assignment_enqueue_authorization(uuid,uuid,uuid,text,uuid,text,text,text,text,timestamp with time zone,timestamp with time zone,text,text,text,jsonb,text,text)',
+    'control.get_a1_assignment_execution_authorization(uuid)',
+    'control.record_a1_assignment_execution_authorization(uuid,uuid,uuid,text,uuid,text,text,text,text,timestamp with time zone,timestamp with time zone,text,text,text,uuid[],numeric,text,jsonb,text,text)',
     'control.create_pilot_cohort(uuid,text,text)',
     'control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamp with time zone,text)',
     'control.get_mission(uuid)',

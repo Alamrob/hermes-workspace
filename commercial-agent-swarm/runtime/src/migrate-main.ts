@@ -63,6 +63,7 @@ export async function loadMigrationSources() {
       '029_a1_authorization_renewal',
       '030_a1_dispatch_authorization',
       '031_a1_assignment_enqueue_authorization',
+      '032_a1_assignment_execution_authorization',
     ].map(async (version) => ({
       version,
       sql: await readFile(
