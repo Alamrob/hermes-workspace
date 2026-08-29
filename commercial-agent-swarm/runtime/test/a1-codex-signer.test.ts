@@ -14,7 +14,7 @@ const REVIEW = 'a2500000-0000-4500-8500-000000000053'
 const pair = generateKeyPairSync('ed25519')
 const privateKey = pair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
 const publicKey = pair.publicKey.export({ type: 'spki', format: 'pem' }).toString()
-const authority = { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: {}, ed25519PublicKeys: { 'codex-a1-ed25519-v1': publicKey } }
+const authority = { issuer: 'proptimiza-commercial-broker', audience: 'proptimiza-hermes-executor', keys: {}, ed25519PublicKeys: { 'codex-a1-ed25519-v1': publicKey } }
 
 function dossier(): A1ResearchDossier {
   return {

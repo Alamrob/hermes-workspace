@@ -13,6 +13,10 @@ import type { A1AuthorizedOrderCandidate } from './a1-authorized-order-candidate
 const MAX_JSON_BYTES = 1_048_576
 const MAX_KEY_BYTES = 16_384
 const EXPECTED_FLAGS = new Set(['--candidate', '--expectation', '--private-key', '--public-key', '--output'])
+const LIVE_A1_AUTHORITY = {
+  issuer: 'proptimiza-commercial-broker',
+  audience: 'proptimiza-hermes-executor',
+} as const
 
 interface SignerDependencies {
   now(): Date
@@ -63,7 +67,7 @@ export async function runA1CodexSignerCli(
     expectation,
     privateKey,
     publicKey,
-    { issuer: 'codex', audience: 'hermes-commercial-orchestrator' },
+    LIVE_A1_AUTHORITY,
     dependencies.now(),
   )
   if (result.persisted || result.missionCreated || result.dispatchQueued || result.nextRequiredGate !== 'submit_signed_order_separately') fail()

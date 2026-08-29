@@ -41,7 +41,7 @@ describe('offline A1 Codex signer CLI', () => {
       now: () => new Date('2026-08-29T00:00:00.000Z'),
       sign: (_candidate,_expectation,privateKey,publicKey,authority) => {
         assert.match(privateKey, /private-material/); assert.match(publicKey, /public-material/)
-        assert.deepEqual(authority, { issuer: 'codex', audience: 'hermes-commercial-orchestrator' })
+        assert.deepEqual(authority, { issuer: 'proptimiza-commercial-broker', audience: 'proptimiza-hermes-executor' })
         return signed as never
       },
       write: (line) => lines.push(line),
