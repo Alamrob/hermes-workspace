@@ -19,6 +19,7 @@
     "start:workspace-instruction-gateway": "node dist/workspace-instruction-gateway-main.js",
     "smoke:usage": "node dist/usage-smoke-main.js",
     "reconcile:crm-sync": "node dist/crm-sync-main.js reconcile",
+    "sign:a1": "node dist/a1-codex-signer-main.js",
     "migrate": "node dist/migrate-main.js",
     "test": "tsx --test test/**/*.test.ts",
     "test:unit": "tsx --test test/**/*.test.ts",
