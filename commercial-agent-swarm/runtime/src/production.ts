@@ -177,6 +177,8 @@ const EXPECTED_FUNCTIONS: Record<
     'control.build_a1_research_dossier(uuid)',
     'control.build_a1_research_authorization_state(uuid,text)',
     'control.record_a1_research_authorization(uuid,uuid,text,text,text,text,timestamp with time zone,timestamp with time zone,text,jsonb,text,text)',
+    'control.get_a1_research_order_authorization(uuid)',
+    'control.record_a1_research_order_authorization(uuid,uuid,uuid,text,text,text,text,timestamp with time zone,timestamp with time zone,text,text,uuid,text,jsonb,text,text)',
     'control.create_pilot_cohort(uuid,text,text)',
     'control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamp with time zone,text)',
     'control.get_mission(uuid)',
