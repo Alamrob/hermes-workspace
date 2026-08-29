@@ -85,6 +85,29 @@ describe('dormant A1 research authorization gate', () => {
     assert.equal(value.nextRequiredGate, 'separate_signed_work_order')
   })
 
+  it('projects an expired authorization as renewable instead of executable', () => {
+    const sha = hashA1ResearchDossier(dossier())
+    const state = validateA1ResearchAuthorizationState({
+      reviewId: REVIEW, projectId: 'proptimiza', offerId: 'operacion-sin-planillas', offerVersion: 'v1',
+      dossierSha256: sha, dossierStatus: 'authorization_required', eligibleAccountCount: 1,
+      authorizationRecorded: true, dossierCurrent: true,
+      authorization: {
+        authorizationId: '62500000-0000-4500-8500-000000000053', decision: 'approved',
+        rationale: 'Autorización anterior conservada únicamente como evidencia histórica.',
+        reviewerId: 'cloudflare-director-subject', reviewerEmail: 'proptimizaspa@gmail.com',
+        reviewedAt: '2026-08-28T14:00:00.000Z', expiresAt: '2026-08-28T14:30:00.000Z', dossierSha256: sha,
+        attestations: { noContact: true, noCrmWrite: true, noExternalActions: true, noProviderCreditSpend: true, separateSignedWorkOrderRequired: true },
+      },
+      executionAuthorized: false, missionCreated: false, internetAccessAllowed: false,
+      providerCreditSpendAllowed: false, contactPermitted: false, crmWriteAllowed: false,
+      maximumExternalActions: 0, productionGate: 'blocked', separateSignedWorkOrderRequired: true,
+      nextRequiredGate: 'authorization_expired',
+      provenance: { source: 'control-broker', sourceId: `a1-research-authorization:${REVIEW}`, observedAt: NOW.toISOString(), synthetic: false },
+    })
+    assert.equal(state.nextRequiredGate, 'authorization_expired')
+    assert.equal(state.executionAuthorized, false)
+  })
+
   it('migration is immutable, idempotent and cannot create missions or external actions', async () => {
     const sql = await readFile(new URL('../migrations/026_a1_research_authorization.sql', import.meta.url), 'utf8')
     assert.match(sql, /CREATE TABLE control\.a1_research_authorizations/)

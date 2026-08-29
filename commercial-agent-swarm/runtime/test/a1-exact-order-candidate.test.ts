@@ -33,7 +33,8 @@ function authorization(expiresAt = '2026-08-28T20:30:00.000Z'): A1ResearchAuthor
     authorization:{authorizationId:'62500000-0000-4500-8500-000000000053',decision:'approved',rationale:'Autoriza preparar una orden A1 exacta y separada.',reviewerId:'director',reviewerEmail:'proptimizaspa@gmail.com',reviewedAt:'2026-08-28T20:05:00.000Z',expiresAt,dossierSha256:digest,attestations:{noContact:true,noCrmWrite:true,noExternalActions:true,noProviderCreditSpend:true,separateSignedWorkOrderRequired:true}},
     executionAuthorized:false,missionCreated:false,internetAccessAllowed:false,providerCreditSpendAllowed:false,
     contactPermitted:false,crmWriteAllowed:false,maximumExternalActions:0,productionGate:'blocked',
-    separateSignedWorkOrderRequired:true,nextRequiredGate:'separate_signed_work_order',
+    separateSignedWorkOrderRequired:true,
+    nextRequiredGate:Date.parse(expiresAt)<=NOW.getTime()?'authorization_expired':'separate_signed_work_order',
     provenance:{source:'control-broker',sourceId:`a1-research-authorization:${REVIEW}`,observedAt:NOW.toISOString(),synthetic:false},
   }
 }

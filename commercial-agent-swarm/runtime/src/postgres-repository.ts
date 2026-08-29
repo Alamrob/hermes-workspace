@@ -328,7 +328,7 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       return validateA1ResearchAuthorizationState(result.rows[0]?.state)
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
-      const code = ['A1_RESEARCH_AUTHORIZATION_IMMUTABLE_CONFLICT','A1_RESEARCH_AUTHORIZATION_INVALID','A1_RESEARCH_AUTHORIZATION_GATE_CLOSED','A1_RESEARCH_DOSSIER_NOT_FOUND'].find((candidate) => message.includes(candidate))
+      const code = ['A1_RESEARCH_AUTHORIZATION_IMMUTABLE_CONFLICT','A1_RESEARCH_AUTHORIZATION_ACTIVE_CONFLICT','A1_RESEARCH_AUTHORIZATION_INVALID','A1_RESEARCH_AUTHORIZATION_GATE_CLOSED','A1_RESEARCH_DOSSIER_NOT_FOUND'].find((candidate) => message.includes(candidate))
       if (code) throw new A1ResearchAuthorizationError(code)
       throw error
     }

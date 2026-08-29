@@ -45,6 +45,7 @@ const CAPABILITY_MIGRATIONS = [
   '026_a1_research_authorization',
   '027_a1_research_order_authorization',
   '028_ed25519_a1_work_orders',
+  '029_a1_authorization_renewal',
 ] as const
 const integration = ADMIN_URL ? describe : describe.skip
 

@@ -56,7 +56,7 @@ export interface A1ResearchAuthorizationState {
   maximumExternalActions: 0
   productionGate: 'blocked'
   separateSignedWorkOrderRequired: true
-  nextRequiredGate: 'complete_draft_review' | 'no_eligible_accounts' | 'human_authorization' | 'stale_dossier_review' | 'authorization_rejected' | 'separate_signed_work_order'
+  nextRequiredGate: 'complete_draft_review' | 'no_eligible_accounts' | 'human_authorization' | 'stale_dossier_review' | 'authorization_expired' | 'authorization_rejected' | 'separate_signed_work_order'
   provenance: {
     source: 'control-broker'
     sourceId: string
@@ -161,7 +161,7 @@ export function validateA1ResearchAuthorizationState(value: unknown): A1Research
         state.internetAccessAllowed !== false || state.providerCreditSpendAllowed !== false || state.contactPermitted !== false ||
         state.crmWriteAllowed !== false || state.maximumExternalActions !== 0 || state.productionGate !== 'blocked' ||
         state.separateSignedWorkOrderRequired !== true ||
-        !['complete_draft_review','no_eligible_accounts','human_authorization','stale_dossier_review','authorization_rejected','separate_signed_work_order'].includes(text(state.nextRequiredGate))) throw new Error('state')
+        !['complete_draft_review','no_eligible_accounts','human_authorization','stale_dossier_review','authorization_expired','authorization_rejected','separate_signed_work_order'].includes(text(state.nextRequiredGate))) throw new Error('state')
     if (state.authorization === null) {
       if (state.authorizationRecorded !== false || state.dossierCurrent !== true) throw new Error('empty auth')
     } else {
@@ -173,15 +173,16 @@ export function validateA1ResearchAuthorizationState(value: unknown): A1Research
       validateStateAttestations(auth.attestations)
       if (state.authorizationRecorded !== true || state.dossierCurrent !== (auth.dossierSha256 === state.dossierSha256)) throw new Error('auth state')
     }
+    const provenance = object(state.provenance)
+    exactKeys(provenance, ['source','sourceId','observedAt','synthetic'])
+    if (provenance.source !== 'control-broker' || provenance.sourceId !== `a1-research-authorization:${state.reviewId}` || !validDate(provenance.observedAt) || provenance.synthetic !== false) throw new Error('provenance')
     const expectedGate = state.dossierStatus === 'review_incomplete' ? 'complete_draft_review' :
       state.dossierStatus === 'no_eligible_accounts' ? 'no_eligible_accounts' :
       state.authorization === null ? 'human_authorization' :
       state.dossierCurrent === false ? 'stale_dossier_review' :
+      Date.parse((state.authorization as Record<string, unknown>).expiresAt as string) <= Date.parse(provenance.observedAt as string) ? 'authorization_expired' :
       (state.authorization as Record<string, unknown>).decision === 'rejected' ? 'authorization_rejected' : 'separate_signed_work_order'
     if (state.nextRequiredGate !== expectedGate) throw new Error('gate')
-    const provenance = object(state.provenance)
-    exactKeys(provenance, ['source','sourceId','observedAt','synthetic'])
-    if (provenance.source !== 'control-broker' || provenance.sourceId !== `a1-research-authorization:${state.reviewId}` || !validDate(provenance.observedAt) || provenance.synthetic !== false) throw new Error('provenance')
     return value as A1ResearchAuthorizationState
   } catch (error) {
     if (error instanceof A1ResearchAuthorizationError) throw error
