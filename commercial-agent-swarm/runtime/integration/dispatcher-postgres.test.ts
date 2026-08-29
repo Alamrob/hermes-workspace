@@ -7,6 +7,7 @@ import { PostgresDispatchQueue } from '../src/dispatch-queue.js'
 import { validWorkOrder } from '../test/fixtures.js'
 import { validateWorkOrder } from '../src/work-orders.js'
 import type { EnqueueJob } from '../src/dispatch-queue.js'
+import { dropTestDatabase } from './database-cleanup.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
@@ -70,11 +71,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
   })
   after(async () => {
     await Promise.allSettled([a.end(), b.end()])
-    await admin.query(
-      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1',
-      [db],
-    )
-    await admin.query(`DROP DATABASE IF EXISTS "${db}"`)
+    await dropTestDatabase(admin, db)
     await admin.end()
   })
   beforeEach(async () => {

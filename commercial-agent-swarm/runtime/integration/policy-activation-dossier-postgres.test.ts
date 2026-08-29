@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 import { Pool } from 'pg'
 import { applyMigrationPrefix } from './migration-prefix.js'
+import { dropTestDatabase } from './database-cleanup.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
@@ -40,8 +41,7 @@ integration('PostgreSQL 17 policy activation dossier', () => {
       assert.equal((await pool.query(`SELECT to_regprocedure('control.build_policy_activation_dossier_state()') AS function`)).rows[0].function, null)
     } finally {
       await pool.end()
-      await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1', [database])
-      await admin.query(`DROP DATABASE IF EXISTS "${database}"`)
+      await dropTestDatabase(admin, database)
       await admin.end()
     }
   })

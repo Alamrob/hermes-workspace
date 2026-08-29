@@ -5,6 +5,7 @@ import { after, before, describe, it } from 'node:test'
 import { Pool } from 'pg'
 import { validWorkOrder } from '../test/fixtures.js'
 import { validateWorkOrder } from '../src/work-orders.js'
+import { dropTestDatabase } from './database-cleanup.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
@@ -81,11 +82,7 @@ integration('PostgreSQL Usage budget upgrade safety', { concurrency: 1 }, () => 
 
   after(async () => {
     await pool.end()
-    await admin.query(
-      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1',
-      [database],
-    )
-    await admin.query(`DROP DATABASE IF EXISTS "${database}"`)
+    await dropTestDatabase(admin, database)
     await admin.end()
   })
 

@@ -6,6 +6,7 @@ import { Pool } from 'pg'
 import { loadMigrationSources } from '../src/migrate-main.js'
 import { runVersionedMigrations } from '../src/migration-runner.js'
 import { validWorkOrder } from '../test/fixtures.js'
+import { dropTestDatabase } from './database-cleanup.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
@@ -58,11 +59,7 @@ integration('PostgreSQL 17 Ed25519 A1 work-order boundary', () => {
       )
     } finally {
       await pool.end()
-      await admin.query(
-        'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1',
-        [database],
-      )
-      await admin.query(`DROP DATABASE IF EXISTS "${database}"`)
+      await dropTestDatabase(admin, database)
       await admin.end()
     }
   })

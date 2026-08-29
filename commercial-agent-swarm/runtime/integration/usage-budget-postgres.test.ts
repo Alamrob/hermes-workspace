@@ -7,6 +7,7 @@ import { PostgresDispatchQueue, type EnqueueJob } from '../src/dispatch-queue.js
 import { runVersionedMigrations } from '../src/migration-runner.js'
 import { validWorkOrder } from '../test/fixtures.js'
 import { validateWorkOrder } from '../src/work-orders.js'
+import { dropTestDatabase } from './database-cleanup.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
@@ -68,8 +69,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
 
   after(async () => {
     await Promise.allSettled([leftPool.end(), rightPool.end()])
-    await admin.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1', [database])
-    await admin.query(`DROP DATABASE IF EXISTS "${database}"`)
+    await dropTestDatabase(admin, database)
     await admin.end()
   })
 

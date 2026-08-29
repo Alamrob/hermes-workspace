@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { after, before, describe, it } from 'node:test'
 import { Pool } from 'pg'
 import { verifyProductionDatabasePrincipals } from '../src/production.js'
+import { dropTestDatabase } from './database-cleanup.js'
 
 const ADMIN_URL = process.env.TEST_DATABASE_URL
 const RUNTIME_MIGRATION = new URL(
@@ -79,11 +80,7 @@ integration('commercial catalog/control/mail data model', () => {
 
   after(async () => {
     await pool.end()
-    await admin.query(
-      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1',
-      [databaseName],
-    )
-    await admin.query(`DROP DATABASE IF EXISTS "${databaseName}"`)
+    await dropTestDatabase(admin, databaseName)
     await admin.end()
   })
 
@@ -747,11 +744,7 @@ integration('commercial catalog/control/mail data model', () => {
       )
     } finally {
       await rollbackPool.end()
-      await admin.query(
-        'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1',
-        [rollbackDatabase],
-      )
-      await admin.query(`DROP DATABASE IF EXISTS "${rollbackDatabase}"`)
+      await dropTestDatabase(admin, rollbackDatabase)
     }
   })
 })

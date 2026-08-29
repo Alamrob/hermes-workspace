@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 import { Pool } from 'pg'
 import { runVersionedMigrations } from '../src/migration-runner.js'
+import { dropTestDatabase } from './database-cleanup.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
@@ -360,11 +361,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
       )
     } finally {
       await pool.end()
-      await admin.query(
-        `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1`,
-        [database],
-      )
-      await admin.query(`DROP DATABASE IF EXISTS "${database}"`)
+      await dropTestDatabase(admin, database)
       await admin.end()
     }
   })

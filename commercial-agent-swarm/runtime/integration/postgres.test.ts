@@ -12,6 +12,7 @@ import {
 } from '../src/postgres-repository.js'
 import { validWorkOrder } from '../test/fixtures.js'
 import type { ApprovalAction } from '../src/approvals.js'
+import { dropTestDatabase } from './database-cleanup.js'
 import type { MailTransport } from '../src/mail.js'
 import type { StructuredAuditEvent } from '../src/observability.js'
 import type {
@@ -56,11 +57,7 @@ integration('PostgreSQL 17 runtime repository', () => {
 
   after(async () => {
     await Promise.allSettled([firstPool.end(), secondPool.end()])
-    await adminPool.query(
-      'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1',
-      [databaseName],
-    )
-    await adminPool.query(`DROP DATABASE IF EXISTS "${databaseName}"`)
+    await dropTestDatabase(adminPool, databaseName)
     await adminPool.end()
   })
 
