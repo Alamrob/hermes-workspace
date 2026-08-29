@@ -42,6 +42,10 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '022_policy_human_review',
         '023_policy_activation_dossier',
         '024_draft_internal_review',
+        '025_a1_research_dossier',
+        '026_a1_research_authorization',
+        '027_a1_research_order_authorization',
+        '028_ed25519_a1_work_orders',
       ]
       await runVersionedMigrations(
         pool,

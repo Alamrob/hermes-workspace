@@ -1,6 +1,7 @@
 import { constants as fsConstants } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
+import { createPublicKey } from 'node:crypto'
 import { parseApprovalMode, type ApprovalMode } from './approval-mode.js'
 import { assertPrimaryServiceGid, readGroupSecretFile } from './secret-file.js'
 
@@ -58,6 +59,7 @@ export interface SimulationBrokerConfig {
   databaseSecretFiles: Array<{ name: string; path: string }>
   applicationSecretFiles: Record<(typeof APPLICATION_FILES)[number], string>
   workOrderAuthority: { issuer: string; audience: string; keyId: string }
+  a1WorkOrderAuthority: { keyId: string; publicKeyFile: string } | null
   approvalMode: ApprovalMode
   approvalActors: { sales: string[]; telegram: string[] }
   hostingerWebhookSecretFiles: { mailboxKey: string; bearer: string } | null
@@ -158,6 +160,7 @@ function loadBrokerConfigFields<M extends BrokerConfig['mode'], A extends boolea
     'HOSTINGER_WEBHOOK_MAILBOX_KEY_FILE',
     'HOSTINGER_WEBHOOK_BEARER_FILE',
   )
+  const a1WorkOrderAuthority = optionalA1WorkOrderAuthority(environment)
 
   return {
     mode,
@@ -171,12 +174,30 @@ function loadBrokerConfigFields<M extends BrokerConfig['mode'], A extends boolea
       audience: required(environment, 'WORK_ORDER_AUDIENCE'),
       keyId: required(environment, 'WORK_ORDER_KEY_ID'),
     },
+    a1WorkOrderAuthority,
     approvalMode: parseApprovalMode(environment.APPROVAL_MODE),
     approvalActors,
     hostingerWebhookSecretFiles,
     secretGid: BROKER_SERVICE_GID,
     a3AdmissionEnabled,
   } as Extract<BrokerConfig, { mode: M }>
+}
+
+export async function readA1WorkOrderPublicKeys(
+  config: BrokerConfig,
+): Promise<Record<string, string>> {
+  if (config.a1WorkOrderAuthority === null) return {}
+  const pem = await readGroupSecretFile(
+    config.a1WorkOrderAuthority.publicKeyFile,
+    config.secretGid,
+  )
+  try {
+    const key = createPublicKey(pem)
+    if (key.asymmetricKeyType !== 'ed25519') throw new Error('type')
+  } catch {
+    throw new Error('A1_WORK_ORDER_ED25519_PUBLIC_KEY_INVALID')
+  }
+  return { [config.a1WorkOrderAuthority.keyId]: pem }
 }
 
 function rejectRawSecrets(environment: Environment): void {
@@ -353,6 +374,20 @@ function optionalSecretPair(
   return {
     mailboxKey: requiredSecretPath(environment, firstName),
     bearer: requiredSecretPath(environment, secondName),
+  }
+}
+
+function optionalA1WorkOrderAuthority(
+  environment: Environment,
+): { keyId: string; publicKeyFile: string } | null {
+  const keyId = environment.A1_WORK_ORDER_ED25519_KEY_ID?.trim()
+  const publicKeyFile = environment.A1_WORK_ORDER_ED25519_PUBLIC_KEY_FILE?.trim()
+  if (!keyId && !publicKeyFile) return null
+  if (!keyId || !publicKeyFile || !/^[A-Za-z0-9._:-]{1,128}$/.test(keyId))
+    throw new Error('A1_WORK_ORDER_ED25519_CONFIG_INVALID')
+  return {
+    keyId,
+    publicKeyFile: requiredSecretPath(environment, 'A1_WORK_ORDER_ED25519_PUBLIC_KEY_FILE'),
   }
 }
 

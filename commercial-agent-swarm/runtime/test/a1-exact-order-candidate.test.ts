@@ -38,7 +38,7 @@ function authorization(expiresAt = '2026-08-28T20:30:00.000Z'): A1ResearchAuthor
   }
 }
 
-const authority={issuer:'codex',audience:'hermes-commercial-orchestrator',keys:{'control-key-1':'test-control-key-with-at-least-32-bytes'}}
+const authority={issuer:'codex',audience:'hermes-commercial-orchestrator',keys:{'control-key-1':'test-control-key-with-at-least-32-bytes'},ed25519PublicKeys:{'codex-a1-ed25519-v1':'test-public-key-material'}}
 
 describe('A1 exact unsigned work-order candidate',()=>{
   it('builds one deterministic, non-executable candidate bound to the parent authorization',()=>{
@@ -47,7 +47,8 @@ describe('A1 exact unsigned work-order candidate',()=>{
     assert.equal(first.missionId,second.missionId)
     assert.equal(first.orderAuthorizationId,second.orderAuthorizationId)
     assert.equal(first.unsignedWorkOrderSha256,hashUnsignedA1ResearchWorkOrder(first.workOrder))
-    assert.equal(first.workOrder.authority && (first.workOrder.authority as any).signature,'0'.repeat(64))
+    assert.equal(first.workOrder.authority && (first.workOrder.authority as any).algorithm,'Ed25519')
+    assert.equal(first.workOrder.authority && (first.workOrder.authority as any).signature,'0'.repeat(128))
     assert.equal(first.exactOrderAuthorizationRecorded,false)
     assert.equal(first.missionCreated,false)
     assert.equal(first.dispatchQueued,false)
@@ -65,6 +66,6 @@ describe('A1 exact unsigned work-order candidate',()=>{
     assert.throws(()=>buildA1ExactOrderCandidate(dossier(),rejected,authority,NOW),/A1_RESEARCH_ORDER_AUTHORIZATION_GATE_CLOSED/)
     const stale=authorization();stale.authorization!.dossierSha256='f'.repeat(64);stale.dossierCurrent=false;stale.nextRequiredGate='stale_dossier_review'
     assert.throws(()=>buildA1ExactOrderCandidate(dossier(),stale,authority,NOW),/A1_RESEARCH_ORDER_AUTHORIZATION_GATE_CLOSED/)
-    assert.throws(()=>buildA1ExactOrderCandidate(dossier(),authorization(),{...authority,keys:{one:'x',two:'y'}},NOW),/A1_RESEARCH_ORDER_AUTHORIZATION_GATE_CLOSED/)
+    assert.throws(()=>buildA1ExactOrderCandidate(dossier(),authorization(),{...authority,ed25519PublicKeys:{one:'x',two:'y'}},NOW),/A1_RESEARCH_ORDER_AUTHORIZATION_GATE_CLOSED/)
   })
 })

@@ -77,7 +77,8 @@ export function buildA1AuthorizedOrderCandidate(
   metadata.a1_research_order_authorized_by = orderAuthorization.reviewerEmail
   if (
     hashUnsignedA1ResearchWorkOrder(workOrder) !== orderAuthorization.unsignedWorkOrderSha256 ||
-    (workOrder.authority as Record<string, unknown>).signature !== '0'.repeat(64)
+    (workOrder.authority as Record<string, unknown>).algorithm !== 'Ed25519' ||
+    (workOrder.authority as Record<string, unknown>).signature !== '0'.repeat(128)
   ) closed()
 
   return {

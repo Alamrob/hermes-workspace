@@ -504,7 +504,7 @@ export class BrokerApplication {
       const unsignedWorkOrderSha256 = hashUnsignedA1ResearchWorkOrder(workOrder)
       if (
         dossierSha256 !== input.expectedDossierSha256 || parent?.authorization?.authorizationId !== input.expectedParentAuthorizationId ||
-        authority.signature !== '0'.repeat(64) || metadata?.a1_research_order_authorization_id !== orderAuthorizationId ||
+        authority.algorithm !== 'Ed25519' || authority.signature !== '0'.repeat(128) || metadata?.a1_research_order_authorization_id !== orderAuthorizationId ||
         metadata.a1_research_order_unsigned_sha256 !== unsignedWorkOrderSha256 ||
         metadata.a1_research_order_authorization_expires_at !== input.expiresAt ||
         metadata.a1_research_order_authorization_sha256 !== input.userAuthorizationSha256 ||

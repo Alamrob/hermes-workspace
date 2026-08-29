@@ -16,6 +16,7 @@ import {
   loadInternalMailBrokerConfig,
   loadSimulationBrokerConfig,
   readApplicationSecrets,
+  readA1WorkOrderPublicKeys,
   readHostingerWebhookMailboxSecrets,
   assertBrokerServiceIdentity,
 } from './simulation-entrypoint.js'
@@ -55,9 +56,10 @@ async function startBrokerWithConfig(
   environment: Record<string, string | undefined>,
   config: ReturnType<typeof loadBrokerConfig>,
 ): Promise<{ close: () => Promise<void> }> {
-  const [databaseEnvironment, secrets] = await Promise.all([
+  const [databaseEnvironment, secrets, a1PublicKeys] = await Promise.all([
     expandDatabaseSecretFiles(config, environment),
     readApplicationSecrets(config),
+    readA1WorkOrderPublicKeys(config),
   ])
   const mailboxSecrets = await readHostingerWebhookMailboxSecrets(config, secrets)
   const persistence = await createRuntimePersistence(databaseEnvironment)
@@ -109,6 +111,7 @@ async function startBrokerWithConfig(
           issuer: config.workOrderAuthority.issuer,
           audience: config.workOrderAuthority.audience,
           keys: { [config.workOrderAuthority.keyId]: secrets.workOrderHmac },
+          ed25519PublicKeys: a1PublicKeys,
         },
         controlPlane: secrets.controlPlane,
         connector: secrets.connector,

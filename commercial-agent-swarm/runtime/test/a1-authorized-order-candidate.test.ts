@@ -9,7 +9,11 @@ import type { A1ResearchDossier } from '../src/a1-research-dossier.js'
 const REVIEW = 'a2500000-0000-4500-8500-000000000053'
 const NOW = new Date('2026-08-28T20:15:00.000Z')
 const EXPIRES = '2026-08-28T20:30:00.000Z'
-const authority = { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' } }
+const authority = {
+  issuer: 'codex', audience: 'hermes-commercial-orchestrator',
+  keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' },
+  ed25519PublicKeys: { 'codex-a1-ed25519-v1': 'test-public-key-material' },
+}
 
 function dossier(): A1ResearchDossier {
   return {
@@ -68,7 +72,8 @@ describe('A1 authorized exact work-order candidate', () => {
     assert.equal(value.missionCreated, false)
     assert.equal(value.dispatchQueued, false)
     assert.equal(value.nextRequiredGate, 'codex_signature')
-    assert.equal((value.workOrder.authority as any).signature, '0'.repeat(64))
+    assert.equal((value.workOrder.authority as any).algorithm, 'Ed25519')
+    assert.equal((value.workOrder.authority as any).signature, '0'.repeat(128))
     assert.equal(metadata.a1_research_order_authorization_sha256, authorization.userAuthorizationSha256)
     assert.equal(metadata.a1_research_order_authorized_at, authorization.reviewedAt)
     assert.equal(metadata.a1_research_order_authorized_by, 'proptimizaspa@gmail.com')

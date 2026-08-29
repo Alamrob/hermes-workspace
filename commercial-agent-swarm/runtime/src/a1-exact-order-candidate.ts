@@ -54,7 +54,7 @@ export function buildA1ExactOrderCandidate(
   const state = validateA1ResearchAuthorizationState(authorizationValue)
   const parent = state.authorization
   const dossierSha256 = hashA1ResearchDossier(dossier)
-  const keyIds = Object.keys(authority.keys)
+  const keyIds = Object.keys(authority.ed25519PublicKeys ?? {})
   if (
     dossier.status !== 'authorization_required' || !dossier.reviewCompleted || dossier.eligibleAccountCount < 1 ||
     !state.authorizationRecorded || !state.dossierCurrent || state.dossierSha256 !== dossierSha256 ||
@@ -128,8 +128,8 @@ export function buildA1ExactOrderCandidate(
       issuer: authority.issuer,
       audience: authority.audience,
       key_id: keyIds[0],
-      algorithm: 'HMAC-SHA256',
-      signature: placeholderDigest,
+      algorithm: 'Ed25519',
+      signature: '0'.repeat(128),
     },
     data_policy: {
       classification: 'public',

@@ -77,7 +77,7 @@ const FORBIDDEN_TEXT = /(https?:\/\/|www\.|```|-----BEGIN [A-Z ]*PRIVATE KEY----
 export function hashUnsignedA1ResearchWorkOrder(workOrder: WorkOrder): string {
   const unsigned = structuredClone(workOrder)
   const authority = object(unsigned.authority)
-  authority.signature = '0'.repeat(64)
+  authority.signature = '0'.repeat(authority.algorithm === 'Ed25519' ? 128 : 64)
   const metadata = object(unsigned.metadata)
   for (const field of [
     'a1_research_order_authorization_id',

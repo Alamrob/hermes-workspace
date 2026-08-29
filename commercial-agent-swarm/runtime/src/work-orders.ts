@@ -191,8 +191,13 @@ function validateAuthority(value: unknown, issues: string[]): void {
   if (!isBoundedString(authority.issuer, 1, Number.MAX_SAFE_INTEGER)) issues.push('authority.issuer is invalid')
   if (!isBoundedString(authority.audience, 1, 256)) issues.push('authority.audience is invalid')
   if (!isBoundedString(authority.key_id, 1, 256)) issues.push('authority.key_id is invalid')
-  if (authority.algorithm !== 'HMAC-SHA256') issues.push('authority.algorithm is invalid')
-  if (typeof authority.signature !== 'string' || !/^[0-9a-f]{64}$/.test(authority.signature)) issues.push('authority.signature is invalid')
+  if (authority.algorithm !== 'HMAC-SHA256' && authority.algorithm !== 'Ed25519')
+    issues.push('authority.algorithm is invalid')
+  if (
+    typeof authority.signature !== 'string' ||
+    (authority.algorithm === 'HMAC-SHA256' && !/^[0-9a-f]{64}$/.test(authority.signature)) ||
+    (authority.algorithm === 'Ed25519' && !/^[0-9a-f]{128}$/.test(authority.signature))
+  ) issues.push('authority.signature is invalid')
 }
 
 function validateDataPolicy(value: unknown, issues: string[]): void {

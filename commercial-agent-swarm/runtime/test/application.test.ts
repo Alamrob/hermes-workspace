@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import { describe, it } from 'node:test'
 import { BrokerApplication } from '../src/application.js'
 import { ApprovalBroker, type ApprovalAction, type TelegramTransport } from '../src/approvals.js'
@@ -13,7 +13,7 @@ import { InMemoryAuditSink } from '../src/observability.js'
 import { InMemoryRuntimeRepository } from '../src/repository.js'
 import { WebhookService } from '../src/webhook.js'
 import { createBrokerHttpServer } from '../src/server.js'
-import { signWorkOrder } from '../src/security.js'
+import { signWorkOrder, signWorkOrderEd25519 } from '../src/security.js'
 import { validWorkOrder } from './fixtures.js'
 import type { EnqueueJob, MissionExecution } from '../src/dispatch-queue.js'
 import { hashA1ResearchDossier } from '../src/a1-research-authorization.js'
@@ -24,6 +24,9 @@ import type { A1ResearchOrderAuthorizationState } from '../src/a1-research-order
 import { buildA1ExactOrderCandidate } from '../src/a1-exact-order-candidate.js'
 
 const NOW = new Date('2026-08-15T20:00:00.000Z')
+const A1_KEY_PAIR = generateKeyPairSync('ed25519')
+const A1_PRIVATE_KEY = A1_KEY_PAIR.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
+const A1_PUBLIC_KEY = A1_KEY_PAIR.publicKey.export({ type: 'spki', format: 'pem' }).toString()
 
 class FakeTelegram implements TelegramTransport {
   requests: Array<{ approval_id: string; mission_id: string; action_hash: string }> = []
@@ -120,7 +123,11 @@ function setup(mode: ApprovalMode = 'either', ambiguousGateways = false, a3Admis
       deployedVersion: 'runtime-test-v1',
       a3AdmissionEnabled,
       authentication: {
-        workOrders: { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' } },
+        workOrders: {
+          issuer: 'codex', audience: 'hermes-commercial-orchestrator',
+          keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' },
+          ed25519PublicKeys: { 'codex-a1-ed25519-v1': A1_PUBLIC_KEY },
+        },
         controlPlane: 'control-plane-token', connector: 'connector-token', internal: 'internal-token',
         instructionInbox: 'instruction-inbox-token',
         salesCommands: 'sales-command-token',
@@ -226,7 +233,7 @@ function unsignedBoundA1Order() {
   order.volume_limits={maximum_accounts:1,maximum_contacts:0,maximum_external_actions:0,maximum_per_contact:0,period:'mission'}
   order.data_policy={classification:'public',allowed_countries:['CL'],legal_basis:['public_source_reviewed'],retention_days:30,sensitive_data_allowed:false,allowed_data_categories:[...dossier.allowedDataCategories]}
   order.contact_policy={contact_permitted:false,suppression_check_required:true,consent_check_required:false,maximum_frequency_days:0,quiet_hours_timezone:'America/Santiago'}
-  order.authority.signature='0'.repeat(64)
+  order.authority.algorithm='Ed25519';order.authority.key_id='codex-a1-ed25519-v1';order.authority.signature='0'.repeat(128)
   order.metadata={
     a1_research_review_id:A1_REVIEW_ID,a1_research_dossier_sha256:hashA1ResearchDossier(dossier),
     a1_research_authorization_id:A1_PARENT_AUTH_ID,a1_research_authorization_expires_at:'2026-08-15T20:25:00.000Z',
@@ -1412,12 +1419,12 @@ describe('broker application routes', () => {
 
     const changed = structuredClone(candidate)
     changed.objective='Objetivo modificado después de la autorización humana'
-    changed.authority.signature=signWorkOrder(changed as never,'test-control-key-with-at-least-32-bytes')
+    changed.authority.signature=signWorkOrderEd25519(changed as never,A1_PRIVATE_KEY)
     const denied = await state.app.handle({method:'POST',path:'/v1/work-orders',headers:headers('control-plane-token'),body:changed})
     assert.deepEqual(denied,{status:403,body:{error:'A1_RESEARCH_WORK_ORDER_NOT_AUTHORIZED'}})
     assert.equal(await state.repository.getMission(candidate.mission_id),null)
 
-    candidate.authority.signature=signWorkOrder(candidate as never,'test-control-key-with-at-least-32-bytes')
+    candidate.authority.signature=signWorkOrderEd25519(candidate as never,A1_PRIVATE_KEY)
     const accepted = await state.app.handle({method:'POST',path:'/v1/work-orders',headers:headers('control-plane-token'),body:candidate})
     assert.equal(accepted.status,201)
     assert.equal((await state.repository.getMission(candidate.mission_id))?.mission_id,candidate.mission_id)
@@ -1446,7 +1453,8 @@ describe('broker application routes', () => {
     assert.equal(candidate.internetAccessAllowed,false)
     assert.equal(candidate.providerCreditSpendAllowed,false)
     assert.equal(candidate.maximumExternalActions,0)
-    assert.equal(candidate.workOrder.authority.signature,'0'.repeat(64))
+    assert.equal(candidate.workOrder.authority.algorithm,'Ed25519')
+    assert.equal(candidate.workOrder.authority.signature,'0'.repeat(128))
     assert.equal(candidate.unsignedWorkOrderSha256,hashUnsignedA1ResearchWorkOrder(candidate.workOrder))
     assert.equal(await state.repository.getMission(candidate.missionId),null)
     assert.equal(state.dispatched.length,0)
@@ -1456,7 +1464,11 @@ describe('broker application routes', () => {
     const state = setup()
     const dossier = boundA1Dossier()
     const parent = boundA1ParentAuthorization()
-    const authority = { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' } }
+    const authority = {
+      issuer: 'codex', audience: 'hermes-commercial-orchestrator',
+      keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' },
+      ed25519PublicKeys: { 'codex-a1-ed25519-v1': A1_PUBLIC_KEY },
+    }
     const candidate = buildA1ExactOrderCandidate(dossier, parent, authority, NOW)
     const orderAuthorization: A1ResearchOrderAuthorizationState = {
       orderAuthorizationId: candidate.orderAuthorizationId, reviewId: candidate.reviewId,

@@ -22,6 +22,21 @@ describe('work-order contract', () => {
     assert.deepEqual(validateWorkOrder(validWorkOrder()), validWorkOrder())
   })
 
+  it('accepts an Ed25519 authority and rejects mismatched signature lengths', () => {
+    const order = validWorkOrder()
+    order.authority = {
+      issuer: 'codex', audience: 'hermes-commercial-orchestrator', key_id: 'codex-a1-ed25519-v1',
+      algorithm: 'Ed25519', signature: '0'.repeat(128),
+    }
+    assert.deepEqual(validateWorkOrder(order), order)
+    order.authority.signature = '0'.repeat(64)
+    assert.throws(() => validateWorkOrder(order), (error: unknown) => {
+      assert.ok(error instanceof ValidationError)
+      assert.ok(error.issues.includes('authority.signature is invalid'))
+      return true
+    })
+  })
+
   it('rejects malformed identifiers, reversed timestamps, and unknown fields', () => {
     const invalid = {
       ...validWorkOrder(),

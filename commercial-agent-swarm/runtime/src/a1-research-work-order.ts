@@ -107,6 +107,7 @@ export function assertA1ResearchWorkOrderCandidate(
     Date.parse(authorization.expiresAt) <= now.getTime() || orderExpiresAt > Date.parse(authorization.expiresAt) ||
     orderCreatedAt < Date.parse(authorization.reviewedAt) || orderCreatedAt > now.getTime() ||
     workOrder.project_id !== dossier.projectId || workOrder.offer_id !== dossier.offerId || workOrder.offer_version !== dossier.offerVersion ||
+    record(workOrder.authority)?.algorithm !== 'Ed25519' ||
     workOrder.policy_version !== 'policy-v1' || workOrder.icp_version !== 'icp-v1' || workOrder.autonomy_level !== 'A1' ||
     workOrder.dry_run !== true || workOrder.approval_token !== null || workOrder.requested_by !== 'codex-auditor' ||
     !exactArray(workOrder.allowed_actions, dossier.allowedActions) ||

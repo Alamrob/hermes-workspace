@@ -80,6 +80,9 @@ function order(): WorkOrder {
     maximum_frequency_days: 0, quiet_hours_timezone: 'America/Santiago',
   }
   value.dry_run = true
+  value.authority.algorithm = 'Ed25519'
+  value.authority.key_id = 'codex-a1-ed25519-v1'
+  value.authority.signature = '0'.repeat(128)
   value.metadata = a1ResearchOrderMetadata(dossier(), evidence)
   value.metadata.a1_research_order_unsigned_sha256 = hashUnsignedA1ResearchWorkOrder(value as WorkOrder)
   return value as WorkOrder

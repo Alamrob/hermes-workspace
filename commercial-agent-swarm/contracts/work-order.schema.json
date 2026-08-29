@@ -163,9 +163,23 @@
         "issuer": { "type": "string", "minLength": 1 },
         "audience": { "type": "string", "minLength": 1, "maxLength": 256 },
         "key_id": { "type": "string", "minLength": 1, "maxLength": 256 },
-        "algorithm": { "const": "HMAC-SHA256" },
-        "signature": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
-      }
+        "algorithm": { "enum": ["HMAC-SHA256", "Ed25519"] },
+        "signature": { "type": "string", "pattern": "^[0-9a-f]+$" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "algorithm": { "const": "HMAC-SHA256" },
+            "signature": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        },
+        {
+          "properties": {
+            "algorithm": { "const": "Ed25519" },
+            "signature": { "type": "string", "pattern": "^[0-9a-f]{128}$" }
+          }
+        }
+      ]
     },
     "data_policy": {
       "type": "object",

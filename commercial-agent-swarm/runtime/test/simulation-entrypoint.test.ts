@@ -58,6 +58,7 @@ describe('Simulation broker entrypoint', () => {
     assert.equal(config.approvalMode, 'either')
     assert.equal(config.a3AdmissionEnabled, false)
     assert.equal(config.hostingerWebhookSecretFiles, null)
+    assert.equal(config.a1WorkOrderAuthority, null)
     assert.equal(config.secretGid, BROKER_SERVICE_GID)
     assert.equal(config.secretGid, 10001)
     assert.deepEqual(config.approvalActors, {
@@ -128,6 +129,19 @@ describe('Simulation broker entrypoint', () => {
       mailboxKey: '/run/secrets/hostinger-webhook-mailbox-key',
       bearer: '/run/secrets/hostinger-webhook-bearer',
     })
+    const withA1PublicKey = loadSimulationBrokerConfig({
+      ...environment,
+      A1_WORK_ORDER_ED25519_KEY_ID: 'codex-a1-ed25519-v1',
+      A1_WORK_ORDER_ED25519_PUBLIC_KEY_FILE: '/run/secrets/a1-work-order-ed25519-public-key',
+    })
+    assert.deepEqual(withA1PublicKey.a1WorkOrderAuthority, {
+      keyId: 'codex-a1-ed25519-v1',
+      publicKeyFile: '/run/secrets/a1-work-order-ed25519-public-key',
+    })
+    assert.throws(() => loadSimulationBrokerConfig({
+      ...environment,
+      A1_WORK_ORDER_ED25519_KEY_ID: 'codex-a1-ed25519-v1',
+    }), /A1_WORK_ORDER_ED25519_CONFIG_INVALID/)
   })
 
   it('accepts only root:broker-group 0440 secrets for the broker group', () => {
