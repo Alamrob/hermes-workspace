@@ -1399,6 +1399,15 @@ describe('broker application routes', () => {
     assert.equal(await state.repository.getMission(candidate.mission_id),null)
     assert.equal(state.dispatched.length,0)
 
+    const orderAuthorizationId=(recorded.body as any).orderAuthorizationId as string
+    const readPath=`/internal/v1/a1-order-authorizations/${orderAuthorizationId}`
+    assert.equal((await state.app.handle({method:'GET',path:readPath})).status,401)
+    const projected=await state.app.handle({method:'GET',path:readPath,headers:headers('shadow-review-token')})
+    assert.equal(projected.status,200)
+    assert.equal((projected.body as any).orderAuthorizationId,orderAuthorizationId)
+    assert.equal((projected.body as any).missionCreated,false)
+    assert.equal((projected.body as any).dispatchQueued,false)
+
     const changed = structuredClone(candidate)
     changed.objective='Objetivo modificado después de la autorización humana'
     changed.authority.signature=signWorkOrder(changed as never,'test-control-key-with-at-least-32-bytes')

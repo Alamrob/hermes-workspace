@@ -442,6 +442,11 @@ export class BrokerApplication {
         body: buildA1ExactOrderCandidate(dossier, authorization, this.options.authentication.workOrders, this.now()),
       }
     }
+    if (route.action === 'getA1ResearchOrderAuthorization') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const state = await this.options.repository.getA1ResearchOrderAuthorizationState(route.id!)
+      return state ? { status: 200, body: state } : { status: 404, body: { error: 'not_found' } }
+    }
     if (route.action === 'recordA1ResearchAuthorization') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       const input = validateA1ResearchAuthorizationRequest(request.body, this.now())
@@ -723,6 +728,8 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && a1ExactOrderCandidate)
     return { action: 'getA1ExactOrderCandidate', auditAction: 'a1_exact_order_candidate.get', id: a1ExactOrderCandidate[1] }
   const a1OrderAuthorization = /^\/internal\/v1\/a1-order-authorizations\/([^/]+)$/.exec(path)
+  if (method === 'GET' && a1OrderAuthorization)
+    return { action: 'getA1ResearchOrderAuthorization', auditAction: 'a1_research_order_authorization.get', id: a1OrderAuthorization[1] }
   if (method === 'POST' && a1OrderAuthorization)
     return { action: 'recordA1ResearchOrderAuthorization', auditAction: 'a1_research_order_authorization.record', id: a1OrderAuthorization[1] }
   const draftItem = /^\/internal\/v1\/draft-reviews\/([^/]+)\/items\/(\d+)$/.exec(path)
