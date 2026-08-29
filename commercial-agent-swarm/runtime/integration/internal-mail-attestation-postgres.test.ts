@@ -38,6 +38,7 @@ const versions = [
   '027_a1_research_order_authorization',
   '028_ed25519_a1_work_orders',
   '029_a1_authorization_renewal',
+  '030_a1_dispatch_authorization',
 ]
 
 integration('PostgreSQL 17 internal-mail attestation ledger', () => {

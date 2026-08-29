@@ -94,7 +94,12 @@ export function buildA1ExactOrderCandidate(
     business_context: 'Investigación A1 limitada a evidencia corporativa pública para validar ajuste al ICP de Operación Sin Planillas. No autoriza contacto, enriquecimiento personal, CRM ni consumo de créditos.',
     target_segment: 'Empresas chilenas B2B de servicios, 10–100 empleados, con posibles operaciones manuales en Excel, WhatsApp y correo.',
     allowed_actions: [...dossier.allowedActions],
-    prohibited_actions: [...dossier.prohibitedActions],
+    prohibited_actions: [...new Set([
+      ...dossier.prohibitedActions,
+      'price.change',
+      'proposal.send',
+      'contract.commit',
+    ])],
     approved_channels: [...dossier.approvedChannels],
     approved_tools: [...dossier.requestedTools],
     autonomy_level: 'A1',

@@ -76,6 +76,10 @@ const FORBIDDEN_TEXT = /(https?:\/\/|www\.|```|-----BEGIN [A-Z ]*PRIVATE KEY----
 
 export function hashUnsignedA1ResearchWorkOrder(workOrder: WorkOrder): string {
   const unsigned = structuredClone(workOrder)
+  // The repository adds this derived runtime flag after signature admission.
+  // It is not part of the signed WorkOrder schema and must not invalidate the
+  // original exact-order hash when the persisted mission is re-admitted.
+  delete (unsigned as unknown as Record<string, unknown>).a3_enabled
   const authority = object(unsigned.authority)
   authority.signature = '0'.repeat(authority.algorithm === 'Ed25519' ? 128 : 64)
   const metadata = object(unsigned.metadata)

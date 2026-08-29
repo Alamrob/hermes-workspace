@@ -19,6 +19,10 @@ import type {
   A1ResearchOrderAuthorizationState,
   RecordA1ResearchOrderAuthorizationInput,
 } from './a1-research-order-authorization.js'
+import type {
+  A1DispatchAuthorizationState,
+  RecordA1DispatchAuthorizationInput,
+} from './a1-dispatch-authorization.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
 
@@ -58,6 +62,8 @@ export interface RuntimeRepository {
   recordA1ResearchAuthorization(input: RecordA1ResearchAuthorizationInput): Promise<A1ResearchAuthorizationState>
   getA1ResearchOrderAuthorizationState(orderAuthorizationId: string): Promise<A1ResearchOrderAuthorizationState | null>
   recordA1ResearchOrderAuthorization(input: RecordA1ResearchOrderAuthorizationInput): Promise<A1ResearchOrderAuthorizationState>
+  getA1DispatchAuthorizationState(missionId: string): Promise<A1DispatchAuthorizationState | null>
+  recordA1DispatchAuthorization(input: RecordA1DispatchAuthorizationInput): Promise<A1DispatchAuthorizationState>
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
@@ -80,6 +86,7 @@ export interface RuntimeRepository {
     now: string
   }): Promise<ApprovalGrantRecord | null>
   isKillSwitchActive(input: { missionId: string; channel: string }): Promise<boolean>
+  isGlobalKillSwitchActive(): Promise<boolean>
   activateKillSwitch(scope: string, scopeId: string): Promise<void>
   externalActionsBlocked(): Promise<boolean>
   claimExternalAction(input: { missionId: string; channel: string; idempotencyKey: string; actionHash: string }): Promise<{ status: 'acquired' } | { status: 'completed'; receipt_id: string; approval_id: string }>
@@ -174,6 +181,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly externalActions = new Map<string, { action_hash: string; channel: string; receipt_id?: string; approval_id?: string }>()
   private readonly policyReviews = new Map<string, RecordPolicyReviewInput>()
   private readonly a1OrderAuthorizations = new Map<string, A1ResearchOrderAuthorizationState>()
+  private readonly a1DispatchAuthorizations = new Map<string, A1DispatchAuthorizationState>()
 
   async ready(): Promise<boolean> {
     return true
@@ -285,6 +293,10 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
     )
   }
 
+  async isGlobalKillSwitchActive(): Promise<boolean> {
+    return this.killSwitches.has('global:*')
+  }
+
   async getA1ResearchOrderAuthorizationState(orderAuthorizationId: string): Promise<A1ResearchOrderAuthorizationState | null> {
     const state = this.a1OrderAuthorizations.get(orderAuthorizationId)
     return state ? structuredClone(state) : null
@@ -328,6 +340,53 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
     if (existing && JSON.stringify(existing) !== JSON.stringify(state))
       throw new Error('A1_RESEARCH_ORDER_AUTHORIZATION_IMMUTABLE_CONFLICT')
     this.a1OrderAuthorizations.set(input.orderAuthorizationId, structuredClone(state))
+    return structuredClone(state)
+  }
+
+  async getA1DispatchAuthorizationState(missionId: string): Promise<A1DispatchAuthorizationState | null> {
+    const state = this.a1DispatchAuthorizations.get(missionId)
+    return state ? structuredClone(state) : null
+  }
+
+  async recordA1DispatchAuthorization(input: RecordA1DispatchAuthorizationInput): Promise<A1DispatchAuthorizationState> {
+    const state: A1DispatchAuthorizationState = {
+      authorizationId: input.authorizationId,
+      missionId: input.missionId,
+      traceId: input.traceId,
+      planVersion: input.planVersion,
+      decision: input.decision,
+      rationale: input.rationale,
+      reviewerId: input.reviewerId,
+      reviewerEmail: input.reviewerEmail,
+      reviewedAt: input.reviewedAt,
+      expiresAt: input.expiresAt,
+      missionSha256: input.missionSha256,
+      assignmentPlanSha256: input.assignmentPlanSha256,
+      userAuthorizationSha256: input.userAuthorizationSha256,
+      attestations: input.attestations,
+      idempotencyKey: input.idempotencyKey,
+      assignmentCreated: false,
+      dispatchQueued: false,
+      executionAuthorized: false,
+      internetAccessAllowed: false,
+      providerCreditSpendAllowed: false,
+      contactPermitted: false,
+      crmWriteAllowed: false,
+      maximumExternalActions: 0,
+      globalKillSwitchRequired: true,
+      productionGate: 'blocked',
+      nextRequiredGate: 'enqueue_exact_assignment_plan_separately',
+      provenance: {
+        source: 'control-broker',
+        sourceId: `a1-dispatch-authorization:${input.authorizationId}`,
+        observedAt: input.reviewedAt,
+        synthetic: false,
+      },
+    }
+    const existing = this.a1DispatchAuthorizations.get(input.missionId)
+    if (existing && JSON.stringify(existing) !== JSON.stringify(state))
+      throw new Error('A1_DISPATCH_AUTHORIZATION_IMMUTABLE_CONFLICT')
+    this.a1DispatchAuthorizations.set(input.missionId, structuredClone(state))
     return structuredClone(state)
   }
 

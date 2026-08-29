@@ -47,6 +47,12 @@ import {
   type A1ResearchOrderAuthorizationState,
   type RecordA1ResearchOrderAuthorizationInput,
 } from './a1-research-order-authorization.js'
+import {
+  A1DispatchAuthorizationError,
+  validateA1DispatchAuthorizationState,
+  type A1DispatchAuthorizationState,
+  type RecordA1DispatchAuthorizationInput,
+} from './a1-dispatch-authorization.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -230,6 +236,13 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
     return result.rows[0]?.active === true
   }
 
+  async isGlobalKillSwitchActive(): Promise<boolean> {
+    const result = await this.pool.query<{ active: boolean }>(
+      'SELECT control.is_global_kill_switch_active() AS active',
+    )
+    return result.rows[0]?.active === true
+  }
+
   async listShadowReviews(): Promise<ShadowReview[]> {
     const result = await this.pool.query<{ reviews: unknown }>(
       'SELECT control.list_shadow_reviews() AS reviews',
@@ -366,6 +379,47 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
         'A1_RESEARCH_ORDER_AUTHORIZATION_NOT_FOUND',
       ].find((candidate)=>message.includes(candidate))
       if (code) throw new A1ResearchOrderAuthorizationError(code)
+      throw error
+    }
+  }
+
+  async getA1DispatchAuthorizationState(missionId: string): Promise<A1DispatchAuthorizationState | null> {
+    const result = await this.pool.query<{ state: unknown }>(
+      'SELECT control.get_a1_dispatch_authorization($1::uuid) AS state',
+      [missionId],
+    )
+    const state = result.rows[0]?.state
+    return state === null || state === undefined ? null : validateA1DispatchAuthorizationState(state)
+  }
+
+  async recordA1DispatchAuthorization(input: RecordA1DispatchAuthorizationInput): Promise<A1DispatchAuthorizationState> {
+    const attestations = {
+      exact_assignment_plan_confirmed: input.attestations.exactAssignmentPlanConfirmed,
+      authorization_record_only: input.attestations.authorizationRecordOnly,
+      no_assignments_created: input.attestations.noAssignmentsCreated,
+      no_dispatch_queued: input.attestations.noDispatchQueued,
+      no_execution: input.attestations.noExecution,
+      no_contact: input.attestations.noContact,
+      no_crm_write: input.attestations.noCrmWrite,
+      no_external_actions: input.attestations.noExternalActions,
+      no_provider_credit_spend: input.attestations.noProviderCreditSpend,
+      global_kill_switch_required: input.attestations.globalKillSwitchRequired,
+    }
+    try {
+      const result = await this.pool.query<{ state: unknown }>(
+        'SELECT control.record_a1_dispatch_authorization($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9::timestamptz,$10::timestamptz,$11,$12,$13,$14::jsonb,$15,$16) AS state',
+        [input.authorizationId,input.missionId,input.traceId,input.planVersion,input.decision,input.rationale,input.reviewerId,input.reviewerEmail,input.reviewedAt,input.expiresAt,input.missionSha256,input.assignmentPlanSha256,input.userAuthorizationSha256,JSON.stringify(attestations),input.idempotencyKey,input.requestSha256],
+      )
+      return validateA1DispatchAuthorizationState(result.rows[0]?.state)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      const code = [
+        'A1_DISPATCH_AUTHORIZATION_IMMUTABLE_CONFLICT',
+        'A1_DISPATCH_AUTHORIZATION_INVALID',
+        'A1_DISPATCH_AUTHORIZATION_GATE_CLOSED',
+        'A1_DISPATCH_AUTHORIZATION_NOT_FOUND',
+      ].find((candidate) => message.includes(candidate))
+      if (code) throw new A1DispatchAuthorizationError(code)
       throw error
     }
   }

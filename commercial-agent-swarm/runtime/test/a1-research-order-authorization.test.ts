@@ -59,6 +59,7 @@ describe('A1 exact-order authorization',()=>{
     const left=candidate(),right=structuredClone(left)
     ;(right.authority as Record<string,unknown>).signature='f'.repeat(64)
     right.metadata!.a1_research_order_authorized_at='2026-08-28T20:01:00.000Z'
+    ;(right as unknown as Record<string, unknown>).a3_enabled=false
     assert.equal(hashUnsignedA1ResearchWorkOrder(left),hashUnsignedA1ResearchWorkOrder(right))
     right.objective='Changed objective'
     assert.notEqual(hashUnsignedA1ResearchWorkOrder(left),hashUnsignedA1ResearchWorkOrder(right))

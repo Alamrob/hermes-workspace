@@ -22,6 +22,8 @@ import type { A1ResearchDossier } from '../src/a1-research-dossier.js'
 import type { A1ResearchAuthorizationState } from '../src/a1-research-authorization.js'
 import type { A1ResearchOrderAuthorizationState } from '../src/a1-research-order-authorization.js'
 import { buildA1ExactOrderCandidate } from '../src/a1-exact-order-candidate.js'
+import { buildA1AuthorizedOrderCandidate } from '../src/a1-authorized-order-candidate.js'
+import { hashA1Mission } from '../src/a1-dispatch-authorization.js'
 
 const NOW = new Date('2026-08-15T20:00:00.000Z')
 const A1_KEY_PAIR = generateKeyPairSync('ed25519')
@@ -956,7 +958,7 @@ describe('broker application routes', () => {
       headers: headers('control-plane-token'),
       body: plan,
     })
-    assert.equal(queued.status, 202)
+    assert.equal(queued.status, 202, JSON.stringify(queued.body))
     assert.equal(state.dispatched.length, 2)
     assert.deepEqual(state.dispatched[1].dependencies, [plan.assignments[0].assignment_id])
     assert.equal((await state.app.handle({
@@ -1501,6 +1503,78 @@ describe('broker application routes', () => {
     assert.equal((response.body as any).workOrder.metadata.a1_research_order_authorization_sha256, 'd'.repeat(64))
     assert.equal(await state.repository.getMission(candidate.missionId), null)
     assert.equal(state.dispatched.length, 0)
+  })
+
+  it('records an exact A1 assignment-plan authorization without enqueueing and requires a separate call to queue it', async () => {
+    const state = setup('either', false, false)
+    const dossier = boundA1Dossier()
+    const parent = boundA1ParentAuthorization()
+    const authority = {
+      issuer: 'codex', audience: 'hermes-commercial-orchestrator',
+      keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' },
+      ed25519PublicKeys: { 'codex-a1-ed25519-v1': A1_PUBLIC_KEY },
+    }
+    const candidate = buildA1ExactOrderCandidate(dossier, parent, authority, NOW)
+    const orderAuthorization: A1ResearchOrderAuthorizationState = {
+      orderAuthorizationId: candidate.orderAuthorizationId, reviewId: candidate.reviewId,
+      parentAuthorizationId: candidate.parentAuthorizationId, decision: 'approved',
+      rationale: 'Autoriza únicamente la orden A1 exacta y sus límites internos.', reviewerId: 'director',
+      reviewerEmail: 'proptimizaspa@gmail.com', reviewedAt: '2026-08-15T19:58:00.000Z',
+      expiresAt: candidate.parentAuthorizationExpiresAt, dossierSha256: candidate.dossierSha256,
+      unsignedWorkOrderSha256: candidate.unsignedWorkOrderSha256, missionId: candidate.missionId,
+      userAuthorizationSha256: 'd'.repeat(64),
+      attestations: { exactWorkOrderConfirmed: true, noContact: true, noCrmWrite: true, noExternalActions: true, noProviderCreditSpend: true },
+      idempotencyKey: 'a1-order-auth:dispatch-00000053', executionAuthorized: false, missionCreated: false,
+      dispatchQueued: false, internetAccessAllowed: false, providerCreditSpendAllowed: false, contactPermitted: false,
+      crmWriteAllowed: false, maximumExternalActions: 0, productionGate: 'blocked', nextRequiredGate: 'sign_exact_work_order',
+      provenance: { source: 'control-broker', sourceId: `a1-research-order-authorization:${candidate.orderAuthorizationId}`, observedAt: NOW.toISOString(), synthetic: false },
+    }
+    const authorized = buildA1AuthorizedOrderCandidate(
+      dossier, parent, orderAuthorization, authority, NOW,
+    )
+    const signed = structuredClone(authorized.workOrder)
+    ;(signed.authority as Record<string, unknown>).signature = signWorkOrderEd25519(signed as never, A1_PRIVATE_KEY)
+    const persisted = { ...signed, a3_enabled: false }
+    await state.repository.saveMission(persisted)
+    state.repository.getA1ResearchDossier = async () => dossier
+    state.repository.getA1ResearchAuthorizationState = async () => parent
+    state.repository.getA1ResearchOrderAuthorizationState = async (id) => id === candidate.orderAuthorizationId ? orderAuthorization : null
+    await state.repository.activateKillSwitch('global', '*')
+    for (const channel of ['email','whatsapp','calendar','web_chat','telephone','crm','public_web'])
+      await state.repository.activateKillSwitch('channel', channel)
+    const plan = assignmentPlan()
+    plan.mission_id = signed.mission_id
+    plan.trace_id = signed.trace_id
+    const path = `/internal/v1/a1-dispatch-authorizations/${signed.mission_id}`
+    const body = {
+      decision: 'approved',
+      rationale: 'Autoriza registrar solamente el plan exacto sin crear ni ejecutar asignaciones.',
+      reviewer_id: 'director', reviewer_email: 'proptimizaspa@gmail.com',
+      reviewed_at: NOW.toISOString(), expires_at: '2026-08-15T20:10:00.000Z',
+      expected_mission_sha256: hashA1Mission(persisted), user_authorization_sha256: 'e'.repeat(64),
+      attestations: {
+        exact_assignment_plan_confirmed: true, authorization_record_only: true,
+        no_assignments_created: true, no_dispatch_queued: true, no_execution: true,
+        no_contact: true, no_crm_write: true, no_external_actions: true,
+        no_provider_credit_spend: true, global_kill_switch_required: true,
+      },
+      idempotency_key: 'a1-dispatch-auth:application-00000053', assignment_plan: plan,
+    }
+    assert.equal((await state.app.handle({ method: 'POST', path, body })).status, 401)
+    const recorded = await state.app.handle({
+      method: 'POST', path, headers: headers('shadow-review-token'), body,
+    })
+    assert.equal(recorded.status, 200, JSON.stringify(recorded.body))
+    assert.equal((recorded.body as any).assignmentCreated, false)
+    assert.equal((recorded.body as any).dispatchQueued, false)
+    assert.equal((recorded.body as any).nextRequiredGate, 'enqueue_exact_assignment_plan_separately')
+    assert.equal(state.dispatched.length, 0)
+    const queued = await state.app.handle({
+      method: 'POST', path: `/v1/missions/${signed.mission_id}/assignments`,
+      headers: headers('control-plane-token'), body: plan,
+    })
+    assert.equal(queued.status, 202, JSON.stringify(queued.body))
+    assert.equal(state.dispatched.length, 2)
   })
 
   it('exposes only an unsigned A1 work-order preview without persistence or dispatch', async () => {
