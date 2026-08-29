@@ -18,58 +18,34 @@ const COMMERCIAL_ROLLBACK = new URL(
   '../migrations/002_commercial_control_plane.rollback.sql',
   import.meta.url,
 )
-const DISPATCH_MIGRATION = new URL(
-  '../migrations/003_dispatch_queue.sql',
-  import.meta.url,
-)
-const CRM_MIGRATION = new URL(
-  '../migrations/004_crm_integration.sql',
-  import.meta.url,
-)
-const PORTFOLIO_READ_MODELS_MIGRATION = new URL(
-  '../migrations/005_portfolio_read_models.sql',
-  import.meta.url,
-)
-const SALES_READ_MODELS_MIGRATION = new URL(
-  '../migrations/006_sales_read_models.sql',
-  import.meta.url,
-)
-const USAGE_BUDGET_MIGRATION = new URL(
-  '../migrations/007_usage_budget_ledger.sql',
-  import.meta.url,
-)
-const INTERNAL_AUTOMATION_MIGRATION = new URL(
-  '../migrations/009_internal_automation.sql',
-  import.meta.url,
-)
-const INSTRUCTION_INBOX_MIGRATION = new URL(
-  '../migrations/010_instruction_inbox.sql',
-  import.meta.url,
-)
-const GO_NATIVE_USAGE_MIGRATION = new URL(
-  '../migrations/011_go_native_usage_ledger.sql',
-  import.meta.url,
-)
-const DEPENDENCY_TERMINALIZATION_MIGRATION = new URL(
-  '../migrations/012_dependency_terminalization.sql',
-  import.meta.url,
-)
-const SHADOW_HUMAN_REVIEW_MIGRATION = new URL(
-  '../migrations/015_shadow_human_review.sql',
-  import.meta.url,
-)
-const CODEX_INSTRUCTION_REVIEW_MIGRATION = new URL(
-  '../migrations/019_codex_instruction_review.sql',
-  import.meta.url,
-)
-const POLICY_HUMAN_REVIEW_MIGRATION = new URL(
-  '../migrations/022_policy_human_review.sql',
-  import.meta.url,
-)
-const POLICY_ACTIVATION_DOSSIER_MIGRATION = new URL(
-  '../migrations/023_policy_activation_dossier.sql',
-  import.meta.url,
-)
+const CAPABILITY_MIGRATIONS = [
+  '003_dispatch_queue',
+  '004_crm_integration',
+  '005_portfolio_read_models',
+  '006_sales_read_models',
+  '007_usage_budget_ledger',
+  '008_simulation_safety_seed',
+  '009_internal_automation',
+  '010_instruction_inbox',
+  '011_go_native_usage_ledger',
+  '012_dependency_terminalization',
+  '013_variable_usage_reservations',
+  '014_variable_usage_constraint',
+  '015_shadow_human_review',
+  '016_usage_source_not_null',
+  '017_external_action_kill_switch_projection',
+  '018_sales_mission_draft_projection',
+  '019_codex_instruction_review',
+  '020_internal_mail_attestation',
+  '021_commercial_policy_v2_draft',
+  '022_policy_human_review',
+  '023_policy_activation_dossier',
+  '024_draft_internal_review',
+  '025_a1_research_dossier',
+  '026_a1_research_authorization',
+  '027_a1_research_order_authorization',
+  '028_ed25519_a1_work_orders',
+] as const
 const integration = ADMIN_URL ? describe : describe.skip
 
 integration('commercial catalog/control/mail data model', () => {
@@ -549,25 +525,13 @@ integration('commercial catalog/control/mail data model', () => {
   })
 
   it('verifies distinct live login principals and rejects inherited or direct cross-capabilities', async () => {
-    await pool.query(await readFile(DISPATCH_MIGRATION, 'utf8'))
-    await pool.query(await readFile(CRM_MIGRATION, 'utf8'))
-    await pool.query(await readFile(PORTFOLIO_READ_MODELS_MIGRATION, 'utf8'))
-    await pool.query(await readFile(SALES_READ_MODELS_MIGRATION, 'utf8'))
-    await pool.query(await readFile(USAGE_BUDGET_MIGRATION, 'utf8'))
-    await pool.query(await readFile(INTERNAL_AUTOMATION_MIGRATION, 'utf8'))
-    await pool.query(await readFile(INSTRUCTION_INBOX_MIGRATION, 'utf8'))
-    await pool.query(await readFile(GO_NATIVE_USAGE_MIGRATION, 'utf8'))
-    await pool.query(
-      await readFile(DEPENDENCY_TERMINALIZATION_MIGRATION, 'utf8'),
-    )
-    await pool.query(await readFile(SHADOW_HUMAN_REVIEW_MIGRATION, 'utf8'))
-    await pool.query(
-      await readFile(CODEX_INSTRUCTION_REVIEW_MIGRATION, 'utf8'),
-    )
-    await pool.query(await readFile(POLICY_HUMAN_REVIEW_MIGRATION, 'utf8'))
-    await pool.query(
-      await readFile(POLICY_ACTIVATION_DOSSIER_MIGRATION, 'utf8'),
-    )
+    for (const version of CAPABILITY_MIGRATIONS)
+      await pool.query(
+        await readFile(
+          new URL(`../migrations/${version}.sql`, import.meta.url),
+          'utf8',
+        ),
+      )
     const suffix = randomUUID().replaceAll('-', ''),
       password = `test_${suffix}`,
       names = {

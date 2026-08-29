@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 import { Pool } from 'pg'
-import { runVersionedMigrations } from '../src/migration-runner.js'
+import { applyMigrationPrefix } from './migration-prefix.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
@@ -31,11 +31,6 @@ const versions = [
   '021_commercial_policy_v2_draft',
   '022_policy_human_review',
   '023_policy_activation_dossier',
-  '024_draft_internal_review',
-  '025_a1_research_dossier',
-  '026_a1_research_authorization',
-  '027_a1_research_order_authorization',
-  '028_ed25519_a1_work_orders',
 ]
 
 integration('PostgreSQL 17 commercial policy v2 draft', () => {
@@ -47,10 +42,7 @@ integration('PostgreSQL 17 commercial policy v2 draft', () => {
     url.pathname = `/${database}`
     const pool = new Pool({ connectionString: url.toString() })
     try {
-      await runVersionedMigrations(pool, await Promise.all(versions.map(async (version) => ({
-        version,
-        sql: await readFile(new URL(`../migrations/${version}.sql`, import.meta.url), 'utf8'),
-      }))))
+      await applyMigrationPrefix(pool, versions)
       const expected = JSON.parse(await readFile(
         new URL('../policies/proptimiza-commercial-policy-v2.json', import.meta.url),
         'utf8',

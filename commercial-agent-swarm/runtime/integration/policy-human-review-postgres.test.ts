@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 import { Pool } from 'pg'
-import { runVersionedMigrations } from '../src/migration-runner.js'
+import { applyMigrationPrefix } from './migration-prefix.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
@@ -29,7 +29,7 @@ integration('PostgreSQL 17 policy human review ledger', () => {
       return pool.query(`SELECT control.record_policy_human_review($1,'approved',$2,$3,$4,clock_timestamp(),$5,$6::jsonb,$7,$8) AS state`, [kind,rationale,'cloudflare-director-subject','proptimizaspa@gmail.com',digest,JSON.stringify(attestations(competent)),key,requestHash])
     }
     try {
-      await runVersionedMigrations(pool, await Promise.all(versions.map(async (version) => ({ version, sql: await readFile(new URL(`../migrations/${version}.sql`, import.meta.url), 'utf8') }))))
+      await applyMigrationPrefix(pool, versions)
       const initial = (await pool.query('SELECT control.build_policy_review_state() AS state')).rows[0].state
       assert.equal(initial.reviewCompleted, false)
       assert.equal(initial.activationCreated, false)

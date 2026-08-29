@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { describe, it } from 'node:test'
 import { Pool } from 'pg'
-import { runVersionedMigrations } from '../src/migration-runner.js'
+import { applyMigrationPrefix } from './migration-prefix.js'
 
 const ADMIN = process.env.TEST_DATABASE_URL
 const integration = ADMIN ? describe : describe.skip
@@ -20,7 +20,7 @@ integration('PostgreSQL 17 policy activation dossier', () => {
     const url = new URL(ADMIN!); url.pathname = `/${database}`
     const pool = new Pool({ connectionString: url.toString() })
     try {
-      await runVersionedMigrations(pool, await Promise.all(versions.map(async (version) => ({ version, sql: await readFile(new URL(`../migrations/${version}.sql`, import.meta.url), 'utf8') }))))
+      await applyMigrationPrefix(pool, versions)
       const state = (await pool.query('SELECT control.build_policy_activation_dossier_state() AS state')).rows[0].state
       assert.equal(state.authorizationRecorded, false)
       assert.equal(state.activationAllowed, false)

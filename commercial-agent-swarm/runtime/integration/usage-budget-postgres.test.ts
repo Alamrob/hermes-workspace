@@ -399,6 +399,13 @@ async function saveMission(pool: Pool, key: string, maximum: number): Promise<st
     approved_channels: ['public_web'],
     approved_tools: ['hermes.web'],
     autonomy_level: 'A1',
+    authority: {
+      issuer: 'codex',
+      audience: 'hermes-commercial-orchestrator',
+      key_id: 'integration-ed25519-1',
+      algorithm: 'Ed25519',
+      signature: 'a'.repeat(128),
+    },
     dry_run: true,
   })
   await pool.query(`SELECT control.save_mission($1,$2,$3::jsonb)`, [
