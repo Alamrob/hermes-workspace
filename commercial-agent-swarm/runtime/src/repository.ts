@@ -35,6 +35,10 @@ import type {
   A1DispatchExecutionArmState,
   RecordA1DispatchExecutionArmInput,
 } from './a1-dispatch-execution-arm.js'
+import type {
+  A1DispatchExecutionWindowState,
+  ActivateA1DispatchExecutionWindowInput,
+} from './a1-dispatch-execution-window.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
 
@@ -82,6 +86,8 @@ export interface RuntimeRepository {
   recordA1AssignmentExecutionAuthorization(input: RecordA1AssignmentExecutionAuthorizationInput): Promise<A1AssignmentExecutionAuthorizationState>
   getA1DispatchExecutionArmState(missionId: string): Promise<A1DispatchExecutionArmState | null>
   recordA1DispatchExecutionArm(input: RecordA1DispatchExecutionArmInput): Promise<A1DispatchExecutionArmState>
+  getA1DispatchExecutionWindowState(missionId: string): Promise<A1DispatchExecutionWindowState | null>
+  activateA1DispatchExecutionWindow(input: ActivateA1DispatchExecutionWindowInput): Promise<A1DispatchExecutionWindowState>
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
@@ -203,6 +209,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly a1AssignmentEnqueueAuthorizations = new Map<string, A1AssignmentEnqueueAuthorizationState>()
   private readonly a1AssignmentExecutionAuthorizations = new Map<string, A1AssignmentExecutionAuthorizationState>()
   private readonly a1DispatchExecutionArms = new Map<string, A1DispatchExecutionArmState>()
+  private readonly a1DispatchExecutionWindows = new Map<string, A1DispatchExecutionWindowState>()
 
   async ready(): Promise<boolean> {
     return true
@@ -458,6 +465,15 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   async recordA1DispatchExecutionArm(input:RecordA1DispatchExecutionArmInput):Promise<A1DispatchExecutionArmState>{
     const state:A1DispatchExecutionArmState={armId:input.armId,authorizationId:input.authorizationId,missionId:input.missionId,traceId:input.traceId,planVersion:input.planVersion,executionAuthorizationId:input.executionAuthorizationId,decision:'approved',rationale:input.rationale,reviewerId:input.reviewerId,reviewerEmail:input.reviewerEmail,reviewedAt:input.reviewedAt,startsAt:input.startsAt,expiresAt:input.expiresAt,missionSha256:input.missionSha256,assignmentPlanSha256:input.assignmentPlanSha256,jobSetSha256:input.jobSetSha256,assignmentIds:[...input.assignmentIds],workerId:input.workerId,maximumClaims:input.maximumClaims,maximumProviderCreditSpendUsd:input.maximumProviderCreditSpendUsd,userAuthorizationSha256:input.userAuthorizationSha256,attestations:input.attestations,idempotencyKey:input.idempotencyKey,armAuthorizationRecorded:true,executionArmCreated:true,claimsUsed:0,executionWindowEnabled:false,dispatchClaimingPermitted:false,jobsClaimed:false,executionStarted:false,internetAccessAllowed:false,providerCreditSpendAllowed:false,contactPermitted:false,crmWriteAllowed:false,maximumExternalActions:0,globalKillSwitchActive:true,externalChannelsBlocked:true,dispatcherTimerDisabled:true,productionGate:'blocked',nextRequiredGate:'open_single_mission_execution_window_separately',provenance:{source:'control-broker',sourceId:`a1-dispatch-execution-arm:${input.armId}`,observedAt:input.reviewedAt,synthetic:false}}
     const existing=this.a1DispatchExecutionArms.get(input.missionId);if(existing&&JSON.stringify(existing)!==JSON.stringify(state))throw new Error('A1_DISPATCH_EXECUTION_ARM_IMMUTABLE_CONFLICT');this.a1DispatchExecutionArms.set(input.missionId,structuredClone(state));return structuredClone(state)
+  }
+
+  async getA1DispatchExecutionWindowState(missionId:string):Promise<A1DispatchExecutionWindowState|null>{
+    const state=this.a1DispatchExecutionWindows.get(missionId);return state?structuredClone(state):null
+  }
+
+  async activateA1DispatchExecutionWindow(input:ActivateA1DispatchExecutionWindowInput):Promise<A1DispatchExecutionWindowState>{
+    const state:A1DispatchExecutionWindowState={windowAuthorizationId:input.windowAuthorizationId,missionId:input.missionId,decision:'approved',rationale:input.rationale,reviewerId:input.reviewerId,reviewerEmail:input.reviewerEmail,reviewedAt:input.reviewedAt,opensAt:input.opensAt,expiresAt:input.expiresAt,expectedArmId:input.expectedArmId,expectedArmAuthorizationId:input.expectedArmAuthorizationId,expectedExecutionAuthorizationId:input.expectedExecutionAuthorizationId,expectedMissionSha256:input.expectedMissionSha256,expectedAssignmentPlanSha256:input.expectedAssignmentPlanSha256,expectedJobSetSha256:input.expectedJobSetSha256,workerId:input.workerId,maximumClaims:input.maximumClaims,maximumProviderCreditSpendUsd:input.maximumProviderCreditSpendUsd,userAuthorizationSha256:input.userAuthorizationSha256,attestations:input.attestations,idempotencyKey:input.idempotencyKey,executionWindowAuthorizationRecorded:true,executionWindowEnabled:true,dispatchClaimingPermitted:true,claimsUsed:0,jobsClaimed:false,executionStarted:false,providerCreditSpendAllowed:true,contactPermitted:false,crmWriteAllowed:false,maximumExternalActions:0,globalKillSwitchActive:false,externalChannelsBlocked:true,automaticRecontainmentArmed:true,productionGate:'single_mission_internal_execution',nextRequiredGate:'automatic_recontainment_after_terminal_or_expiry',provenance:{source:'control-broker',sourceId:`a1-dispatch-execution-window:${input.windowAuthorizationId}`,observedAt:input.reviewedAt,synthetic:false}}
+    const existing=this.a1DispatchExecutionWindows.get(input.missionId);if(existing&&JSON.stringify(existing)!==JSON.stringify(state))throw new Error('A1_DISPATCH_EXECUTION_WINDOW_IMMUTABLE_CONFLICT');this.a1DispatchExecutionWindows.set(input.missionId,structuredClone(state));this.killSwitches.delete('global:*');return structuredClone(state)
   }
 
   async listShadowReviews(): Promise<ShadowReview[]> { return [] }

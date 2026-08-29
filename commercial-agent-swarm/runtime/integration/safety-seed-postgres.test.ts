@@ -61,6 +61,7 @@ integration('PostgreSQL simulation safety seed', { concurrency: 1 }, () => {
         '031_a1_assignment_enqueue_authorization',
         '032_a1_assignment_execution_authorization',
         '033_a1_dispatch_execution_arm',
+        '034_a1_dispatch_execution_window',
       ].map(async (version) => ({
         version,
         sql: await readFile(
@@ -154,7 +155,7 @@ integration('PostgreSQL simulation safety seed', { concurrency: 1 }, () => {
           `SELECT count(*)::int AS count FROM control.schema_migrations`,
         )
       ).rows[0].count,
-      33,
+      34,
     )
 
     const rollback = await readFile(

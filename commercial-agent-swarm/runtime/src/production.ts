@@ -188,6 +188,7 @@ const EXPECTED_FUNCTIONS: Record<
     'control.record_a1_assignment_execution_authorization(uuid,uuid,uuid,text,uuid,text,text,text,text,timestamp with time zone,timestamp with time zone,text,text,text,uuid[],numeric,text,jsonb,text,text)',
     'control.get_a1_dispatch_execution_arm(uuid)',
     'control.record_a1_dispatch_execution_arm(uuid,uuid,uuid,uuid,text,uuid,text,text,text,text,timestamp with time zone,timestamp with time zone,timestamp with time zone,text,text,text,uuid[],text,integer,numeric,text,jsonb,text,text)',
+    'control.get_a1_dispatch_execution_window(uuid)',
     'control.create_pilot_cohort(uuid,text,text)',
     'control.add_pilot_target(uuid,uuid,text,text,text,text,text,text,text,text,text,timestamp with time zone,text)',
     'control.get_mission(uuid)',
@@ -225,6 +226,7 @@ const EXPECTED_FUNCTIONS: Record<
   ],
   commercial_safety_operator: [
     'control.set_kill_switch(text,text,boolean)',
+    'control.activate_a1_dispatch_execution_window(uuid,uuid,text,text,text,text,timestamp with time zone,timestamp with time zone,timestamp with time zone,uuid,uuid,uuid,text,text,text,text,integer,numeric,text,jsonb,text,text)',
     'control.add_pilot_suppression(text,text,text)',
     'mail.attest_internal_mail_test(uuid,text,uuid,text,uuid,text,text,text)',
   ],

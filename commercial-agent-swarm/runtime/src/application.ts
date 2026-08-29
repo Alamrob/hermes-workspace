@@ -71,6 +71,11 @@ import {
   assertA1DispatchExecutionArmAdmission,
   validateA1DispatchExecutionArmRequest,
 } from './a1-dispatch-execution-arm.js'
+import {
+  A1DispatchExecutionWindowError,
+  assertA1DispatchExecutionWindowAdmission,
+  validateA1DispatchExecutionWindowRequest,
+} from './a1-dispatch-execution-window.js'
 
 export interface ApplicationRequest {
   method: string
@@ -597,6 +602,25 @@ export class BrokerApplication {
       const state=await this.options.repository.recordA1DispatchExecutionArm({armId:deterministicUuid(hashAction({type:'a1-dispatch-execution-arm',mission_id:route.id!,idempotency_key:input.idempotencyKey})),authorizationId:deterministicUuid(hashAction({type:'a1-dispatch-execution-arm-authorization',mission_id:route.id!,idempotency_key:input.idempotencyKey})),missionId:route.id!,traceId:plan.trace_id,planVersion:plan.plan_version,executionAuthorizationId:input.expectedExecutionAuthorizationId,decision:'approved',rationale:input.rationale,reviewerId:input.reviewerId,reviewerEmail:input.reviewerEmail,reviewedAt:input.reviewedAt,startsAt:input.startsAt,expiresAt:input.expiresAt,missionSha256:input.expectedMissionSha256,assignmentPlanSha256:input.expectedAssignmentPlanSha256,jobSetSha256:input.expectedJobSetSha256,assignmentIds:expectedIds,workerId:input.workerId,maximumClaims:input.maximumClaims,maximumProviderCreditSpendUsd:input.maximumProviderCreditSpendUsd,userAuthorizationSha256:input.userAuthorizationSha256,attestations:input.attestations,idempotencyKey:input.idempotencyKey,requestSha256:hashAction({mission_id:route.id!,...input,assignmentPlan:plan})})
       return{status:200,body:state}
     }
+    if(route.action==='getA1DispatchExecutionWindow'){
+      requireBearer(request.headers?.authorization,this.options.authentication.shadowReview)
+      const state=await this.options.repository.getA1DispatchExecutionWindowState(route.id!)
+      return state?{status:200,body:state}:{status:404,body:{error:'not_found'}}
+    }
+    if(route.action==='activateA1DispatchExecutionWindow'){
+      requireBearer(request.headers?.authorization,this.options.authentication.shadowReview)
+      const now=this.now(),input=validateA1DispatchExecutionWindowRequest(request.body,now),mission=await this.options.repository.getMission(route.id!)
+      if(!mission)return{status:404,body:{error:'not_found'}}
+      const existing=await this.options.repository.getA1DispatchExecutionWindowState(route.id!)
+      if(!existing){
+        const arm=await this.options.repository.getA1DispatchExecutionArmState(route.id!)
+        assertA1DispatchExecutionWindowAdmission(arm,input,now)
+        const execution=await this.options.dispatchQueue.getMissionExecution(route.id!)
+        if(execution.assignments.length!==input.maximumClaims||execution.assignments.some(item=>item.status!=='queued'||item.attempts!==0)||!(await this.options.repository.isGlobalKillSwitchActive())||!(await this.options.repository.externalActionsBlocked()))throw new A1DispatchExecutionWindowError('A1_DISPATCH_EXECUTION_WINDOW_GATE_CLOSED')
+      }
+      const state=await this.options.repository.activateA1DispatchExecutionWindow({windowAuthorizationId:deterministicUuid(hashAction({type:'a1-dispatch-execution-window',mission_id:route.id!,idempotency_key:input.idempotencyKey})),missionId:route.id!,...input,requestSha256:hashAction({mission_id:route.id!,...input})})
+      return{status:200,body:state}
+    }
     if (route.action === 'getA1AuthorizedOrderCandidate') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       const orderAuthorization = await this.options.repository.getA1ResearchOrderAuthorizationState(route.id!)
@@ -952,6 +976,9 @@ function matchRoute(method: string, path: string): Route | null {
   const a1DispatchExecutionArm=/^\/internal\/v1\/a1-dispatch-execution-arms\/([^/]+)$/.exec(path)
   if(method==='GET'&&a1DispatchExecutionArm)return{action:'getA1DispatchExecutionArm',auditAction:'a1_dispatch_execution_arm.get',id:a1DispatchExecutionArm[1]}
   if(method==='POST'&&a1DispatchExecutionArm)return{action:'recordA1DispatchExecutionArm',auditAction:'a1_dispatch_execution_arm.record',id:a1DispatchExecutionArm[1]}
+  const a1DispatchExecutionWindow=/^\/internal\/v1\/a1-dispatch-execution-windows\/([^/]+)$/.exec(path)
+  if(method==='GET'&&a1DispatchExecutionWindow)return{action:'getA1DispatchExecutionWindow',auditAction:'a1_dispatch_execution_window.get',id:a1DispatchExecutionWindow[1]}
+  if(method==='POST'&&a1DispatchExecutionWindow)return{action:'activateA1DispatchExecutionWindow',auditAction:'a1_dispatch_execution_window.activate',id:a1DispatchExecutionWindow[1]}
   const draftItem = /^\/internal\/v1\/draft-reviews\/([^/]+)\/items\/(\d+)$/.exec(path)
   if (method === 'PUT' && draftItem)
     return { action: 'recordDraftReviewItem', auditAction: 'draft_review.item.record', id: draftItem[1], slot: Number(draftItem[2]) }
@@ -1679,6 +1706,7 @@ function publicFailure(error: unknown): {
   }
   if(error instanceof A1AssignmentExecutionAuthorizationError){if(error.code==='A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_INVALID')return{status:400,error:error.code};if(error.code==='A1_ASSIGNMENT_EXECUTION_AUTHORIZATION_NOT_FOUND')return{status:404,error:'not_found'};return{status:409,error:error.code}}
   if(error instanceof A1DispatchExecutionArmError){if(error.code==='A1_DISPATCH_EXECUTION_ARM_INVALID')return{status:400,error:error.code};if(error.code==='A1_DISPATCH_EXECUTION_ARM_NOT_FOUND')return{status:404,error:'not_found'};return{status:409,error:error.code}}
+  if(error instanceof A1DispatchExecutionWindowError){if(error.code==='A1_DISPATCH_EXECUTION_WINDOW_INVALID')return{status:400,error:error.code};if(error.code==='A1_DISPATCH_EXECUTION_WINDOW_NOT_FOUND')return{status:404,error:'not_found'};return{status:409,error:error.code}}
   if (error instanceof ApprovalError) {
     if (error.code === 'INVALID_ACTION' || error.code === 'INVALID_TTL')
       return { status: 400, error: error.code }

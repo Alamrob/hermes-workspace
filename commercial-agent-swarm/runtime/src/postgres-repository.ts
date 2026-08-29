@@ -71,6 +71,12 @@ import {
   type A1DispatchExecutionArmState,
   type RecordA1DispatchExecutionArmInput,
 } from './a1-dispatch-execution-arm.js'
+import {
+  A1DispatchExecutionWindowError,
+  validateA1DispatchExecutionWindowState,
+  type A1DispatchExecutionWindowState,
+  type ActivateA1DispatchExecutionWindowInput,
+} from './a1-dispatch-execution-window.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -490,6 +496,15 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
   async recordA1DispatchExecutionArm(input:RecordA1DispatchExecutionArmInput):Promise<A1DispatchExecutionArmState>{
     const attestations={exact_job_set_confirmed:input.attestations.exactJobSetConfirmed,single_use_arm_confirmed:input.attestations.singleUseArmConfirmed,arm_creation_only:input.attestations.armCreationOnly,no_jobs_claimed_by_arm_creation:input.attestations.noJobsClaimedByArmCreation,no_execution:input.attestations.noExecution,no_internet:input.attestations.noInternet,no_contact:input.attestations.noContact,no_crm_write:input.attestations.noCrmWrite,no_external_actions:input.attestations.noExternalActions,no_provider_credit_spend:input.attestations.noProviderCreditSpend,global_kill_switch_must_remain_active:input.attestations.globalKillSwitchMustRemainActive,dispatcher_window_requires_separate_gate:input.attestations.dispatcherWindowRequiresSeparateGate,external_channels_blocked:input.attestations.externalChannelsBlocked,timer_disabled_confirmed:input.attestations.timerDisabledConfirmed}
     try{const result=await this.pool.query<{state:unknown}>('SELECT control.record_a1_dispatch_execution_arm($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::uuid,$7,$8,$9,$10,$11::timestamptz,$12::timestamptz,$13::timestamptz,$14,$15,$16,$17::uuid[],$18,$19::integer,$20::numeric,$21,$22::jsonb,$23,$24) AS state',[input.armId,input.authorizationId,input.missionId,input.traceId,input.planVersion,input.executionAuthorizationId,input.decision,input.rationale,input.reviewerId,input.reviewerEmail,input.reviewedAt,input.startsAt,input.expiresAt,input.missionSha256,input.assignmentPlanSha256,input.jobSetSha256,input.assignmentIds,input.workerId,input.maximumClaims,input.maximumProviderCreditSpendUsd,input.userAuthorizationSha256,JSON.stringify(attestations),input.idempotencyKey,input.requestSha256]);return validateA1DispatchExecutionArmState(result.rows[0]?.state)}catch(error){const message=error instanceof Error?error.message:'';const code=['A1_DISPATCH_EXECUTION_ARM_IMMUTABLE_CONFLICT','A1_DISPATCH_EXECUTION_ARM_INVALID','A1_DISPATCH_EXECUTION_ARM_GATE_CLOSED','A1_DISPATCH_EXECUTION_ARM_NOT_FOUND'].find(candidate=>message.includes(candidate));if(code)throw new A1DispatchExecutionArmError(code);throw error}
+  }
+
+  async getA1DispatchExecutionWindowState(missionId:string):Promise<A1DispatchExecutionWindowState|null>{
+    const result=await this.pool.query<{state:unknown}>('SELECT control.get_a1_dispatch_execution_window($1::uuid) AS state',[missionId]);const state=result.rows[0]?.state;return state===null||state===undefined?null:validateA1DispatchExecutionWindowState(state)
+  }
+
+  async activateA1DispatchExecutionWindow(input:ActivateA1DispatchExecutionWindowInput):Promise<A1DispatchExecutionWindowState>{
+    const attestations={exact_arm_confirmed:input.attestations.exactArmConfirmed,exact_mission_confirmed:input.attestations.exactMissionConfirmed,single_mission_window_confirmed:input.attestations.singleMissionWindowConfirmed,provider_credit_spend_authorized:input.attestations.providerCreditSpendAuthorized,automatic_recontainment_required:input.attestations.automaticRecontainmentRequired,global_kill_switch_may_open_only_for_window:input.attestations.globalKillSwitchMayOpenOnlyForWindow,external_channels_blocked:input.attestations.externalChannelsBlocked,maximum_external_actions_zero:input.attestations.maximumExternalActionsZero,no_contact:input.attestations.noContact,no_crm_write:input.attestations.noCrmWrite,a3_blocked:input.attestations.a3Blocked,mail_blocked:input.attestations.mailBlocked,telegram_blocked:input.attestations.telegramBlocked,timer_disabled_confirmed:input.attestations.timerDisabledConfirmed}
+    try{const result=await this.safetyPool.query<{state:unknown}>('SELECT control.activate_a1_dispatch_execution_window($1::uuid,$2::uuid,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,$9::timestamptz,$10::uuid,$11::uuid,$12::uuid,$13,$14,$15,$16,$17::integer,$18::numeric,$19,$20::jsonb,$21,$22) AS state',[input.windowAuthorizationId,input.missionId,input.decision,input.rationale,input.reviewerId,input.reviewerEmail,input.reviewedAt,input.opensAt,input.expiresAt,input.expectedArmId,input.expectedArmAuthorizationId,input.expectedExecutionAuthorizationId,input.expectedMissionSha256,input.expectedAssignmentPlanSha256,input.expectedJobSetSha256,input.workerId,input.maximumClaims,input.maximumProviderCreditSpendUsd,input.userAuthorizationSha256,JSON.stringify(attestations),input.idempotencyKey,input.requestSha256]);return validateA1DispatchExecutionWindowState(result.rows[0]?.state)}catch(error){const message=error instanceof Error?error.message:'';const code=['A1_DISPATCH_EXECUTION_WINDOW_IMMUTABLE_CONFLICT','A1_DISPATCH_EXECUTION_WINDOW_INVALID','A1_DISPATCH_EXECUTION_WINDOW_GATE_CLOSED','A1_DISPATCH_EXECUTION_WINDOW_NOT_FOUND'].find(candidate=>message.includes(candidate));if(code)throw new A1DispatchExecutionWindowError(code);throw error}
   }
 
   async getPolicyReviewState(): Promise<PolicyReviewState> {
