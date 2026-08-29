@@ -23,6 +23,10 @@ import type {
   A1DispatchAuthorizationState,
   RecordA1DispatchAuthorizationInput,
 } from './a1-dispatch-authorization.js'
+import type {
+  A1AssignmentEnqueueAuthorizationState,
+  RecordA1AssignmentEnqueueAuthorizationInput,
+} from './a1-assignment-enqueue-authorization.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
 
@@ -64,6 +68,8 @@ export interface RuntimeRepository {
   recordA1ResearchOrderAuthorization(input: RecordA1ResearchOrderAuthorizationInput): Promise<A1ResearchOrderAuthorizationState>
   getA1DispatchAuthorizationState(missionId: string): Promise<A1DispatchAuthorizationState | null>
   recordA1DispatchAuthorization(input: RecordA1DispatchAuthorizationInput): Promise<A1DispatchAuthorizationState>
+  getA1AssignmentEnqueueAuthorizationState(missionId: string): Promise<A1AssignmentEnqueueAuthorizationState | null>
+  recordA1AssignmentEnqueueAuthorization(input: RecordA1AssignmentEnqueueAuthorizationInput): Promise<A1AssignmentEnqueueAuthorizationState>
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
@@ -182,6 +188,7 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
   private readonly policyReviews = new Map<string, RecordPolicyReviewInput>()
   private readonly a1OrderAuthorizations = new Map<string, A1ResearchOrderAuthorizationState>()
   private readonly a1DispatchAuthorizations = new Map<string, A1DispatchAuthorizationState>()
+  private readonly a1AssignmentEnqueueAuthorizations = new Map<string, A1AssignmentEnqueueAuthorizationState>()
 
   async ready(): Promise<boolean> {
     return true
@@ -387,6 +394,34 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
     if (existing && JSON.stringify(existing) !== JSON.stringify(state))
       throw new Error('A1_DISPATCH_AUTHORIZATION_IMMUTABLE_CONFLICT')
     this.a1DispatchAuthorizations.set(input.missionId, structuredClone(state))
+    return structuredClone(state)
+  }
+
+  async getA1AssignmentEnqueueAuthorizationState(missionId: string): Promise<A1AssignmentEnqueueAuthorizationState | null> {
+    const state = this.a1AssignmentEnqueueAuthorizations.get(missionId)
+    return state ? structuredClone(state) : null
+  }
+
+  async recordA1AssignmentEnqueueAuthorization(input: RecordA1AssignmentEnqueueAuthorizationInput): Promise<A1AssignmentEnqueueAuthorizationState> {
+    const state: A1AssignmentEnqueueAuthorizationState = {
+      authorizationId: input.authorizationId, missionId: input.missionId, traceId: input.traceId,
+      planVersion: input.planVersion, dispatchAuthorizationId: input.dispatchAuthorizationId,
+      decision: input.decision, rationale: input.rationale, reviewerId: input.reviewerId,
+      reviewerEmail: input.reviewerEmail, reviewedAt: input.reviewedAt, expiresAt: input.expiresAt,
+      missionSha256: input.missionSha256, assignmentPlanSha256: input.assignmentPlanSha256,
+      userAuthorizationSha256: input.userAuthorizationSha256, attestations: input.attestations,
+      idempotencyKey: input.idempotencyKey, enqueueAuthorizationRecorded: true,
+      assignmentEnqueuePermitted: input.decision === 'approved', assignmentsEnqueued: false,
+      executionAuthorized: false, dispatchClaimingPermitted: false, internetAccessAllowed: false,
+      providerCreditSpendAllowed: false, contactPermitted: false, crmWriteAllowed: false,
+      maximumExternalActions: 0, globalKillSwitchRequired: true, productionGate: 'blocked',
+      nextRequiredGate: 'enqueue_exact_assignment_plan_separately',
+      provenance: { source: 'control-broker', sourceId: `a1-assignment-enqueue-authorization:${input.authorizationId}`, observedAt: input.reviewedAt, synthetic: false },
+    }
+    const existing = this.a1AssignmentEnqueueAuthorizations.get(input.missionId)
+    if (existing && JSON.stringify(existing) !== JSON.stringify(state))
+      throw new Error('A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_IMMUTABLE_CONFLICT')
+    this.a1AssignmentEnqueueAuthorizations.set(input.missionId, structuredClone(state))
     return structuredClone(state)
   }
 

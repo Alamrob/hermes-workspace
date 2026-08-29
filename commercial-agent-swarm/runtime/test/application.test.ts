@@ -23,7 +23,8 @@ import type { A1ResearchAuthorizationState } from '../src/a1-research-authorizat
 import type { A1ResearchOrderAuthorizationState } from '../src/a1-research-order-authorization.js'
 import { buildA1ExactOrderCandidate } from '../src/a1-exact-order-candidate.js'
 import { buildA1AuthorizedOrderCandidate } from '../src/a1-authorized-order-candidate.js'
-import { hashA1Mission } from '../src/a1-dispatch-authorization.js'
+import { hashA1AssignmentPlan, hashA1Mission } from '../src/a1-dispatch-authorization.js'
+import type { AssignmentPlan } from '../src/assignment-plan.js'
 
 const NOW = new Date('2026-08-15T20:00:00.000Z')
 const A1_KEY_PAIR = generateKeyPairSync('ed25519')
@@ -951,7 +952,7 @@ describe('broker application routes', () => {
     assert.equal((await state.app.handle({
       method: 'POST', path: '/v1/work-orders', headers: headers('control-plane-token'), body: order,
     })).status, 201)
-    const plan = assignmentPlan()
+    const plan = assignmentPlan() as AssignmentPlan
     const queued = await state.app.handle({
       method: 'POST',
       path: `/v1/missions/${order.mission_id}/assignments`,
@@ -1569,10 +1570,36 @@ describe('broker application routes', () => {
     assert.equal((recorded.body as any).dispatchQueued, false)
     assert.equal((recorded.body as any).nextRequiredGate, 'enqueue_exact_assignment_plan_separately')
     assert.equal(state.dispatched.length, 0)
-    const queued = await state.app.handle({
+    const blockedWithoutSecondGate = await state.app.handle({
       method: 'POST', path: `/v1/missions/${signed.mission_id}/assignments`,
       headers: headers('control-plane-token'), body: plan,
     })
+    assert.equal(blockedWithoutSecondGate.status, 409)
+    assert.equal(state.dispatched.length, 0)
+    const enqueuePath = `/internal/v1/a1-assignment-enqueue-authorizations/${signed.mission_id}`
+    const enqueueBody = {
+      decision: 'approved',
+      rationale: 'Autoriza solamente el enqueue posterior del plan exacto, sin ejecutar.',
+      reviewer_id: 'director', reviewer_email: 'proptimizaspa@gmail.com',
+      reviewed_at: NOW.toISOString(), expires_at: '2026-08-15T20:08:00.000Z',
+      expected_mission_sha256: hashA1Mission(persisted),
+      expected_assignment_plan_sha256: hashA1AssignmentPlan(plan as AssignmentPlan),
+      expected_dispatch_authorization_id: (recorded.body as any).authorizationId,
+      user_authorization_sha256: 'f'.repeat(64),
+      attestations: {
+        exact_enqueue_confirmed: true, authorization_record_only: true,
+        no_assignments_enqueued_by_authorization: true, no_execution: true,
+        no_contact: true, no_crm_write: true, no_external_actions: true,
+        no_provider_credit_spend: true, global_kill_switch_required: true,
+      },
+      idempotency_key: 'a1-enqueue-auth:application-00000053', assignment_plan: plan,
+    }
+    const enqueueRecorded = await state.app.handle({ method: 'POST', path: enqueuePath, headers: headers('shadow-review-token'), body: enqueueBody })
+    assert.equal(enqueueRecorded.status, 200, JSON.stringify(enqueueRecorded.body))
+    assert.equal((enqueueRecorded.body as any).assignmentsEnqueued, false)
+    assert.equal((enqueueRecorded.body as any).executionAuthorized, false)
+    assert.equal(state.dispatched.length, 0)
+    const queued = await state.app.handle({ method: 'POST', path: `/v1/missions/${signed.mission_id}/assignments`, headers: headers('control-plane-token'), body: plan })
     assert.equal(queued.status, 202, JSON.stringify(queued.body))
     assert.equal(state.dispatched.length, 2)
   })

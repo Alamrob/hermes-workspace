@@ -98,6 +98,11 @@ integration('PostgreSQL exact A1 assignment-plan authorization', () => {
     const { admin, pool, database } = fixture
     try {
       await runVersionedMigrations(pool, await loadMigrationSources())
+      const enqueueRollback = await readFile(
+        new URL('../migrations/031_a1_assignment_enqueue_authorization.rollback.sql', import.meta.url),
+        'utf8',
+      )
+      await pool.query(enqueueRollback)
       const rollback = await readFile(
         new URL('../migrations/030_a1_dispatch_authorization.rollback.sql', import.meta.url),
         'utf8',

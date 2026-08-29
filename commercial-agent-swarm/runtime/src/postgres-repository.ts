@@ -53,6 +53,12 @@ import {
   type A1DispatchAuthorizationState,
   type RecordA1DispatchAuthorizationInput,
 } from './a1-dispatch-authorization.js'
+import {
+  A1AssignmentEnqueueAuthorizationError,
+  validateA1AssignmentEnqueueAuthorizationState,
+  type A1AssignmentEnqueueAuthorizationState,
+  type RecordA1AssignmentEnqueueAuthorizationInput,
+} from './a1-assignment-enqueue-authorization.js'
 
 type ApprovalRow = {
   approval_id: string
@@ -420,6 +426,38 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
         'A1_DISPATCH_AUTHORIZATION_NOT_FOUND',
       ].find((candidate) => message.includes(candidate))
       if (code) throw new A1DispatchAuthorizationError(code)
+      throw error
+    }
+  }
+
+  async getA1AssignmentEnqueueAuthorizationState(missionId: string): Promise<A1AssignmentEnqueueAuthorizationState | null> {
+    const result = await this.pool.query<{ state: unknown }>(
+      'SELECT control.get_a1_assignment_enqueue_authorization($1::uuid) AS state', [missionId],
+    )
+    const state = result.rows[0]?.state
+    return state === null || state === undefined ? null : validateA1AssignmentEnqueueAuthorizationState(state)
+  }
+
+  async recordA1AssignmentEnqueueAuthorization(input: RecordA1AssignmentEnqueueAuthorizationInput): Promise<A1AssignmentEnqueueAuthorizationState> {
+    const attestations = {
+      exact_enqueue_confirmed: input.attestations.exactEnqueueConfirmed,
+      authorization_record_only: input.attestations.authorizationRecordOnly,
+      no_assignments_enqueued_by_authorization: input.attestations.noAssignmentsEnqueuedByAuthorization,
+      no_execution: input.attestations.noExecution, no_contact: input.attestations.noContact,
+      no_crm_write: input.attestations.noCrmWrite, no_external_actions: input.attestations.noExternalActions,
+      no_provider_credit_spend: input.attestations.noProviderCreditSpend,
+      global_kill_switch_required: input.attestations.globalKillSwitchRequired,
+    }
+    try {
+      const result = await this.pool.query<{ state: unknown }>(
+        'SELECT control.record_a1_assignment_enqueue_authorization($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6,$7,$8,$9,$10::timestamptz,$11::timestamptz,$12,$13,$14,$15::jsonb,$16,$17) AS state',
+        [input.authorizationId,input.missionId,input.traceId,input.planVersion,input.dispatchAuthorizationId,input.decision,input.rationale,input.reviewerId,input.reviewerEmail,input.reviewedAt,input.expiresAt,input.missionSha256,input.assignmentPlanSha256,input.userAuthorizationSha256,JSON.stringify(attestations),input.idempotencyKey,input.requestSha256],
+      )
+      return validateA1AssignmentEnqueueAuthorizationState(result.rows[0]?.state)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      const code = ['A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_IMMUTABLE_CONFLICT','A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_INVALID','A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_GATE_CLOSED','A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_NOT_FOUND'].find(candidate => message.includes(candidate))
+      if (code) throw new A1AssignmentEnqueueAuthorizationError(code)
       throw error
     }
   }

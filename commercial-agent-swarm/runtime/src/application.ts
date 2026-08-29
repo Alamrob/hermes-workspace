@@ -54,6 +54,11 @@ import {
   hashA1Mission,
   validateA1DispatchAuthorizationRequest,
 } from './a1-dispatch-authorization.js'
+import {
+  A1AssignmentEnqueueAuthorizationError,
+  assertA1AssignmentEnqueueAuthorizationAdmission,
+  validateA1AssignmentEnqueueAuthorizationRequest,
+} from './a1-assignment-enqueue-authorization.js'
 
 export interface ApplicationRequest {
   method: string
@@ -315,6 +320,7 @@ export class BrokerApplication {
       assertMissionExecutionWindow(mission, admissionTime)
       await this.requireA1ResearchAdmission(mission as unknown as WorkOrder, admissionTime)
       await this.requireA1DispatchAdmission(mission, plan, admissionTime)
+      await this.requireA1AssignmentEnqueueAdmission(mission, plan, admissionTime)
       assertAssignmentPlanAuthority(mission, plan)
       const assignmentIds: string[] = []
       for (const assignment of plan.assignments) {
@@ -492,6 +498,47 @@ export class BrokerApplication {
           expiresAt: input.expiresAt, missionSha256,
           assignmentPlanSha256: hashA1AssignmentPlan(plan),
           userAuthorizationSha256: input.userAuthorizationSha256,
+          attestations: input.attestations, idempotencyKey: input.idempotencyKey,
+          requestSha256: hashAction({ mission_id: route.id!, ...input, assignmentPlan: plan }),
+        }),
+      }
+    }
+    if (route.action === 'getA1AssignmentEnqueueAuthorization') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const state = await this.options.repository.getA1AssignmentEnqueueAuthorizationState(route.id!)
+      return state ? { status: 200, body: state } : { status: 404, body: { error: 'not_found' } }
+    }
+    if (route.action === 'recordA1AssignmentEnqueueAuthorization') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const now = this.now()
+      const input = validateA1AssignmentEnqueueAuthorizationRequest(request.body, now)
+      const mission = await this.options.repository.getMission(route.id!)
+      if (!mission) return { status: 404, body: { error: 'not_found' } }
+      const plan = input.assignmentPlan
+      if (plan.mission_id !== route.id! || plan.trace_id !== mission.trace_id)
+        throw new A1AssignmentEnqueueAuthorizationError('A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_GATE_CLOSED')
+      await this.requireA1ResearchAdmission(mission as unknown as WorkOrder, now)
+      const dispatchAuthorization = await this.options.repository.getA1DispatchAuthorizationState(route.id!)
+      assertA1DispatchAuthorizationAdmission(mission, plan, dispatchAuthorization, now)
+      const missionSha256 = hashA1Mission(mission)
+      const assignmentPlanSha256 = hashA1AssignmentPlan(plan)
+      if (
+        missionSha256 !== input.expectedMissionSha256 ||
+        assignmentPlanSha256 !== input.expectedAssignmentPlanSha256 ||
+        dispatchAuthorization?.authorizationId !== input.expectedDispatchAuthorizationId
+      ) throw new A1AssignmentEnqueueAuthorizationError('A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_GATE_CLOSED')
+      const execution = await this.options.dispatchQueue.getMissionExecution(route.id!)
+      if (execution.assignments.length !== 0 || !(await this.options.repository.isGlobalKillSwitchActive()) || !(await this.options.repository.externalActionsBlocked()))
+        throw new A1AssignmentEnqueueAuthorizationError('A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_GATE_CLOSED')
+      return {
+        status: 200,
+        body: await this.options.repository.recordA1AssignmentEnqueueAuthorization({
+          authorizationId: deterministicUuid(hashAction({ mission_id: route.id!, idempotency_key: input.idempotencyKey })),
+          missionId: route.id!, traceId: plan.trace_id, planVersion: plan.plan_version,
+          dispatchAuthorizationId: input.expectedDispatchAuthorizationId,
+          decision: input.decision, rationale: input.rationale, reviewerId: input.reviewerId,
+          reviewerEmail: input.reviewerEmail, reviewedAt: input.reviewedAt, expiresAt: input.expiresAt,
+          missionSha256, assignmentPlanSha256, userAuthorizationSha256: input.userAuthorizationSha256,
           attestations: input.attestations, idempotencyKey: input.idempotencyKey,
           requestSha256: hashAction({ mission_id: route.id!, ...input, assignmentPlan: plan }),
         }),
@@ -716,6 +763,21 @@ export class BrokerApplication {
     assertA1DispatchAuthorizationAdmission(mission, plan, authorization, now)
   }
 
+  private async requireA1AssignmentEnqueueAdmission(
+    mission: MissionRecord,
+    plan: AssignmentPlan,
+    now: Date,
+  ): Promise<void> {
+    if (a1ResearchReviewId(mission as unknown as WorkOrder) === null) return
+    if (!(await this.options.repository.isGlobalKillSwitchActive()) || !(await this.options.repository.externalActionsBlocked()))
+      throw new A1AssignmentEnqueueAuthorizationError('A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_GATE_CLOSED')
+    const [dispatchAuthorization, enqueueAuthorization] = await Promise.all([
+      this.options.repository.getA1DispatchAuthorizationState(mission.mission_id),
+      this.options.repository.getA1AssignmentEnqueueAuthorizationState(mission.mission_id),
+    ])
+    assertA1AssignmentEnqueueAuthorizationAdmission(mission, plan, dispatchAuthorization, enqueueAuthorization, now)
+  }
+
   private async audit(
     request: ApplicationRequest,
     toolAction: string,
@@ -826,6 +888,11 @@ function matchRoute(method: string, path: string): Route | null {
     return { action: 'getA1DispatchAuthorization', auditAction: 'a1_dispatch_authorization.get', id: a1DispatchAuthorization[1] }
   if (method === 'POST' && a1DispatchAuthorization)
     return { action: 'recordA1DispatchAuthorization', auditAction: 'a1_dispatch_authorization.record', id: a1DispatchAuthorization[1] }
+  const a1AssignmentEnqueueAuthorization = /^\/internal\/v1\/a1-assignment-enqueue-authorizations\/([^/]+)$/.exec(path)
+  if (method === 'GET' && a1AssignmentEnqueueAuthorization)
+    return { action: 'getA1AssignmentEnqueueAuthorization', auditAction: 'a1_assignment_enqueue_authorization.get', id: a1AssignmentEnqueueAuthorization[1] }
+  if (method === 'POST' && a1AssignmentEnqueueAuthorization)
+    return { action: 'recordA1AssignmentEnqueueAuthorization', auditAction: 'a1_assignment_enqueue_authorization.record', id: a1AssignmentEnqueueAuthorization[1] }
   const draftItem = /^\/internal\/v1\/draft-reviews\/([^/]+)\/items\/(\d+)$/.exec(path)
   if (method === 'PUT' && draftItem)
     return { action: 'recordDraftReviewItem', auditAction: 'draft_review.item.record', id: draftItem[1], slot: Number(draftItem[2]) }
@@ -1544,6 +1611,11 @@ function publicFailure(error: unknown): {
   if (error instanceof A1DispatchAuthorizationError) {
     if (error.code === 'A1_DISPATCH_AUTHORIZATION_INVALID') return { status: 400, error: error.code }
     if (error.code === 'A1_DISPATCH_AUTHORIZATION_NOT_FOUND') return { status: 404, error: 'not_found' }
+    return { status: 409, error: error.code }
+  }
+  if (error instanceof A1AssignmentEnqueueAuthorizationError) {
+    if (error.code === 'A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_INVALID') return { status: 400, error: error.code }
+    if (error.code === 'A1_ASSIGNMENT_ENQUEUE_AUTHORIZATION_NOT_FOUND') return { status: 404, error: 'not_found' }
     return { status: 409, error: error.code }
   }
   if (error instanceof ApprovalError) {
