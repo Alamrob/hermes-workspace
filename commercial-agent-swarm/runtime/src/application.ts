@@ -46,6 +46,7 @@ import {
   validateA1ResearchOrderAuthorizationRequest,
 } from './a1-research-order-authorization.js'
 import { buildA1ExactOrderCandidate } from './a1-exact-order-candidate.js'
+import { buildA1AuthorizedOrderCandidate } from './a1-authorized-order-candidate.js'
 
 export interface ApplicationRequest {
   method: string
@@ -447,6 +448,28 @@ export class BrokerApplication {
       const state = await this.options.repository.getA1ResearchOrderAuthorizationState(route.id!)
       return state ? { status: 200, body: state } : { status: 404, body: { error: 'not_found' } }
     }
+    if (route.action === 'getA1AuthorizedOrderCandidate') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const orderAuthorization = await this.options.repository.getA1ResearchOrderAuthorizationState(route.id!)
+      if (!orderAuthorization) return { status: 404, body: { error: 'not_found' } }
+      const dossier = await this.options.repository.getA1ResearchDossier(orderAuthorization.reviewId)
+      if (!dossier) return { status: 404, body: { error: 'not_found' } }
+      const parent = await this.options.repository.getA1ResearchAuthorizationState(
+        orderAuthorization.reviewId,
+        hashA1ResearchDossier(dossier),
+      )
+      if (!parent) return { status: 404, body: { error: 'not_found' } }
+      return {
+        status: 200,
+        body: buildA1AuthorizedOrderCandidate(
+          dossier,
+          parent,
+          orderAuthorization,
+          this.options.authentication.workOrders,
+          this.now(),
+        ),
+      }
+    }
     if (route.action === 'recordA1ResearchAuthorization') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       const input = validateA1ResearchAuthorizationRequest(request.body, this.now())
@@ -732,6 +755,9 @@ function matchRoute(method: string, path: string): Route | null {
     return { action: 'getA1ResearchOrderAuthorization', auditAction: 'a1_research_order_authorization.get', id: a1OrderAuthorization[1] }
   if (method === 'POST' && a1OrderAuthorization)
     return { action: 'recordA1ResearchOrderAuthorization', auditAction: 'a1_research_order_authorization.record', id: a1OrderAuthorization[1] }
+  const a1AuthorizedOrderCandidate = /^\/internal\/v1\/a1-authorized-order-candidates\/([^/]+)$/.exec(path)
+  if (method === 'GET' && a1AuthorizedOrderCandidate)
+    return { action: 'getA1AuthorizedOrderCandidate', auditAction: 'a1_authorized_order_candidate.get', id: a1AuthorizedOrderCandidate[1] }
   const draftItem = /^\/internal\/v1\/draft-reviews\/([^/]+)\/items\/(\d+)$/.exec(path)
   if (method === 'PUT' && draftItem)
     return { action: 'recordDraftReviewItem', auditAction: 'draft_review.item.record', id: draftItem[1], slot: Number(draftItem[2]) }

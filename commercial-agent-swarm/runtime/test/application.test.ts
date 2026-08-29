@@ -20,6 +20,8 @@ import { hashA1ResearchDossier } from '../src/a1-research-authorization.js'
 import { hashUnsignedA1ResearchWorkOrder } from '../src/a1-research-order-authorization.js'
 import type { A1ResearchDossier } from '../src/a1-research-dossier.js'
 import type { A1ResearchAuthorizationState } from '../src/a1-research-authorization.js'
+import type { A1ResearchOrderAuthorizationState } from '../src/a1-research-order-authorization.js'
+import { buildA1ExactOrderCandidate } from '../src/a1-exact-order-candidate.js'
 
 const NOW = new Date('2026-08-15T20:00:00.000Z')
 
@@ -1448,6 +1450,45 @@ describe('broker application routes', () => {
     assert.equal(candidate.unsignedWorkOrderSha256,hashUnsignedA1ResearchWorkOrder(candidate.workOrder))
     assert.equal(await state.repository.getMission(candidate.missionId),null)
     assert.equal(state.dispatched.length,0)
+  })
+
+  it('projects an authenticated and authorized exact A1 order for Codex signing without persistence or dispatch', async () => {
+    const state = setup()
+    const dossier = boundA1Dossier()
+    const parent = boundA1ParentAuthorization()
+    const authority = { issuer: 'codex', audience: 'hermes-commercial-orchestrator', keys: { 'control-key-1': 'test-control-key-with-at-least-32-bytes' } }
+    const candidate = buildA1ExactOrderCandidate(dossier, parent, authority, NOW)
+    const orderAuthorization: A1ResearchOrderAuthorizationState = {
+      orderAuthorizationId: candidate.orderAuthorizationId, reviewId: candidate.reviewId,
+      parentAuthorizationId: candidate.parentAuthorizationId, decision: 'approved',
+      rationale: 'Autoriza únicamente la orden A1 exacta y sus límites internos.', reviewerId: 'director',
+      reviewerEmail: 'proptimizaspa@gmail.com', reviewedAt: '2026-08-15T19:58:00.000Z',
+      expiresAt: candidate.parentAuthorizationExpiresAt, dossierSha256: candidate.dossierSha256,
+      unsignedWorkOrderSha256: candidate.unsignedWorkOrderSha256, missionId: candidate.missionId,
+      userAuthorizationSha256: 'd'.repeat(64),
+      attestations: { exactWorkOrderConfirmed: true, noContact: true, noCrmWrite: true, noExternalActions: true, noProviderCreditSpend: true },
+      idempotencyKey: 'a1-order-auth:application-00000053', executionAuthorized: false, missionCreated: false,
+      dispatchQueued: false, internetAccessAllowed: false, providerCreditSpendAllowed: false, contactPermitted: false,
+      crmWriteAllowed: false, maximumExternalActions: 0, productionGate: 'blocked', nextRequiredGate: 'sign_exact_work_order',
+      provenance: { source: 'control-broker', sourceId: `a1-research-order-authorization:${candidate.orderAuthorizationId}`, observedAt: NOW.toISOString(), synthetic: false },
+    }
+    state.repository.getA1ResearchDossier = async () => dossier
+    state.repository.getA1ResearchAuthorizationState = async () => parent
+    state.repository.getA1ResearchOrderAuthorizationState = async (id) => id === candidate.orderAuthorizationId ? orderAuthorization : null
+    const path = `/internal/v1/a1-authorized-order-candidates/${candidate.orderAuthorizationId}`
+    assert.equal((await state.app.handle({ method: 'GET', path })).status, 401)
+    const response = await state.app.handle({ method: 'GET', path, headers: headers('shadow-review-token') })
+    assert.equal(response.status, 200)
+    assert.equal((response.body as any).orderAuthorizationId, candidate.orderAuthorizationId)
+    assert.equal((response.body as any).exactOrderAuthorizationRecorded, true)
+    assert.equal((response.body as any).signedWorkOrderPresent, false)
+    assert.equal((response.body as any).workOrderPersisted, false)
+    assert.equal((response.body as any).missionCreated, false)
+    assert.equal((response.body as any).dispatchQueued, false)
+    assert.equal((response.body as any).nextRequiredGate, 'codex_signature')
+    assert.equal((response.body as any).workOrder.metadata.a1_research_order_authorization_sha256, 'd'.repeat(64))
+    assert.equal(await state.repository.getMission(candidate.missionId), null)
+    assert.equal(state.dispatched.length, 0)
   })
 
   it('exposes only an unsigned A1 work-order preview without persistence or dispatch', async () => {
