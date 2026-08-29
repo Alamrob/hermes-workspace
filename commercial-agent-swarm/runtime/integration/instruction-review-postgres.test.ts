@@ -5,6 +5,7 @@ import { after, before, describe, it } from 'node:test'
 import { Pool } from 'pg'
 import { loadMigrationSources } from '../src/migrate-main.js'
 import { runVersionedMigrations } from '../src/migration-runner.js'
+import { dropTestDatabase } from './database-cleanup.js'
 
 const root = process.env.TEST_DATABASE_URL
 const integration = root ? describe : describe.skip
@@ -25,7 +26,7 @@ integration('PostgreSQL 17 Codex instruction review', { concurrency: 1 }, () => 
 
   after(async () => {
     await pool?.end()
-    await admin?.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`)
+    if (admin) await dropTestDatabase(admin, database)
     await admin?.end()
   })
 
