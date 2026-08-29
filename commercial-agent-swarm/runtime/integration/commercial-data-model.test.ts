@@ -226,21 +226,21 @@ integration('commercial catalog/control/mail data model', () => {
     INSERT INTO catalog.project_versions(project_id,version,display_name,status)VALUES('proptimiza','v2','Rotation','published');
     INSERT INTO catalog.offer_versions(project_id,offer_id,version,project_version,name,currency,starting_price,description)VALUES('proptimiza','operacion-sin-planillas','offer-v2','v2','Operación Sin Planillas 2','CLP',1800000,'rotation');
     INSERT INTO catalog.icp_versions(project_id,version,project_version,country_code,business_model,sector,employee_min,employee_max,operational_signals,description)VALUES('proptimiza','icp-v2','v2','CL','B2B','services',10,100,ARRAY['Excel'],'rotation');
-    INSERT INTO catalog.policy_versions(project_id,version,project_version,policy)VALUES('proptimiza','policy-fixture-v2','v2','{}');
-    INSERT INTO mail.delivery_policies(project_id,policy_version,sender,recipient,maximum_volume,active)VALUES('proptimiza','policy-fixture-v2','ventas@proptimiza.com','contacto@proptimiza.com',1,true)`)
+    INSERT INTO catalog.policy_versions(project_id,version,project_version,policy)VALUES('proptimiza','policy-v20','v2','{}');
+    INSERT INTO mail.delivery_policies(project_id,policy_version,sender,recipient,maximum_volume,active)VALUES('proptimiza','policy-v20','ventas@proptimiza.com','contacto@proptimiza.com',1,true)`)
     await assert.rejects(
       pool.query(
-        `INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('mixed-v2-offer-v1','proptimiza','v2','operacion-sin-planillas','offer-v1','icp-v2','policy-fixture-v2')`,
+        `INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('mixed-v2-offer-v1','proptimiza','v2','operacion-sin-planillas','offer-v1','icp-v2','policy-v20')`,
       ),
       /foreign key/,
     )
     await pool.query(`
-    INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('activate-catalog-v2','proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-fixture-v2');
-    INSERT INTO mail.delivery_policy_activations(activation_key,project_id,policy_version)VALUES('activate-delivery-v2','proptimiza','policy-fixture-v2')`)
+    INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('activate-catalog-v2','proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v20');
+    INSERT INTO mail.delivery_policy_activations(activation_key,project_id,policy_version)VALUES('activate-delivery-v2','proptimiza','policy-v20')`)
     assert.equal(
       (
         await pool.query(
-          `SELECT catalog.mission_versions_exist('proptimiza','v1','operacion-sin-planillas','offer-v1','icp-v1','policy-v1') old,catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-fixture-v2') current`,
+          `SELECT catalog.mission_versions_exist('proptimiza','v1','operacion-sin-planillas','offer-v1','icp-v1','policy-v1') old,catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v20') current`,
         )
       ).rows[0].old,
       false,
@@ -248,7 +248,7 @@ integration('commercial catalog/control/mail data model', () => {
     assert.equal(
       (
         await pool.query(
-          `SELECT catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-fixture-v2') current`,
+          `SELECT catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v20') current`,
         )
       ).rows[0].current,
       true,
@@ -259,7 +259,7 @@ integration('commercial catalog/control/mail data model', () => {
     assert.equal(
       (
         await pool.query(
-          `SELECT catalog.mission_versions_exist('proptimiza','v1','operacion-sin-planillas','offer-v1','icp-v1','policy-v1') current,catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-fixture-v2') old`,
+          `SELECT catalog.mission_versions_exist('proptimiza','v1','operacion-sin-planillas','offer-v1','icp-v1','policy-v1') current,catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v20') old`,
         )
       ).rows[0].current,
       true,
@@ -267,7 +267,7 @@ integration('commercial catalog/control/mail data model', () => {
     assert.equal(
       (
         await pool.query(
-          `SELECT catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-fixture-v2') old`,
+          `SELECT catalog.mission_versions_exist('proptimiza','v2','operacion-sin-planillas','offer-v2','icp-v2','policy-v20') old`,
         )
       ).rows[0].old,
       false,
@@ -287,17 +287,17 @@ integration('commercial catalog/control/mail data model', () => {
     INSERT INTO catalog.project_versions(project_id,version,display_name,status)VALUES('proptimiza','v3','Retired','retired');
     INSERT INTO catalog.offer_versions(project_id,offer_id,version,project_version,name,currency,starting_price,description)VALUES('proptimiza','operacion-sin-planillas','offer-v3','v3','Retired offer','CLP',1800000,'retired');
     INSERT INTO catalog.icp_versions(project_id,version,project_version,country_code,business_model,sector,employee_min,employee_max,operational_signals,description)VALUES('proptimiza','icp-v3','v3','CL','B2B','services',10,100,ARRAY['Excel'],'retired');
-    INSERT INTO catalog.policy_versions(project_id,version,project_version,policy)VALUES('proptimiza','policy-fixture-v3','v3','{}');
-    INSERT INTO mail.delivery_policies(project_id,policy_version,sender,recipient,maximum_volume,active)VALUES('proptimiza','policy-fixture-v3','ventas@proptimiza.com','contacto@proptimiza.com',1,true)`)
+    INSERT INTO catalog.policy_versions(project_id,version,project_version,policy)VALUES('proptimiza','policy-v30','v3','{}');
+    INSERT INTO mail.delivery_policies(project_id,policy_version,sender,recipient,maximum_volume,active)VALUES('proptimiza','policy-v30','ventas@proptimiza.com','contacto@proptimiza.com',1,true)`)
     await assert.rejects(
       pool.query(
-        `INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('activate-retired-v3','proptimiza','v3','operacion-sin-planillas','offer-v3','icp-v3','policy-fixture-v3')`,
+        `INSERT INTO catalog.version_activations(activation_key,project_id,project_version,offer_id,offer_version,icp_version,policy_version)VALUES('activate-retired-v3','proptimiza','v3','operacion-sin-planillas','offer-v3','icp-v3','policy-v30')`,
       ),
       /VERSION_NOT_PUBLISHED/,
     )
     await assert.rejects(
       pool.query(
-        `INSERT INTO mail.delivery_policy_activations(activation_key,project_id,policy_version)VALUES('activate-retired-mail-v3','proptimiza','policy-fixture-v3')`,
+        `INSERT INTO mail.delivery_policy_activations(activation_key,project_id,policy_version)VALUES('activate-retired-mail-v3','proptimiza','policy-v30')`,
       ),
       /VERSION_NOT_PUBLISHED/,
     )
