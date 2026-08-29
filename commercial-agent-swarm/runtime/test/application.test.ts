@@ -1413,6 +1413,34 @@ describe('broker application routes', () => {
     assert.equal(state.dispatched.length,0)
   })
 
+  it('projects an authenticated exact unsigned A1 order candidate without persistence or dispatch', async () => {
+    const state = setup()
+    const dossier = boundA1Dossier()
+    const parent = boundA1ParentAuthorization()
+    state.repository.getA1ResearchDossier = async () => dossier
+    state.repository.getA1ResearchAuthorizationState = async () => parent
+    const path = `/internal/v1/a1-exact-order-candidates/${A1_REVIEW_ID}`
+    assert.equal((await state.app.handle({method:'GET',path})).status,401)
+    const response = await state.app.handle({method:'GET',path,headers:headers('shadow-review-token')})
+    assert.equal(response.status,200)
+    const candidate:any=response.body
+    assert.equal(candidate.reviewId,A1_REVIEW_ID)
+    assert.equal(candidate.parentAuthorizationId,A1_PARENT_AUTH_ID)
+    assert.equal(candidate.exactOrderAuthorizationRecorded,false)
+    assert.equal(candidate.signedWorkOrderPresent,false)
+    assert.equal(candidate.workOrderPersisted,false)
+    assert.equal(candidate.missionCreated,false)
+    assert.equal(candidate.dispatchQueued,false)
+    assert.equal(candidate.executionAuthorized,false)
+    assert.equal(candidate.internetAccessAllowed,false)
+    assert.equal(candidate.providerCreditSpendAllowed,false)
+    assert.equal(candidate.maximumExternalActions,0)
+    assert.equal(candidate.workOrder.authority.signature,'0'.repeat(64))
+    assert.equal(candidate.unsignedWorkOrderSha256,hashUnsignedA1ResearchWorkOrder(candidate.workOrder))
+    assert.equal(await state.repository.getMission(candidate.missionId),null)
+    assert.equal(state.dispatched.length,0)
+  })
+
   it('exposes only an unsigned A1 work-order preview without persistence or dispatch', async () => {
     const state = setup()
     const reviewId = 'a2500000-0000-4500-8500-000000000053'

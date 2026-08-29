@@ -45,6 +45,7 @@ import {
   hashUnsignedA1ResearchWorkOrder,
   validateA1ResearchOrderAuthorizationRequest,
 } from './a1-research-order-authorization.js'
+import { buildA1ExactOrderCandidate } from './a1-exact-order-candidate.js'
 
 export interface ApplicationRequest {
   method: string
@@ -430,6 +431,17 @@ export class BrokerApplication {
       const authorization = await this.options.repository.getA1ResearchAuthorizationState(route.id!, hashA1ResearchDossier(dossier))
       return { status: 200, body: buildA1WorkOrderPreview(dossier, authorization, this.now()) }
     }
+    if (route.action === 'getA1ExactOrderCandidate') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const dossier = await this.options.repository.getA1ResearchDossier(route.id!)
+      if (!dossier) return { status: 404, body: { error: 'not_found' } }
+      const authorization = await this.options.repository.getA1ResearchAuthorizationState(route.id!, hashA1ResearchDossier(dossier))
+      if (!authorization) return { status: 404, body: { error: 'not_found' } }
+      return {
+        status: 200,
+        body: buildA1ExactOrderCandidate(dossier, authorization, this.options.authentication.workOrders, this.now()),
+      }
+    }
     if (route.action === 'recordA1ResearchAuthorization') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       const input = validateA1ResearchAuthorizationRequest(request.body, this.now())
@@ -707,6 +719,9 @@ function matchRoute(method: string, path: string): Route | null {
   const a1WorkOrderPreview = /^\/internal\/v1\/a1-work-order-previews\/([^/]+)$/.exec(path)
   if (method === 'GET' && a1WorkOrderPreview)
     return { action: 'getA1WorkOrderPreview', auditAction: 'a1_work_order_preview.get', id: a1WorkOrderPreview[1] }
+  const a1ExactOrderCandidate = /^\/internal\/v1\/a1-exact-order-candidates\/([^/]+)$/.exec(path)
+  if (method === 'GET' && a1ExactOrderCandidate)
+    return { action: 'getA1ExactOrderCandidate', auditAction: 'a1_exact_order_candidate.get', id: a1ExactOrderCandidate[1] }
   const a1OrderAuthorization = /^\/internal\/v1\/a1-order-authorizations\/([^/]+)$/.exec(path)
   if (method === 'POST' && a1OrderAuthorization)
     return { action: 'recordA1ResearchOrderAuthorization', auditAction: 'a1_research_order_authorization.record', id: a1OrderAuthorization[1] }
