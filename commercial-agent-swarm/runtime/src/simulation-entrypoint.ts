@@ -65,6 +65,7 @@ export interface SimulationBrokerConfig {
   hostingerWebhookSecretFiles: { mailboxKey: string; bearer: string } | null
   secretGid: typeof BROKER_SERVICE_GID
   a3AdmissionEnabled: false
+  dispatchLoopMode: 'automatic' | 'manual'
 }
 
 export interface InternalMailBrokerConfig extends Omit<SimulationBrokerConfig, 'mode' | 'a3AdmissionEnabled'> {
@@ -143,6 +144,9 @@ function loadBrokerConfigFields<M extends BrokerConfig['mode'], A extends boolea
   const deployedVersion = required(environment, 'DEPLOYED_VERSION')
   if (!/^[A-Za-z0-9][A-Za-z0-9._:+-]{0,127}$/.test(deployedVersion))
     throw new Error('DEPLOYED_VERSION_INVALID')
+  const dispatchLoopMode = environment.DISPATCH_LOOP_MODE ?? 'automatic'
+  if (dispatchLoopMode !== 'automatic' && dispatchLoopMode !== 'manual')
+    throw new Error('DISPATCH_LOOP_MODE_INVALID')
 
   const databaseSecretFiles = DATABASE_FILES.map((name) => ({
     name: name.slice(0, -'_FILE'.length),
@@ -167,6 +171,7 @@ function loadBrokerConfigFields<M extends BrokerConfig['mode'], A extends boolea
     host,
     port,
     deployedVersion,
+    dispatchLoopMode,
     databaseSecretFiles,
     applicationSecretFiles,
     workOrderAuthority: {

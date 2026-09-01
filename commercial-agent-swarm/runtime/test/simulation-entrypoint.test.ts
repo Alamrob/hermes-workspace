@@ -52,6 +52,7 @@ const environment = {
 describe('Simulation broker entrypoint', () => {
   it('accepts only the closed no-external-action deployment mode', () => {
     const config = loadSimulationBrokerConfig(environment)
+    assert.equal(config.dispatchLoopMode, 'automatic')
     assert.equal(config.mode, 'simulation')
     assert.equal(config.port, 8080)
     assert.equal(config.databaseSecretFiles.length, 5)
@@ -178,6 +179,21 @@ describe('Simulation broker entrypoint', () => {
         isKillSwitchActive: async () => false,
       }),
       /SIMULATION_KILL_SWITCH_NOT_ACTIVE/,
+    )
+  })
+
+  it('supports an explicit fail-closed manual dispatch loop mode', () => {
+    const config = loadSimulationBrokerConfig({
+      ...environment,
+      DISPATCH_LOOP_MODE: 'manual',
+    })
+    assert.equal(config.dispatchLoopMode, 'manual')
+    assert.throws(
+      () => loadSimulationBrokerConfig({
+        ...environment,
+        DISPATCH_LOOP_MODE: 'disabled-ish',
+      }),
+      /DISPATCH_LOOP_MODE_INVALID/,
     )
   })
 

@@ -166,9 +166,10 @@ async function startBrokerWithConfig(
         )
         await persistence.close()
       })())
-    dispatcherLoop = startDispatcherLoop(dispatcher, () => {
-      void close()
-    })
+    if (config.dispatchLoopMode === 'automatic')
+      dispatcherLoop = startDispatcherLoop(dispatcher, () => {
+        void close()
+      })
     return { close }
   } catch (error) {
     await persistence.close()
