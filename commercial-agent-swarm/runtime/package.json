@@ -14,6 +14,7 @@
     "start:commercial-automation": "node dist/commercial-automation-main.js",
     "preflight:commercial-automation": "node dist/commercial-automation-preflight-main.js",
     "oneshot:commercial-automation": "node dist/commercial-automation-one-shot-main.js",
+    "oneshot:dispatch": "node dist/manual-dispatch-once-main.js",
     "start:external-action-broker": "node dist/external-action-broker-main.js",
     "start:telegram-approval-poller": "node dist/telegram-approval-poller-main.js",
     "start:workspace-instruction-gateway": "node dist/workspace-instruction-gateway-main.js",
