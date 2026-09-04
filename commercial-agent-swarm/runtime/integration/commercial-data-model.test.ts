@@ -52,6 +52,8 @@ const CAPABILITY_MIGRATIONS = [
   '032_a1_assignment_execution_authorization',
   '033_a1_dispatch_execution_arm',
   '034_a1_dispatch_execution_window',
+  '035_a1_window_supervisor',
+  '036_atomic_dispatch_settlement',
 ] as const
 const integration = ADMIN_URL ? describe : describe.skip
 
@@ -528,6 +530,8 @@ integration('commercial catalog/control/mail data model', () => {
   })
 
   it('verifies distinct live login principals and rejects inherited or direct cross-capabilities', async () => {
+    // Prior capability tests deliberately changed switches. Restore containment before new guards.
+    await pool.query('UPDATE control.kill_switches SET active=true')
     for (const version of CAPABILITY_MIGRATIONS)
       await pool.query(
         await readFile(

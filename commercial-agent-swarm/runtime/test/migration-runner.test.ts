@@ -40,6 +40,8 @@ describe('versioned migration runner', () => {
       { version: '032_a1_assignment_execution_authorization', sql: 'SELECT 32;' },
       { version: '033_a1_dispatch_execution_arm', sql: 'SELECT 33;' },
       { version: '034_a1_dispatch_execution_window', sql: 'SELECT 34;' },
+      { version: '035_a1_window_supervisor', sql: 'SELECT 35;' },
+      { version: '036_atomic_dispatch_settlement', sql: 'SELECT 36;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -81,6 +83,8 @@ describe('versioned migration runner', () => {
         '032_a1_assignment_execution_authorization',
         '033_a1_dispatch_execution_arm',
         '034_a1_dispatch_execution_window',
+        '035_a1_window_supervisor',
+        '036_atomic_dispatch_settlement',
       ],
     )
     assert.equal(
@@ -91,13 +95,14 @@ describe('versioned migration runner', () => {
 
   it('loads the complete production migration set through the exact A1 execution-window gate', async () => {
     const migrations = await loadMigrationSources()
-    assert.equal(migrations.length, 34)
-    assert.equal(migrations.at(-1)?.version, '034_a1_dispatch_execution_window')
+    assert.equal(migrations.length, 36)
+    assert.equal(migrations.at(-1)?.version, '036_atomic_dispatch_settlement')
     assert.match(
-      migrations.at(-7)?.sql ?? '',
+      migrations.find(m=>m.version==='028_ed25519_a1_work_orders')?.sql ?? '',
       /A1_ED25519_SIGNATURE_REQUIRED/,
     )
-    assert.match(migrations.at(-1)?.sql ?? '', /A1_DISPATCH_EXECUTION_WINDOW_GATE_CLOSED/)
+    assert.match(migrations.find(m=>m.version==='035_a1_window_supervisor')?.sql ?? '', /A1_SUPERVISOR_NOT_LIVE/)
+    assert.match(migrations.at(-1)?.sql ?? '', /dispatch_settlement_commit/)
     assert.doesNotMatch(
       migrations.at(-1)?.sql ?? '',
       /control\.enqueue_dispatch|mail\.send|integration\.enqueue_crm_change/i,

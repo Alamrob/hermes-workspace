@@ -54,6 +54,8 @@ integration('PostgreSQL 17 versioned migration runner', () => {
           '032_a1_assignment_execution_authorization',
           '033_a1_dispatch_execution_arm',
           '034_a1_dispatch_execution_window',
+          '035_a1_window_supervisor',
+          '036_atomic_dispatch_settlement',
         ].map(async (version) => ({
           version,
           sql: await readFile(
@@ -70,8 +72,17 @@ integration('PostgreSQL 17 versioned migration runner', () => {
             `SELECT count(*)::int AS count FROM control.schema_migrations`,
           )
         ).rows[0].count,
-        34,
+        36,
       )
+      const rollback036 = await readFile(new URL('../migrations/036_atomic_dispatch_settlement.rollback.sql',import.meta.url),'utf8')
+      await pool.query(rollback036)
+      assert.equal((await pool.query("SELECT count(*)::int AS n FROM control.schema_migrations WHERE version='036_atomic_dispatch_settlement'")).rows[0].n,0)
+      assert.equal((await pool.query("SELECT to_regclass('control.dispatch_settlement_receipts') IS NULL AS absent")).rows[0].absent,true)
+      await runVersionedMigrations(pool,sources)
+      assert.equal((await pool.query("SELECT count(*)::int AS n FROM control.schema_migrations WHERE version='036_atomic_dispatch_settlement'")).rows[0].n,1)
+      await pool.query("INSERT INTO control.schema_migrations(version,sha256) VALUES('999_test_future_schema',repeat('a',64))")
+      await assert.rejects(runVersionedMigrations(pool,sources),/UNSUPPORTED_MIGRATION_HISTORY/)
+      await pool.query("DELETE FROM control.schema_migrations WHERE version='999_test_future_schema'")
       const rollback006 = await readFile(
         new URL('../migrations/006_sales_read_models.rollback.sql', import.meta.url),
         'utf8',

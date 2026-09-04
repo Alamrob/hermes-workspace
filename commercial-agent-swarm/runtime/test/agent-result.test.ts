@@ -66,6 +66,13 @@ const raw = {
 }
 
 describe('canonical AgentResult reconciliation', () => {
+  it('retains confirmed over-reservation usage but removes model conclusions deterministically',()=>{
+    const over={...usage,cost:{...usage.cost,usage_value_usd:0.2}},charge={currency:'USD',amount:0.02}
+    const result=reconcileAgentResult(raw,identity,over,charge,raw.started_at,raw.finished_at)
+    assert.equal(result.status,'failed');assert.equal(result.metrics.provider_usage_value_usd,0.2);assert.equal(result.metrics.runtime_output_accepted,false)
+    assert.deepEqual(result.facts,[]);assert.deepEqual(result.artifacts,[])
+    assert.deepEqual(reconcileAgentResult(result,identity,over,charge,raw.started_at,raw.finished_at),result)
+  })
   it('conforms its closed top-level contract and statuses to the canonical JSON Schema', async () => {
     const schema = JSON.parse(
       await readFile(

@@ -199,6 +199,7 @@ export class OpenCodeUsageProbe {
     missionUsageValueMicroCents: number
     totalUsageValueMicroCents: number
     incrementalCashCostMicroCents: 0
+    budgetExceeded?: true
   }> {
     if (this.busy)
       throw new OpenCodeUsageProbeError(
@@ -249,14 +250,15 @@ export class OpenCodeUsageProbe {
           throw new Error('OPENCODE_USAGE_WINDOW_INVALID')
         reconcileTelemetry(usage, row)
         const run = row.usageValueMicroCents
-        if (
+        const budgetExceeded =
           run > MAX_RUN_USAGE_VALUE_MICRO_CENTS ||
           input.missionCommittedUsageValueMicroCents + run >
             MAX_MISSION_USAGE_VALUE_MICRO_CENTS ||
           input.totalCommittedUsageValueMicroCents + run >
             MAX_TOTAL_USAGE_VALUE_MICRO_CENTS
-        )
-          throw new Error('OPENCODE_USAGE_VALUE_BUDGET_EXCEEDED')
+        // This is an observed charge, not permission for another call. Keep
+        // the exact reconciled record so settlement can charge and contain it.
+        // Pre-execution reservation checks above remain fail-closed.
         return {
           usage,
           usageRecordId: row.id,
@@ -266,6 +268,7 @@ export class OpenCodeUsageProbe {
           totalUsageValueMicroCents:
             input.totalCommittedUsageValueMicroCents + run,
           incrementalCashCostMicroCents: 0,
+          ...(budgetExceeded ? { budgetExceeded: true as const } : {}),
         }
       } catch (error) {
         throw classifyProbeError(error, 'usage_unknown')

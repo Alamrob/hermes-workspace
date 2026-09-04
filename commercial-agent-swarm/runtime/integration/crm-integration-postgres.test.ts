@@ -53,6 +53,8 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '032_a1_assignment_execution_authorization',
         '033_a1_dispatch_execution_arm',
         '034_a1_dispatch_execution_window',
+        '035_a1_window_supervisor',
+        '036_atomic_dispatch_settlement',
       ]
       await runVersionedMigrations(
         pool,
@@ -139,21 +141,21 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
             cohortId,
             `control-${index}`,
             `company-${index}`,
-            '2026-09-01T00:00:00Z',
+            new Date(Date.now()+24*60*60_000).toISOString(),
             `evidence-${index}`,
           ],
         )
       }
       await assert.rejects(
         pool.query(
-          `SELECT control.add_pilot_target($1,$2,'control-10','company-10',NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft','2026-09-01T00:00:00Z','evidence-10')`,
+          `SELECT control.add_pilot_target($1,$2,'control-10','company-10',NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft',clock_timestamp()+interval '1 day','evidence-10')`,
           [randomUUID(), cohortId],
         ),
         /PILOT_TARGET_LIMIT_EXCEEDED/,
       )
       await assert.rejects(
         pool.query(
-          `SELECT control.add_pilot_target($1,$2,'control-0','company-duplicate',NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft','2026-09-01T00:00:00Z','evidence-duplicate')`,
+          `SELECT control.add_pilot_target($1,$2,'control-0','company-duplicate',NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft',clock_timestamp()+interval '1 day','evidence-duplicate')`,
           [randomUUID(), cohortId],
         ),
         /PILOT_TARGET_IDEMPOTENCY_CONFLICT/,
@@ -167,7 +169,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
       await pool.query(`SET ROLE commercial_runtime`)
       await assert.rejects(
         pool.query(
-          `SELECT control.add_pilot_target($1,$2,'blocked-control','company-blocked',NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft','2026-09-01T00:00:00Z','evidence-block')`,
+          `SELECT control.add_pilot_target($1,$2,'blocked-control','company-blocked',NULL,NULL,'operacion-sin-planillas','offer-v1','email','admitted','draft',clock_timestamp()+interval '1 day','evidence-block')`,
           [randomUUID(), cohortId],
         ),
         /PILOT_TARGET_SUPPRESSED/,

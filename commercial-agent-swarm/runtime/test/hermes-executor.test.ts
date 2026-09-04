@@ -256,6 +256,7 @@ class FakeRunner implements ProcessRunner {
   invocations: Array<ProcessInvocation> = []
   copiedSeed: string | undefined
   timedOut = false
+  cancelled = false
   exitCode = 0
   stderr = ''
   output = JSON.stringify({
@@ -324,6 +325,7 @@ class FakeRunner implements ProcessRunner {
       stderr: this.stderr,
       exitCode: this.exitCode,
       timedOut: this.timedOut,
+      cancelled: this.cancelled,
     }
   }
 }
@@ -375,10 +377,35 @@ async function setup(
     pricingClock: () => new Date('2026-08-16T12:00:00Z'),
     pricingPreflight: options.productionPricing ? undefined : () => undefined,
   })
-  return { root, seed, runner, ownershipCalls, executor }
+  return { root, seed, runner, ownership, ownershipCalls, executor }
 }
 
 describe('isolated Hermes executor', () => {
+  it('cancellation in final home cleanup rejects model success and preserves validated usage',async()=>{
+    const state=await setup(),controller=new AbortController()
+    state.ownership.reclaim=async path=>{if(path.includes('hermes-home-'))controller.abort()}
+    try{
+      const envelope=await state.executor.execute(input(),{signal:controller.signal})
+      assert.equal(controller.signal.aborted,true)
+      assert.equal(envelope.agent_result.status,'failed')
+      assert.equal((envelope.agent_result.errors[0] as {code:string}).code,'HERMES_CANCELLED')
+      assert.equal(envelope.usage.tokens.total,15);assert.equal(envelope.usage.cost.usage_value_usd,0.0000055)
+      await assert.rejects(access(state.runner.invocations[0].env.HERMES_HOME))
+      await assert.rejects(access(state.runner.invocations[0].cwd))
+    }finally{await rm(state.root,{recursive:true,force:true})}
+  })
+  it('verified runner cancellation does not read a usage file or invent a zero charge',async()=>{
+    const state=await setup();state.runner.cancelled=true;state.runner.writeUsage=false
+    try{
+      await assert.rejects(state.executor.execute(input()),error=>error instanceof Error&&error.message==='HERMES_CANCELLED'&&(error as {executionState?:string}).executionState==='finished')
+      await assert.rejects(access(state.runner.invocations[0].cwd))
+    }finally{await rm(state.root,{recursive:true,force:true})}
+  })
+  it('pre-cancelled executor performs no child invocation',async()=>{
+    const state=await setup(),controller=new AbortController();controller.abort()
+    try{await assert.rejects(state.executor.execute(input(),{signal:controller.signal}),/HERMES_CANCELLED/);assert.equal(state.runner.invocations.length,0)}
+    finally{await rm(state.root,{recursive:true,force:true})}
+  })
   it('binds trusted usage ownership to the isolated child identity', async () => {
     const entrypoints = await readFile(
       new URL('../src/runtime-entrypoints.ts', import.meta.url),

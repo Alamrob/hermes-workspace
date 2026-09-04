@@ -300,4 +300,34 @@ describe('read-only OpenCode Usage Export gate', () => {
     assert.equal(MAX_MISSION_USAGE_VALUE_MICRO_CENTS, 50_000_000)
     assert.equal(MAX_TOTAL_USAGE_VALUE_MICRO_CENTS, 1_000_000_000)
   })
+
+  it('preserves an unequivocally reconciled overcharge without allowing another execution', async () => {
+    let exports = 0, probes = 0
+    const gate = new OpenCodeUsageProbe({
+      now: () => new Date('2026-08-16T12:05:00.000Z'),
+      client: new OpenCodeUsageExportClient({
+        readToken: async () => 'synthetic',
+        reader: {getCsvExport: async () => (++exports === 1 ? BASELINE : AFTER.replace(',1234567,', ',20000000,'))},
+      }),
+    })
+    const result = await gate.measure({
+      serviceAccountId: 'svc-12345678',
+      missionCommittedUsageValueMicroCents: 40_000_000,
+      totalCommittedUsageValueMicroCents: 990_000_000,
+      probe: async () => {probes++; return localUsage},
+    })
+    assert.equal(result.budgetExceeded, true)
+    assert.equal(result.usageRecordId, 'usage-2')
+    assert.equal(result.runUsageValueMicroCents, 20_000_000)
+    assert.equal(result.missionUsageValueMicroCents, 60_000_000)
+    assert.equal(result.totalUsageValueMicroCents, 1_010_000_000)
+    assert.equal(probes, 1)
+    await assert.rejects(gate.measure({
+      serviceAccountId: 'svc-12345678',
+      missionCommittedUsageValueMicroCents: result.missionUsageValueMicroCents,
+      totalCommittedUsageValueMicroCents: result.totalUsageValueMicroCents,
+      probe: async () => {probes++; return localUsage},
+    }), e => e instanceof OpenCodeUsageProbeError && e.executionState === 'not_started')
+    assert.equal(probes, 1); assert.equal(exports, 2)
+  })
 })

@@ -3,8 +3,10 @@ import { createConnection } from 'node:net'
 import { reconcileAgentResult } from './agent-result.js'
 import { OPENCODE_GO_PRICING_SNAPSHOT } from './opencode-go-pricing.js'
 import { encodeFrame, readSingleFrame } from './unix-frame.js'
-import type { ExecutorEnvelope, ExecutorPort } from './hermes-executor.js'
+import type { ExecutorEnvelope, ExecutorPort, ExecutorContext } from './hermes-executor.js'
 import type { ExecuteInput } from './executor-contract.js'
+import {cancelledEnvelope,validateCancelResponse} from './executor-cancellation.js'
+import {isLeaseClosingReply,sameLeaseIdentity,validateExecutionPermit,validateLeaseReply,type ExecutionLeaseGrant,type ExecutionPermitSource} from './execution-lease.js'
 
 export type ExecutionState = 'not_started' | 'unknown' | 'finished'
 
@@ -22,6 +24,7 @@ export interface UnixExecutorClientOptions {
   socketPath: string
   timeoutMs: number
   connectTimeoutMs?: number
+  requireExecutionLease?:boolean
   onPhase?: (phase: ExecutorIpcPhase, input: ExecuteInput) => void
 }
 
@@ -46,11 +49,37 @@ export class UnixExecutorClient implements ExecutorPort {
       throw new Error('EXECUTOR_CONNECT_TIMEOUT_INVALID')
   }
 
-  async execute(input: ExecuteInput): Promise<ExecutorEnvelope> {
+  async execute(input: ExecuteInput,context?:ExecutorContext): Promise<ExecutorEnvelope> {
+    if(context?.signal?.aborted)throw new ExecutorTransportError('HERMES_CANCELLED',false,'not_started')
+    if(this.options.requireExecutionLease&&!context?.readExecutionPermit)throw new ExecutorTransportError('EXECUTOR_LEASE_REQUIRED',false,'not_started')
     this.emitPhase('executor_ipc_client_start', input)
     const requestId = randomUUID()
-    const frame = encodeFrame({ request_id: requestId, type: 'execute', ...input })
+    let initialLease:ExecutionLeaseGrant|undefined
+    if(context?.readExecutionPermit){
+      try{initialLease=await this.acquireLease(requestId,input,context.readExecutionPermit)}
+      catch{throw new ExecutorTransportError('EXECUTOR_LEASE_DENIED',false,'not_started')}
+    }
+    const leaseCancellation=new AbortController()
+    context={...context,signal:context?.signal?AbortSignal.any([context.signal,leaseCancellation.signal]):leaseCancellation.signal}
+    if(context.signal?.aborted)throw new ExecutorTransportError('HERMES_CANCELLED',false,'not_started')
+    const frame = encodeFrame({ request_id: requestId, type: 'execute', ...input,...(initialLease?{execution_lease:initialLease}:{}) })
+    let finished=false,renewTimer:ReturnType<typeof setTimeout>|undefined,renewal:Promise<void>|undefined,closingTimer:ReturnType<typeof setTimeout>|undefined
+    const closing=()=>{if(!finished&&!closingTimer)closingTimer=setTimeout(()=>socket.destroy(Error('EXECUTOR_CLEANUP_TIMEOUT')),1000)}
+    const pollLease=()=>{
+      renewal=(async()=>{
+        const grant=await this.acquireLease(requestId,input,context!.readExecutionPermit!)
+        if(finished||context?.signal?.aborted)return
+        if(!sameLeaseIdentity(initialLease!,grant))throw Error('EXECUTOR_LEASE_DENIED')
+        const id=randomUUID(),response=await this.controlRpc({request_id:id,type:'lease_renew',target_request_id:requestId,mission_id:input.mission_id,assignment_id:input.assignment_id,execution_lease:grant})
+        if(isLeaseClosingReply(response,id)){closing();return}
+        validateLeaseReply(response,id,'lease_renew_result')
+        if(!finished&&!context?.signal?.aborted)renewTimer=setTimeout(pollLease,Math.min(1000,Math.max(1,Math.floor(grant.valid_for_ms/3))))
+      })().catch(error=>{if(error instanceof Error&&error.message==='EXECUTOR_LEASE_CLOSING'){closing();return}if(!finished)leaseCancellation.abort()})
+    }
     let connected = false
+    let sent=false
+    let cancellation:Promise<void>|undefined
+    let completed:ExecutorEnvelope
     const socket = createConnection({
       path: this.options.socketPath,
       allowHalfOpen: true,
@@ -70,10 +99,21 @@ export class UnixExecutorClient implements ExecutorPort {
       connected = true
       clearTimeout(connectTimer)
       this.emitPhase('executor_ipc_connected', input)
+      if(context?.signal?.aborted){socket.destroy(new Error('HERMES_CANCELLED'));return}
       if (strictEof) socket.end(frame)
       else socket.write(frame)
+      sent=true
+      if(initialLease)renewTimer=setTimeout(pollLease,Math.min(1000,Math.max(1,Math.floor(initialLease.valid_for_ms/3))))
       this.emitPhase('executor_ipc_request_sent', input)
     })
+    const cancel=()=>{
+      if(!sent){socket.destroy(new Error('HERMES_CANCELLED'));return}
+      // Acceptance is not proof of termination. Keep the original result channel
+      // open and wait for its terminal response; uncertainty retains the lease.
+      cancellation??=this.cancel(requestId,input).catch(()=>undefined)
+    }
+    context?.signal?.addEventListener('abort',cancel,{once:true})
+    if(context?.signal?.aborted)cancel()
     try {
       const value = await responsePromise
       this.emitPhase('executor_ipc_response_received', input)
@@ -85,11 +125,13 @@ export class UnixExecutorClient implements ExecutorPort {
           response.error.recoverable,
           response.error.execution_state,
         )
-      return response.envelope
+      completed=response.envelope
     } catch (error) {
       clearTimeout(connectTimer)
       socket.destroy()
       if (error instanceof ExecutorTransportError) throw error
+      if(sent)cancellation??=this.cancel(requestId,input).catch(()=>undefined)
+      if(context?.signal?.aborted&&!sent)throw new ExecutorTransportError('HERMES_CANCELLED',false,'not_started')
       if (!connected)
         throw new ExecutorTransportError(
           error instanceof Error && error.message === 'EXECUTOR_IPC_CONNECT_TIMEOUT'
@@ -103,7 +145,48 @@ export class UnixExecutorClient implements ExecutorPort {
           ? 'EXECUTOR_IPC_TIMEOUT'
           : 'EXECUTOR_IPC_LOST'
       throw new ExecutorTransportError(code, true, 'unknown')
+    }finally{
+      finished=true
+      if(renewTimer)clearTimeout(renewTimer)
+      clearTimeout(connectTimer)
+      context?.signal?.removeEventListener('abort',cancel)
+      await renewal
+      if(closingTimer)clearTimeout(closingTimer)
+      await cancellation
     }
+    // No await after this acceptance boundary. In particular cancellation can
+    // win while we are waiting for the separate cancellation acknowledgement.
+    return context?.signal?.aborted ? cancelledEnvelope(completed,input) : completed
+  }
+
+  private async acquireLease(target:string,input:ExecuteInput,read:ExecutionPermitSource):Promise<ExecutionLeaseGrant>{
+    const id=randomUUID(),reply=await this.controlRpc({request_id:id,type:'lease_challenge',target_request_id:target,mission_id:input.mission_id,assignment_id:input.assignment_id})
+    if(isLeaseClosingReply(reply,id))throw Error('EXECUTOR_LEASE_CLOSING')
+    const challenge_id=validateLeaseReply(reply,id,'lease_challenge_result')!
+    let timer:ReturnType<typeof setTimeout>|undefined
+    try{
+      const permit=validateExecutionPermit(await Promise.race([read(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('EXECUTOR_LEASE_DENIED')),2000)})]))
+      if(permit.job_id!==input.assignment_id||permit.mission_id!==input.mission_id)throw Error('EXECUTOR_LEASE_DENIED')
+      return{...permit,challenge_id}
+    }finally{if(timer)clearTimeout(timer)}
+  }
+
+  private async controlRpc(frame:unknown):Promise<unknown>{
+    const socket=createConnection({path:this.options.socketPath,allowHalfOpen:true}),strict=process.platform!=='win32'
+    const response=readSingleFrame(socket,4096,Math.min(this.options.timeoutMs,3000),strict)
+    socket.once('connect',()=>{if(strict)socket.end(encodeFrame(frame));else socket.write(encodeFrame(frame))})
+    try{return await response}finally{socket.destroy()}
+  }
+
+  private async cancel(target:string,input:ExecuteInput):Promise<void>{
+    const id=randomUUID(),socket=createConnection({path:this.options.socketPath,allowHalfOpen:true})
+    const strictEof=process.platform!=='win32'
+    const response=readSingleFrame(socket,4096,Math.min(this.options.timeoutMs,3000),strictEof)
+    socket.once('connect',()=>{
+      const frame=encodeFrame({request_id:id,type:'cancel',target_request_id:target,mission_id:input.mission_id,assignment_id:input.assignment_id})
+      if(strictEof)socket.end(frame);else socket.write(frame)
+    })
+    try{validateCancelResponse(await response,id)}finally{socket.destroy()}
   }
 
   private emitPhase(phase: ExecutorIpcPhase, input: ExecuteInput): void {
@@ -209,7 +292,6 @@ function validateEnvelope(value: unknown, input: ExecuteInput): void {
     typeof usage.cost.usage_value_usd !== 'number' ||
     !Number.isFinite(usage.cost.usage_value_usd) ||
     usage.cost.usage_value_usd < 0 ||
-    usage.cost.usage_value_usd > input.reservation.budget_reservation.amount ||
     usage.cost.cash_cost_usd !== 0 ||
     usage.cost.source !== 'official_docs_snapshot' ||
     usage.cost.pricing_snapshot_id !== OPENCODE_GO_PRICING_SNAPSHOT.id
@@ -253,6 +335,15 @@ function allowedError(code: string): boolean {
   return (
     [
       'EXECUTOR_BUSY',
+      'EXECUTOR_STOPPING',
+      'EXECUTOR_LEASE_REQUIRED',
+      'EXECUTOR_LEASE_EXPIRED',
+      'EXECUTOR_LEASE_INVALID',
+      'EXECUTOR_LEASE_CAPACITY',
+      'EXECUTOR_LEASE_DENIED',
+      'EXECUTOR_GUARDIAN_REQUIRED',
+      'EXECUTOR_GUARDIAN_UNAVAILABLE',
+      'EXECUTOR_GUARDIAN_FRAME',
       'INVALID_EXECUTOR_REQUEST',
       'IPC_FRAME_LENGTH',
       'IPC_FRAME_TOO_LARGE',
@@ -261,6 +352,8 @@ function allowedError(code: string): boolean {
       'IPC_FRAME_JSON',
       'IPC_FRAME_TIMEOUT',
       'UNKNOWN_PROFILE',
+      'INVALID_EXECUTOR_CANCEL',
+      'HERMES_CANCELLED',
       'HERMES_TIMEOUT',
       'HERMES_PROCESS_GROUP_NOT_REAPED',
       'HERMES_STDOUT_LIMIT',

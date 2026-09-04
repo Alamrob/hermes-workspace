@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { after, before, describe, it } from 'node:test'
 import { Pool } from 'pg'
-import { PostgresDispatchQueue, type EnqueueJob } from '../src/dispatch-queue.js'
+import type { EnqueueJob } from '../src/dispatch-queue.js'
+import { LegacyLedgerQueue as PostgresDispatchQueue } from './legacy-ledger-queue.js'
 import { runVersionedMigrations } from '../src/migration-runner.js'
 import { validWorkOrder } from '../test/fixtures.js'
 import { validateWorkOrder } from '../src/work-orders.js'
@@ -59,6 +60,8 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       '032_a1_assignment_execution_authorization',
       '033_a1_dispatch_execution_arm',
       '034_a1_dispatch_execution_window',
+      '035_a1_window_supervisor',
+      '036_atomic_dispatch_settlement',
     ]
     await runVersionedMigrations(leftPool, await Promise.all(versions.map(async (version) => ({
       version,
@@ -67,7 +70,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     // This suite isolates the underlying budget ledger. R126's production claim
     // interlock has its own PostgreSQL integration suite and is rolled back here
     // before any test job exists.
-    await leftPool.query(await readFile(
+    await leftPool.query(await readFile(new URL('../migrations/036_atomic_dispatch_settlement.rollback.sql',import.meta.url),'utf8'));await leftPool.query(await readFile(new URL('../migrations/035_a1_window_supervisor.rollback.sql',import.meta.url),'utf8'));await leftPool.query(await readFile(
       new URL('../migrations/034_a1_dispatch_execution_window.rollback.sql', import.meta.url),
       'utf8',
     ))

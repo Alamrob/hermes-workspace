@@ -32,6 +32,21 @@ export interface AgentResult {
 
 export const MAX_AGENT_RESULT_SUMMARY_CHARS = 32_000
 
+// Runtime-owned quarantine of already validated output. Actual trusted usage
+// stays outside the result and must still reach authoritative settlement.
+export function rejectCommercialResultForBudget(result: AgentResult): AgentResult {
+  return {
+    ...result,
+    status: 'failed',
+    summary: 'Result rejected because confirmed usage exceeded its reservation. Retain actual usage for settlement.',
+    facts: [], inferences: [], actions_taken: [], external_changes: [],
+    evidence: [], artifacts: [], risks: [], pending_approvals: [],
+    metrics: {runtime_output_accepted: false, usage_budget_exceeded: true},
+    errors: [{code: 'HERMES_COST_RESERVATION_EXCEEDED', message: 'Confirmed usage exceeded the reserved amount.', recoverable: false, attempts: 1, next_safe_step: 'Settle actual usage and keep execution contained; do not retry.'}],
+    recommended_next_actions: ['Settle actual usage and keep execution contained; do not retry.'],
+  }
+}
+
 export const AGENT_RESULT_TOP_LEVEL_KEYS = [
   'mission_id',
   'trace_id',
@@ -135,18 +150,20 @@ export function reconcileAgentResult(
     usage.cost.cash_cost_usd !== 0
   )
     throw new Error('HERMES_PRICING_AUTHORITY_INVALID')
-  if (usage.cost.usage_value_usd > charge.amount)
-    throw new Error('HERMES_COST_RESERVATION_EXCEEDED')
+  if (!Number.isFinite(usage.cost.usage_value_usd)||usage.cost.usage_value_usd<0)
+    throw new Error('HERMES_COST_UNKNOWN')
+  const exceeded=usage.cost.usage_value_usd>charge.amount
   const validatedRaw = raw as unknown as AgentResult
   return {
     ...validatedRaw,
+    ...(exceeded ? rejectCommercialResultForBudget(validatedRaw) : {}),
     mission_id: identity.mission_id,
     trace_id: identity.trace_id,
     assignment_id: identity.assignment_id,
     agent_id: identity.profile_id,
     external_changes: [],
     metrics: {
-      ...validatedRaw.metrics,
+      ...(exceeded?{runtime_output_accepted:false,usage_budget_exceeded:true}:validatedRaw.metrics),
       provider_usage_value_usd: usage.cost.usage_value_usd,
       cash_cost_usd: usage.cost.cash_cost_usd,
       pricing_snapshot_id: usage.cost.pricing_snapshot_id,

@@ -1,4 +1,5 @@
 import { hashAction } from './canonical.js'
+import { rejectCommercialResultForBudget } from './agent-result.js'
 import {
   OpenCodeUsageProbeError,
   type UsageExecutionPhase,
@@ -6,6 +7,8 @@ import {
 import { ExecutorTransportError } from './unix-executor-client.js'
 import type { ExecutorIpcPhase } from './unix-executor-client.js'
 import type { Pool } from 'pg'
+import type {ExecutionPermit} from './execution-lease.js'
+import {PostgresDispatchSettlement,SettlementUncertainError,type SettlementStatus} from './postgres-dispatch-settlement.js'
 import type {
   ExecutionPolicy,
   ExecutorEnvelope,
@@ -74,6 +77,7 @@ export interface UsageProbePort {
     missionUsageValueMicroCents: number
     totalUsageValueMicroCents: number
     incrementalCashCostMicroCents: 0
+    budgetExceeded?: true
   }>
 }
 
@@ -83,6 +87,7 @@ export type DispatchPhase =
   | ExecutorIpcPhase
   | 'completed'
   | 'failed'
+  | 'settlement_unconfirmed'
 
 export interface DispatchPhaseEvent {
   phase: DispatchPhase
@@ -131,11 +136,14 @@ export interface DispatchQueuePort {
     envelope: unknown,
     artifactHash: string,
     cost: CompletionCost,
-  ) => Promise<void>
+  ) => Promise<SettlementStatus|void>
 }
 
 export class PostgresDispatchQueue implements DispatchQueuePort {
-  constructor(private readonly pool: Pool) {}
+  private readonly settlement: PostgresDispatchSettlement
+  constructor(private readonly pool: Pool) {
+    this.settlement = new PostgresDispatchSettlement(pool)
+  }
 
   async enqueue(job: EnqueueJob): Promise<string> {
     const result = await this.pool.query<{ job_id: string }>(
@@ -278,26 +286,13 @@ export class PostgresDispatchQueue implements DispatchQueuePort {
     envelope: unknown,
     artifactHash: string,
     cost: CompletionCost,
-  ): Promise<void> {
-    await this.pool.query(
-      'SELECT control.complete_dispatch($1::uuid,$2::text,$3::jsonb,$4::text,$5::bigint,$6::text,$7::text,$8::bigint,$9::bigint,$10::integer)',
-      [
-        id,
-        worker,
-        JSON.stringify(envelope),
-        artifactHash,
-        cost.usageValueMicroCents,
-        cost.usageRecordId,
-        cost.source,
-        cost.budgetVersion,
-        cost.total_tokens,
-        cost.api_calls,
-      ],
-    )
+  ): Promise<SettlementStatus> {
+    return this.settlement.complete(id, worker, envelope, artifactHash, cost)
   }
 }
 
 export interface DispatcherOptions {
+  readExecutionPermit?:(job:ClaimedJob)=>Promise<ExecutionPermit>
   queue: DispatchQueuePort
   executor: ExecutorPort
   workerId: string
@@ -351,7 +346,7 @@ export class DeterministicDispatcher {
           evidence: job.evidence,
           execution_policy: job.execution_policy,
           reservation: job.reservation,
-        })
+        },{readExecutionPermit:this.options.readExecutionPermit?()=>this.options.readExecutionPermit!(job):undefined})
         return envelope.usage
       }
       const measured =
@@ -379,14 +374,16 @@ export class DeterministicDispatcher {
       )
       if (
         !Number.isSafeInteger(nativeMicroCents) ||
-        nativeMicroCents < 1 ||
-        nativeMicroCents > job.usageBudget.reservationMicroCents
+        nativeMicroCents < 1
       )
         throw new Error('HERMES_NATIVE_USAGE_VALUE_INVALID')
       const usageRecordId = measured?.usageRecordId ??
         `native:${job.job_id}:${envelope.usage.cost.pricing_snapshot_id}`
+      if (measured?.budgetExceeded ||
+          (measured && measured.runUsageValueMicroCents > job.usageBudget.reservationMicroCents))
+        envelope = {...envelope, agent_result: rejectCommercialResultForBudget(envelope.agent_result)}
       const hash = hashAction(envelope.agent_result)
-      await this.options.queue.complete(
+      const settlement=await this.options.queue.complete(
         job.job_id,
         this.options.workerId,
         envelope,
@@ -403,9 +400,12 @@ export class DeterministicDispatcher {
           api_calls: envelope.usage.api_calls,
         },
       )
-      this.emitPhase(job, 'completed')
+      this.emitPhase(job, settlement==='failed'||settlement==='budget_exceeded'?'failed':'completed')
       return true
     } catch (error) {
+      // A completion reply can be lost after its transaction committed. Do not
+      // overwrite a known receipt with fail_dispatch or retry provider work.
+      if(error instanceof SettlementUncertainError){this.emitPhase(job,'settlement_unconfirmed');return true}
       if (
         error instanceof ExecutorTransportError &&
         error.executionState === 'unknown'

@@ -56,7 +56,7 @@ describe('Node process runner containment', () => {
     async () => {
       const call = await invocation(
         "const{spawn}=require('child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});console.log(c.pid);setInterval(()=>{},1000)",
-        100,
+        1_000,
         1024,
       )
       try {
@@ -64,6 +64,7 @@ describe('Node process runner containment', () => {
         assert.equal(out.timedOut, true)
         const pid = Number(out.stdout.trim())
         assert.equal(Number.isSafeInteger(pid), true)
+        assert.ok(pid > 1, 'child must publish a real PID before timeout')
         assert.throws(() => process.kill(pid, 0))
       } finally {
         await rm(call.cwd, { recursive: true, force: true })
@@ -76,7 +77,7 @@ describe('Node process runner containment', () => {
     async () => {
       const call = await invocation(
         "const{spawn}=require('child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:['ignore','inherit','inherit']});c.unref();console.log(c.pid);setInterval(()=>{},1000)",
-        100,
+        1_000,
         1024,
       )
       let detachedPid = 0
@@ -87,6 +88,7 @@ describe('Node process runner containment', () => {
         assert.ok(Date.now() - startedAt < 3_000)
         detachedPid = Number(out.stdout.trim())
         assert.equal(Number.isSafeInteger(detachedPid), true)
+        assert.ok(detachedPid > 1, 'escaped child must exist for this negative-boundary test')
       } finally {
         if (detachedPid > 0) {
           try {

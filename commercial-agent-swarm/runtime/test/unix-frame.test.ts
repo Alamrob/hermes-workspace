@@ -4,6 +4,13 @@ import { describe, it } from 'node:test'
 import { encodeFrame, readSingleFrame } from '../src/unix-frame.js'
 
 describe('bounded Unix IPC frame', () => {
+  it('rejects an overdue complete frame even before the delayed timeout callback runs',async()=>{
+    const stream=new PassThrough(),pending=readSingleFrame(stream,1024,5)
+    const until=performance.now()+20
+    while(performance.now()<until){/* Deliberate short event-loop pause; no I/O. */}
+    stream.end(encodeFrame({ok:true}))
+    await assert.rejects(pending,/IPC_FRAME_TIMEOUT/)
+  })
   it('encodes one uint32be length-prefixed JSON value', () => {
     const frame = encodeFrame({ ok: true }, 1024)
     assert.equal(frame.readUInt32BE(0), 11)

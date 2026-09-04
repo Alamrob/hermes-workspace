@@ -36,6 +36,8 @@ const EXPECTED_MIGRATIONS = [
   '032_a1_assignment_execution_authorization',
   '033_a1_dispatch_execution_arm',
   '034_a1_dispatch_execution_window',
+  '035_a1_window_supervisor',
+  '036_atomic_dispatch_settlement',
 ] as const
 
 export interface MigrationSource {
@@ -90,6 +92,16 @@ export async function runVersionedMigrations(
     await client.query(
       `SELECT pg_advisory_lock(hashtext('proptimiza-commercial-migrations'))`,
     )
+    const existing = await client.query<{ present: boolean }>(
+      `SELECT to_regclass('control.schema_migrations') IS NOT NULL AS present`,
+    )
+    if (existing.rows[0]?.present) {
+      const extra = await client.query(
+        'SELECT version FROM control.schema_migrations WHERE NOT(version=ANY($1::text[]))',
+        [migrations.map(m => m.version)],
+      )
+      if (extra.rowCount) throw new Error('UNSUPPORTED_MIGRATION_HISTORY')
+    }
     for (const migration of migrations)
       await applyMigration(client, migration)
   } catch (error) {

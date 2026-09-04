@@ -179,6 +179,11 @@ describe('runtime persistence composition', () => {
       ),
       true,
     )
+    assert.equal(expectedFunctionSets[0].includes('control.get_a1_job_execution_permit(uuid,text,bigint)'),true)
+    assert.equal(expectedFunctionSets[0].includes('control.stage_dispatch_settlement(uuid,text,jsonb,text,bigint,text,text,bigint,bigint,integer)'),true)
+    assert.equal(expectedFunctionSets[0].includes('control.commit_dispatch_settlement(uuid,text,jsonb,text,bigint,text,text,bigint,bigint,integer,uuid)'),true)
+    assert.equal(expectedFunctionSets[0].includes('control.get_dispatch_settlement(uuid,text,jsonb,text,bigint,text,text,bigint,bigint,integer)'),true)
+    assert.equal(expectedFunctionSets[0].some(f=>f.includes('complete_dispatch(')),false)
     await verifyProductionDatabasePrincipals([
       {
         pool: fake('evidence_login', ['commercial_approval_evidence']) as never,

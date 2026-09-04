@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { describe,it } from 'node:test'
-import { Pool } from 'pg'
+import { Pool, type PoolClient } from 'pg'
 import { loadMigrationSources } from '../src/migrate-main.js'
 import { runVersionedMigrations } from '../src/migration-runner.js'
 import { dropTestDatabase } from './database-cleanup.js'
@@ -17,6 +17,8 @@ const WINDOW_ATTESTATIONS={exact_arm_confirmed:true,exact_mission_confirmed:true
 integration('PostgreSQL exact A1 dispatch execution arm',()=>{
  it('records one exact arm but keeps claims blocked until a separate execution window exists',async()=>{
   const fixture=await databaseFixture('a1_execution_arm'),{admin,pool,database}=fixture
+  let supervisor:PoolClient|undefined
+  const supervisorInstance=randomUUID()
   try{
    await runVersionedMigrations(pool,await loadMigrationSources())
    const missionId=randomUUID(),traceId=randomUUID(),dispatchId=randomUUID(),enqueueId=randomUUID(),executionId=randomUUID(),armAuthorizationId=randomUUID(),armId=randomUUID(),jobId=randomUUID(),now=new Date(),dispatchExpires=new Date(now.getTime()+28*60_000).toISOString(),enqueueExpires=new Date(now.getTime()+24*60_000).toISOString(),executionExpires=new Date(now.getTime()+20*60_000).toISOString(),armStarts=now.toISOString(),armExpires=new Date(now.getTime()+10*60_000).toISOString(),missionHash='a'.repeat(64),planHash='b'.repeat(64),jobSetHash='c'.repeat(64),worker='broker-dispatcher-1'
@@ -37,6 +39,9 @@ integration('PostgreSQL exact A1 dispatch execution arm',()=>{
    const claim=await pool.query(`SELECT job_id FROM control.claim_dispatch($1,60,30)`,[worker]);assert.equal(claim.rowCount,0)
    await pool.query(`SELECT control.set_kill_switch('global','*',true)`)
    await pool.query(`UPDATE control.a1_dispatch_execution_control SET claiming_enabled=false,mission_id=NULL,arm_id=NULL,worker_id=NULL,opened_at=NULL,expires_at=NULL,updated_at=clock_timestamp() WHERE control_id=1`)
+   // Dedicated synthetic SQL session; real least-privilege daemon is tested by the isolated Linux harness.
+   supervisor=await pool.connect()
+   await supervisor.query('SELECT control.pulse_a1_window_supervisor($1)',[supervisorInstance])
    const windowId=randomUUID(),windowNow=new Date(),windowExpires=new Date(windowNow.getTime()+4*60_000).toISOString()
    const windowState=(await pool.query(`SELECT control.activate_a1_dispatch_execution_window($1::uuid,$2::uuid,$3,$4,$5,$6,$7::timestamptz,$8::timestamptz,$9::timestamptz,$10::uuid,$11::uuid,$12::uuid,$13,$14,$15,$16,$17::integer,$18::numeric,$19,$20::jsonb,$21,$22) AS state`,[windowId,missionId,'approved','Autoriza una sola ventana interna A1 con autocontención obligatoria.','director','proptimizaspa@gmail.com',windowNow.toISOString(),windowNow.toISOString(),windowExpires,armId,armAuthorizationId,executionId,missionHash,planHash,jobSetHash,worker,1,0.01,'6'.repeat(64),JSON.stringify(WINDOW_ATTESTATIONS),'a1-execution-window:postgres-r128-gate','7'.repeat(64)])).rows[0].state
    assert.equal(windowState.executionWindowEnabled,true);assert.equal(windowState.globalKillSwitchActive,false);assert.equal(windowState.maximumExternalActions,0)
@@ -46,10 +51,11 @@ integration('PostgreSQL exact A1 dispatch execution arm',()=>{
    await pool.query(`SELECT control.fail_dispatch($1::uuid,$2,$3,false,'not_started',1)`,[jobId,worker,'R128_SYNTHETIC_FAILURE'])
    assert.equal((await pool.query(`SELECT control.is_global_kill_switch_active() AS active`)).rows[0].active,true)
    assert.equal((await pool.query(`SELECT claiming_enabled FROM control.a1_dispatch_execution_control WHERE control_id=1`)).rows[0].claiming_enabled,false)
-   await assert.rejects(pool.query(await readFile(new URL('../migrations/034_a1_dispatch_execution_window.rollback.sql',import.meta.url),'utf8')),/A1_DISPATCH_EXECUTION_WINDOW_HISTORY_PRESENT/);await pool.query('ROLLBACK')
-  }finally{await destroyDatabase(admin,pool,database)}
+   await supervisor.query('SELECT control.stop_a1_window_supervisor($1)',[supervisorInstance]);supervisor.release();supervisor=undefined
+   await assert.rejects(pool.query(await readFile(new URL('../migrations/036_atomic_dispatch_settlement.rollback.sql',import.meta.url),'utf8')),/SETTLEMENT_HISTORY_PRESENT/);await pool.query('ROLLBACK')
+  }finally{if(supervisor){await supervisor.query('SELECT control.stop_a1_window_supervisor($1)',[supervisorInstance]).catch(()=>undefined);supervisor.release()}await destroyDatabase(admin,pool,database)}
  })
- it('rolls back cleanly when authorization and arm ledgers are empty',async()=>{const fixture=await databaseFixture('a1_execution_arm_rollback'),{admin,pool,database}=fixture;try{await runVersionedMigrations(pool,await loadMigrationSources());await pool.query(await readFile(new URL('../migrations/034_a1_dispatch_execution_window.rollback.sql',import.meta.url),'utf8'));await pool.query(await readFile(new URL('../migrations/033_a1_dispatch_execution_arm.rollback.sql',import.meta.url),'utf8'));assert.equal((await pool.query(`SELECT to_regclass('control.a1_dispatch_execution_arm_authorizations') IS NULL AS absent`)).rows[0].absent,true)}finally{await destroyDatabase(admin,pool,database)}})
+ it('rolls back cleanly when authorization and arm ledgers are empty',async()=>{const fixture=await databaseFixture('a1_execution_arm_rollback'),{admin,pool,database}=fixture;try{await runVersionedMigrations(pool,await loadMigrationSources());await pool.query(await readFile(new URL('../migrations/036_atomic_dispatch_settlement.rollback.sql',import.meta.url),'utf8'));await pool.query(await readFile(new URL('../migrations/035_a1_window_supervisor.rollback.sql',import.meta.url),'utf8'));await pool.query(await readFile(new URL('../migrations/034_a1_dispatch_execution_window.rollback.sql',import.meta.url),'utf8'));await pool.query(await readFile(new URL('../migrations/033_a1_dispatch_execution_arm.rollback.sql',import.meta.url),'utf8'));assert.equal((await pool.query(`SELECT to_regclass('control.a1_dispatch_execution_arm_authorizations') IS NULL AS absent`)).rows[0].absent,true)}finally{await destroyDatabase(admin,pool,database)}})
 })
 
 async function databaseFixture(prefix:string){const admin=new Pool({connectionString:ADMIN});const database=`${prefix}_${randomUUID().replaceAll('-','')}`;await admin.query(`CREATE DATABASE "${database}"`);const url=new URL(ADMIN!);url.pathname=`/${database}`;return{admin,database,pool:new Pool({connectionString:url.toString()})}}

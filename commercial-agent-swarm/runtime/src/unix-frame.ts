@@ -20,6 +20,7 @@ export async function readSingleFrame(
   requireEof = false,
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    const deadline = performance.now() + timeoutMs
     const chunks: Buffer[] = []
     let bytes = 0
     let declared: number | undefined
@@ -31,6 +32,7 @@ export async function readSingleFrame(
       stream.off('data', onData)
       stream.off('end', onEnd)
       stream.off('error', onError)
+      stream.off('close', onClose)
       if (error) reject(error); else resolve(value)
     }
     const fail = (code: string) => {
@@ -39,6 +41,9 @@ export async function readSingleFrame(
       finish(error)
     }
     const parseComplete = (all: Buffer) => {
+      // Timers can be delayed by a paused event loop. An overdue frame must not
+      // be accepted merely because its I/O callback ran before the timer.
+      if (performance.now() >= deadline) return fail('IPC_FRAME_TIMEOUT')
       try {
         const text = new TextDecoder('utf-8', { fatal: true }).decode(all.subarray(4))
         finish(undefined, JSON.parse(text))
@@ -70,9 +75,11 @@ export async function readSingleFrame(
       parseComplete(all)
     }
     const onError = (error: Error) => finish(error)
+    const onClose = () => finish(new Error('IPC_FRAME_TRUNCATED'))
     const timer = setTimeout(() => fail('IPC_FRAME_TIMEOUT'), timeoutMs)
     stream.on('data', onData)
     stream.once('end', onEnd)
     stream.once('error', onError)
+    stream.once('close', onClose)
   })
 }

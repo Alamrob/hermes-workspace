@@ -13,6 +13,23 @@ export const EXECUTOR_BOOTSTRAP_CONTRACT_V1 = [
   '/app/dist/executor-main.js',
 ] as const
 
+// V1 remains a historical contract. New production servers require V2 PID1.
+export const EXECUTOR_BOOTSTRAP_CONTRACT_V2 = [
+  ...EXECUTOR_BOOTSTRAP_CONTRACT_V1.slice(0, -2),
+  '/opt/hermes/.venv/bin/python', '-I', '-B', '/app/guardian/executor_guardian.py',
+] as const
+
+export function assertExecutorServerSecurity(input: {
+  pid:number;ppid:number;uid:number|undefined;gid:number|undefined;
+  status:string;parentStatus:string;parentCommand:string;
+}):void {
+  if(input.pid<=1||input.ppid!==1||input.parentCommand!==
+    '/opt/hermes/.venv/bin/python\0-I\0-B\0/app/guardian/executor_guardian.py\0')
+    throw Error('EXECUTOR_GUARDIAN_SECURITY_INVALID')
+  assertExecutorSupervisorSecurity({...input,pid:1})
+  assertExecutorSupervisorSecurity({pid:1,uid:10000,gid:10000,status:input.parentStatus})
+}
+
 export function assertExecutorSupervisorSecurity(input: {
   pid: number
   uid: number | undefined

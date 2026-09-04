@@ -66,6 +66,8 @@ export async function loadMigrationSources() {
       '032_a1_assignment_execution_authorization',
       '033_a1_dispatch_execution_arm',
       '034_a1_dispatch_execution_window',
+      '035_a1_window_supervisor',
+      '036_atomic_dispatch_settlement',
     ].map(async (version) => ({
       version,
       sql: await readFile(

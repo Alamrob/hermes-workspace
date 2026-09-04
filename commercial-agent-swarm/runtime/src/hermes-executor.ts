@@ -27,6 +27,8 @@ import {
   validateHermesUsage,
 } from './executor-contract.js'
 import { reconcileAgentResult } from './agent-result.js'
+import { cancelledEnvelope } from './executor-cancellation.js'
+import type {ExecutionPermitSource} from './execution-lease.js'
 import {
   assertOpenCodeGoExecutionPreflight,
   priceOpenCodeGoUsage,
@@ -127,6 +129,7 @@ export interface ProcessInvocation {
   timeoutMs: number
   stdoutLimitBytes: number
   stderrLimitBytes: number
+  signal?: AbortSignal
 }
 
 export interface ProcessOutput {
@@ -134,6 +137,7 @@ export interface ProcessOutput {
   stderr: string
   exitCode: number
   timedOut?: boolean
+  cancelled?: boolean
 }
 export interface ProcessRunner {
   run: (invocation: ProcessInvocation) => Promise<ProcessOutput>
@@ -176,7 +180,12 @@ export interface HermesExecutorOptions {
 }
 
 export interface ExecutorPort {
-  execute: (input: ExecuteInput) => Promise<ExecutorEnvelope>
+  execute: (input: ExecuteInput, context?: ExecutorContext) => Promise<ExecutorEnvelope>
+}
+export interface ExecutorContext {
+  signal?:AbortSignal
+  readExecutionPermit?:ExecutionPermitSource
+  leaseLive?:()=>boolean
 }
 
 export type ExecutorExecutionState = 'not_started' | 'unknown' | 'finished'
@@ -221,12 +230,16 @@ export class HermesExecutor implements ExecutorPort {
         throw new Error('HERMES_OUTPUT_LIMIT_INVALID')
   }
 
-  async execute(input: ExecuteInput): Promise<ExecutorEnvelope> {
+  async execute(input: ExecuteInput, context?: ExecutorContext): Promise<ExecutorEnvelope> {
     let executionState: ExecutorExecutionState = 'not_started'
     try {
-      return await this.executeTracked(input, (state) => {
+      if(context?.signal?.aborted)throw new ExecutorExecutionError('HERMES_CANCELLED','not_started')
+      const envelope = await this.executeTracked(input, (state) => {
         executionState = state
-      })
+      },context?.signal,context?.leaseLive)
+      // executeTracked includes asynchronous cleanup; cancellation may arrive
+      // after process close but before that cleanup has completed.
+      return context?.signal?.aborted ? cancelledEnvelope(envelope,input) : envelope
     } catch (error) {
       if (error instanceof ExecutorExecutionError) throw error
       throw new ExecutorExecutionError(
@@ -240,6 +253,8 @@ export class HermesExecutor implements ExecutorPort {
   private async executeTracked(
     input: ExecuteInput,
     setExecutionState: (state: ExecutorExecutionState) => void,
+    signal?:AbortSignal,
+    leaseLive?:()=>boolean,
   ): Promise<ExecutorEnvelope> {
     if (!ACTIVE_PROFILES.includes(input.profile_id))
       throw new Error('UNKNOWN_PROFILE')
@@ -298,6 +313,7 @@ export class HermesExecutor implements ExecutorPort {
         this.options.childGid,
       )
       const usageFile = join(cwd, 'usage.json')
+      if(signal?.aborted||(leaseLive&&!leaseLive()))throw new ExecutorExecutionError('HERMES_CANCELLED','not_started')
       const startedAt = new Date().toISOString()
       setExecutionState('unknown')
       const output = await this.options.runner.run({
@@ -329,7 +345,9 @@ export class HermesExecutor implements ExecutorPort {
         timeoutMs: this.options.timeoutMs,
         stdoutLimitBytes: this.options.stdoutLimitBytes ?? 1_048_576,
         stderrLimitBytes: this.options.stderrLimitBytes ?? 262_144,
+        signal,
       })
+      if (output.cancelled) throw new ExecutorExecutionError('HERMES_CANCELLED','finished')
       if (output.timedOut) throw new Error('HERMES_TIMEOUT')
       setExecutionState('finished')
       if (output.exitCode !== 0)
@@ -1262,6 +1280,7 @@ function runtimeValidationFailure(
 
 export class NodeProcessRunner implements ProcessRunner {
   async run(invocation: ProcessInvocation): Promise<ProcessOutput> {
+    if(invocation.signal?.aborted)throw new ExecutorExecutionError('HERMES_CANCELLED','not_started')
     return new Promise((resolvePromise, reject) => {
       const isolatedChild =
         process.platform !== 'win32' &&
@@ -1299,6 +1318,7 @@ export class NodeProcessRunner implements ProcessRunner {
       let stdoutBytes = 0
       let stderrBytes = 0
       let timedOut = false
+      let cancelled = false
       let overflow: Error | undefined
       let settled = false
       const terminate = () => {
@@ -1338,16 +1358,21 @@ export class NodeProcessRunner implements ProcessRunner {
         timedOut = true
         terminateAndClosePipes()
       }, invocation.timeoutMs)
+      const abort=()=>{if(!settled){cancelled=true;terminateAndClosePipes()}}
+      invocation.signal?.addEventListener('abort',abort,{once:true})
+      if(invocation.signal?.aborted)abort()
       child.once('error', (error) => {
         if (settled) return
         settled = true
         clearTimeout(timer)
+        invocation.signal?.removeEventListener('abort',abort)
         reject(error)
       })
       child.once('close', async (code) => {
         if (settled) return
         settled = true
         clearTimeout(timer)
+        invocation.signal?.removeEventListener('abort',abort)
         terminate()
         try {
           await waitForProcessGroupExit(child.pid)
@@ -1362,6 +1387,7 @@ export class NodeProcessRunner implements ProcessRunner {
             stderr: Buffer.concat(stderr).toString('utf8'),
             exitCode: code ?? -1,
             timedOut,
+            cancelled,
           })
       })
     })
@@ -1370,7 +1396,7 @@ export class NodeProcessRunner implements ProcessRunner {
 
 async function waitForProcessGroupExit(pid: number | undefined): Promise<void> {
   if (process.platform === 'win32' || !pid) return
-  const deadline = Date.now() + 2_000
+  const deadline = performance.now() + 2_000
   for (;;) {
     try {
       process.kill(-pid, 0)
@@ -1378,7 +1404,7 @@ async function waitForProcessGroupExit(pid: number | undefined): Promise<void> {
       if ((error as NodeJS.ErrnoException).code === 'ESRCH') return
       throw error
     }
-    if (Date.now() >= deadline)
+    if (performance.now() >= deadline)
       throw new Error('HERMES_PROCESS_GROUP_NOT_REAPED')
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 10))
   }

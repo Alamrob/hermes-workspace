@@ -20,6 +20,7 @@ import type {
 } from './hermes-executor.js'
 import type { OpenCodeUsageExportReadPort } from './opencode-usage-api.js'
 import type { Pool } from 'pg'
+import {PostgresExecutionPermitReader} from './postgres-execution-permit.js'
 
 export interface BrokerDispatcherDependencies {
   queue?: DispatchQueuePort
@@ -44,11 +45,15 @@ export function createBrokerDispatcher(
   )
   const queue = dependencies.queue ?? (pool ? new PostgresDispatchQueue(pool) : undefined)
   if (!queue) throw new Error('DISPATCH_QUEUE_REQUIRED')
+  if(!pool&&!dependencies.executor)throw Error('EXECUTION_PERMIT_DATABASE_REQUIRED')
+  const permits=pool?new PostgresExecutionPermitReader(pool):undefined
   return new DeterministicDispatcher({
     queue,
+    readExecutionPermit:permits?job=>permits.read(job.job_id,job.mission_id,workerId,job.usageBudget.version):undefined,
     executor:
       dependencies.executor ??
       new UnixExecutorClient({
+        requireExecutionLease:true,
         socketPath: config.socketPath,
         timeoutMs: config.clientTimeoutMs,
         onPhase: (phase, input) => dependencies.onPhase?.({
@@ -75,7 +80,9 @@ export function createExecutorServer(
   env: Record<string, string | undefined>,
   runner: ProcessRunner,
   ownership: HomeOwnershipPreparer,
+  guardian: import('./executor-guardian-client.js').ExecutorGuardianPort,
 ) {
+  if(!guardian)throw Error('EXECUTOR_GUARDIAN_REQUIRED')
   const config = loadExecutorRuntimeConfig(env)
   const executor = new HermesExecutor({
     runner,
@@ -98,6 +105,8 @@ export function createExecutorServer(
     timeoutMs: config.hermesTimeoutMs,
   })
   return new UnixExecutorServer({
+    guardian,
+    requireExecutionLease:true,
     socketPath: config.socketPath,
     executor,
     frameTimeoutMs: 30_000,

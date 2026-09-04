@@ -11,6 +11,12 @@ import { UnixExecutorServer } from '../src/unix-executor-server.js'
 import { ExecutorExecutionError } from '../src/hermes-executor.js'
 import type { ExecuteInput } from '../src/executor-contract.js'
 import type { ExecutorEnvelope, ExecutorPort } from '../src/hermes-executor.js'
+import {reconcileAgentResult} from '../src/agent-result.js'
+import {DeterministicDispatcher} from '../src/dispatch-queue.js'
+import {PostgresDispatchSettlement} from '../src/postgres-dispatch-settlement.js'
+import {OpenCodeUsageProbe,OpenCodeUsageExportClient} from '../src/opencode-usage-api.js'
+import {setTimeout as delay} from 'node:timers/promises'
+import type {ExecutorGuardianPort} from '../src/executor-guardian-client.js'
 
 function socketPath(): string {
   return process.platform === 'win32'
@@ -104,6 +110,31 @@ function envelope(): ExecutorEnvelope {
   }
 }
 
+for(const outcome of ['budget_exceeded','uncertain','usage_export_overage'] as const)it(`preserves known over-reservation cost through IPC, dispatcher and ${outcome} receipt`,async()=>{
+  const path=socketPath(),payload=envelope(),phases:string[]=[],queries:any[]=[],receiptId=randomUUID()
+  payload.usage.cost.usage_value_usd=outcome==='usage_export_overage'?0.01:0.2
+  payload.agent_result=reconcileAgentResult(payload.agent_result,input,payload.usage,input.reservation.budget_reservation,payload.agent_result.started_at,payload.agent_result.finished_at)
+  const server=new UnixExecutorServer({socketPath:path,frameTimeoutMs:3000,executor:{execute:async()=>payload}})
+  const settlement=new PostgresDispatchSettlement({connect:async()=>({release:()=>{},query:async(q:any)=>{
+    queries.push(q);if(queries.length===1)return{rowCount:1,rows:[{id:receiptId}]}
+    if(outcome==='uncertain')throw Error('synthetic unavailable')
+    return{rowCount:1,rows:[{receipt:{receipt_id:receiptId,job_id:input.assignment_id,budget_version:1,status:'budget_exceeded',result_accepted:false,reason:'KNOWN_USAGE_BUDGET_EXCEEDED',usage_value_micro_cents:20000000}}]}
+  }})} as never)
+  let executions=0,failures=0
+  const queue={recover:async()=>{},claim:async()=>({job_id:input.assignment_id,mission_id:input.mission_id,trace_id:input.trace_id,profile_id:input.profile_id,instruction:input.instruction,evidence:input.evidence,execution_policy:input.execution_policy,reservation:input.reservation,usageBudget:{reservationMicroCents:2000000,missionCommittedBeforeMicroCents:0,totalCommittedBeforeMicroCents:0,version:1},attempts:1,max_attempts:1}),
+    complete:async(...args:Parameters<PostgresDispatchSettlement['complete']>)=>{executions++;return settlement.complete(...args)},fail:async()=>{failures++}}
+  let exports=0
+  const csvHeader='id,user_email,service_account_name,app,provider,model,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_5m_tokens,cache_write_1h_tokens,reasoning_mode,reasoning_effort,reasoning_budget_tokens,reasoning_source,billing_source,cost_micro_cents,created_at\n'
+  const probe=new OpenCodeUsageProbe({now:()=>new Date('2026-08-16T12:05:00Z'),client:new OpenCodeUsageExportClient({readToken:async()=> 'synthetic',reader:{getCsvExport:async()=> ++exports===1?csvHeader:csvHeader+'usage-2,,synthetic,hermes,opencode,deepseek-v4-flash,1,2,0,0,0,0,disabled,none,0,none,go,20000000,2026-08-16T12:00:01Z\n'}})})
+  const dispatcher=new DeterministicDispatcher({queue:queue as never,executor:new UnixExecutorClient({socketPath:path,timeoutMs:3000}),workerId:'broker-dispatcher-1',leaseSeconds:60,childTimeoutSeconds:30,hermesTimeoutMs:30000,onPhase:e=>phases.push(e.phase),...(outcome==='usage_export_overage'?{usageProbe:probe,serviceAccountId:'svc-12345678'}:{})})
+  await server.start();try{
+    assert.equal(await dispatcher.runOnce(),true);assert.equal(executions,1);assert.equal(failures,0);assert.equal(queries.length,2)
+    assert.equal(queries[0].values[4],20000000);assert.equal(JSON.parse(queries[0].values[2]).agent_result.status,'failed')
+    if(outcome==='usage_export_overage'){assert.equal(exports,2);assert.equal(queries[0].values[5],'usage-2');assert.equal(queries[0].values[6],'opencode_usage_export');assert.equal(JSON.parse(queries[0].values[2]).usage.cost.usage_value_usd,0.01)}
+    assert.equal(phases.at(-1),outcome==='uncertain'?'settlement_unconfirmed':'failed');assert.ok(!phases.includes('completed'))
+  }finally{await server.stop()}
+})
+
 function overBudgetEnvelope(): ExecutorEnvelope {
   const value = envelope()
   value.usage.tokens.input = 101
@@ -112,6 +143,42 @@ function overBudgetEnvelope(): ExecutorEnvelope {
   value.agent_result.cost.input_tokens = 101
   return value
 }
+
+for(const order of ['finish_before_challenge','challenge_before_finish','renew_before_finish'] as const)it(`guardian cleanup serializes ${order} without spurious cancellation`,async()=>{
+  const path=socketPath(),events:string[]=[];let release!:()=>void,challengeCount=0,closed=false
+  const ready=new Promise<void>(resolve=>{release=resolve})
+  const guardian:ExecutorGuardianPort={
+    challenge:async()=>{events.push('challenge');challengeCount++;if(order==='challenge_before_finish'&&challengeCount===2){release();await delay(50)}if(closed)throw Error('LATE_GUARDIAN_CHALLENGE');return randomUUID()},
+    begin:async()=>{events.push('begin')},
+    renew:async()=>{events.push('renew');if(order==='renew_before_finish'){release();await delay(50)}if(closed)throw Error('LATE_GUARDIAN_RENEW');events.push('renew_done')},
+    finish:async()=>{events.push('finish');closed=true;await delay(order==='finish_before_challenge'?400:50);events.push('finish_ack')},
+    close:()=>{events.push('close')},
+  }
+  const server=new UnixExecutorServer({socketPath:path,frameTimeoutMs:3000,requireExecutionLease:true,guardian,executor:{execute:async()=>{if(order==='finish_before_challenge')await delay(30);else await ready;return envelope()}}})
+  const permit={allowed:true as const,job_id:input.assignment_id,mission_id:input.mission_id,worker_id:'synthetic',window_id:randomUUID(),epoch_id:randomUUID(),budget_version:1,valid_for_ms:900}
+  await server.start()
+  try{
+    const result=await new UnixExecutorClient({socketPath:path,timeoutMs:3000,requireExecutionLease:true}).execute(input,{readExecutionPermit:async()=>permit})
+    assert.equal(result.agent_result.status,'completed');assert.equal(result.agent_result.summary,'safe');assert.ok(events.includes('finish_ack'));assert.ok(!events.includes('close'))
+    if(order==='finish_before_challenge')assert.equal(challengeCount,1)
+    else assert.ok(events.indexOf(order==='challenge_before_finish'?'challenge':'renew_done')<events.indexOf('finish'))
+  }finally{release();await server.stop()}
+})
+
+for(const phase of ['begin','finish'] as const)it(`guardian uncertain ${phase} blocks further work and never emits a positive result`,async()=>{
+  const path=socketPath();let calls=0,closes=0
+  const guardian:ExecutorGuardianPort={challenge:async()=>randomUUID(),begin:async()=>{if(phase==='begin')throw Error('EXECUTOR_GUARDIAN_UNAVAILABLE')},renew:async()=>{},finish:async()=>{throw Error('EXECUTOR_GUARDIAN_UNAVAILABLE')},close:()=>{closes++}}
+  const server=new UnixExecutorServer({socketPath:path,frameTimeoutMs:3000,requireExecutionLease:true,guardian,executor:{execute:async()=>{calls++;return envelope()}}})
+  const permit={allowed:true as const,job_id:input.assignment_id,mission_id:input.mission_id,worker_id:'synthetic',window_id:randomUUID(),epoch_id:randomUUID(),budget_version:1,valid_for_ms:1000}
+  await server.start()
+  try{
+    const client=new UnixExecutorClient({socketPath:path,timeoutMs:3000,requireExecutionLease:true})
+    await assert.rejects(client.execute(input,{readExecutionPermit:async()=>permit}),e=>e instanceof ExecutorTransportError&&e.code==='EXECUTOR_GUARDIAN_UNAVAILABLE'&&e.executionState===(phase==='begin'?'not_started':'unknown'))
+    assert.equal(closes,1);assert.equal(calls,phase==='begin'?0:1)
+    await assert.rejects(client.execute(input,{readExecutionPermit:async()=>permit}),/EXECUTOR_LEASE_DENIED/)
+    assert.equal(calls,phase==='begin'?0:1)
+  }finally{await server.stop()}
+})
 
 describe('Unix executor IPC', () => {
   it('round-trips one strict request per connection without a bearer token', async () => {
