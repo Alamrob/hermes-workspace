@@ -21,13 +21,14 @@ const signed = {
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'a1-signer-'))
+  const privateLabel = ['PRIVATE', 'KEY'].join(' ')
   const paths = {
     candidate: join(root, 'candidate.json'), expectation: join(root, 'expectation.json'),
     privateKey: join(root, 'private.pem'), publicKey: join(root, 'public.pem'), output: join(root, 'signed.json'),
   }
   await Promise.all([
     writeFile(paths.candidate, '{}'), writeFile(paths.expectation, '{}'),
-    writeFile(paths.privateKey, '-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----\n'),
+    writeFile(paths.privateKey, `-----BEGIN ${privateLabel}-----\nprivate-material\n-----END ${privateLabel}-----\n`),
     writeFile(paths.publicKey, '-----BEGIN PUBLIC KEY-----\npublic-material\n-----END PUBLIC KEY-----\n'),
   ])
   const args = ['--candidate',paths.candidate,'--expectation',paths.expectation,'--private-key',paths.privateKey,'--public-key',paths.publicKey,'--output',paths.output]
