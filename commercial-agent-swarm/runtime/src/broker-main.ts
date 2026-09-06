@@ -29,6 +29,17 @@ import type { RuntimeRepository } from './repository.js'
 
 const DISPATCH_POLL_INTERVAL_MS = 1_000
 
+export interface BrokerApplicationRuntime {
+  application: BrokerApplication
+  dispatcher: Pick<DeterministicDispatcher, 'runOnce'>
+  bearers: {
+    shadowReview: () => Promise<string>
+    controlPlane: () => Promise<string>
+    internal: () => Promise<string>
+  }
+  close: () => Promise<void>
+}
+
 export async function startSimulationBroker(
   environment: Record<string, string | undefined> = process.env,
 ): Promise<{ close: () => Promise<void> }> {
@@ -56,6 +67,64 @@ async function startBrokerWithConfig(
   environment: Record<string, string | undefined>,
   config: ReturnType<typeof loadBrokerConfig>,
 ): Promise<{ close: () => Promise<void> }> {
+  const runtime = await createBrokerApplicationRuntimeWithConfig(environment, config)
+  const server = createBrokerHttpServer(runtime.application, { maxBodyBytes: 262_144 })
+  server.requestTimeout = 10_000
+  server.headersTimeout = 5_000
+  server.keepAliveTimeout = 2_000
+  server.maxHeadersCount = 64
+  try {
+    const dispatcher = await configureDispatcherBeforeListen(
+      () => runtime.dispatcher,
+      () =>
+        new Promise<void>((resolve, reject) => {
+          server.once('error', reject)
+          server.listen(config.port, config.host, () => {
+            server.off('error', reject)
+            resolve()
+          })
+        }),
+    )
+    let dispatcherLoop: ReturnType<typeof startDispatcherLoop> | undefined
+    let closing: Promise<void> | undefined
+    const close = () =>
+      (closing ??= (async () => {
+        await dispatcherLoop?.close()
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        )
+        await runtime.close()
+      })())
+    if (config.dispatchLoopMode === 'automatic')
+      dispatcherLoop = startDispatcherLoop(dispatcher, () => {
+        void close()
+      })
+    return { close }
+  } catch (error) {
+    await runtime.close()
+    throw error
+  }
+}
+
+/**
+ * Builds the broker application and its deterministic dispatcher without
+ * opening a listener or starting a dispatch loop. The one-shot A1 runner uses
+ * this exact in-process boundary so it cannot select an arbitrary URL or API.
+ */
+export async function createBrokerApplicationRuntime(
+  environment: Record<string, string | undefined> = process.env,
+): Promise<BrokerApplicationRuntime> {
+  assertBrokerServiceIdentity()
+  return createBrokerApplicationRuntimeWithConfig(
+    environment,
+    loadBrokerConfig(environment),
+  )
+}
+
+async function createBrokerApplicationRuntimeWithConfig(
+  environment: Record<string, string | undefined>,
+  config: ReturnType<typeof loadBrokerConfig>,
+): Promise<BrokerApplicationRuntime> {
   const [databaseEnvironment, secrets, a1PublicKeys] = await Promise.all([
     expandDatabaseSecretFiles(config, environment),
     readApplicationSecrets(config),
@@ -88,7 +157,7 @@ async function startBrokerWithConfig(
       store: persistence.approvalEvidenceStore,
       grants: approvals,
     })
-    const app = new BrokerApplication({
+    const application = new BrokerApplication({
       repository: persistence.repository,
       dispatchQueue: persistence.dispatchQueue,
       approvals,
@@ -131,47 +200,27 @@ async function startBrokerWithConfig(
         },
       },
     })
-    const server = createBrokerHttpServer(app, { maxBodyBytes: 262_144 })
-    server.requestTimeout = 10_000
-    server.headersTimeout = 5_000
-    server.keepAliveTimeout = 2_000
-    server.maxHeadersCount = 64
-    const dispatcher = await configureDispatcherBeforeListen(
-      () =>
-        createBrokerDispatcher(
-          brokerDispatcherEnvironment(environment),
-          undefined,
-          'broker-dispatcher-1',
-          {
-            queue: persistence.dispatchQueue,
-            executionPermitReader: persistence.executionPermitReader,
-            onPhase: recordDispatchPhase,
-          },
-        ),
-      () =>
-        new Promise<void>((resolve, reject) => {
-          server.once('error', reject)
-          server.listen(config.port, config.host, () => {
-            server.off('error', reject)
-            resolve()
-          })
-        }),
+    const dispatcher = createBrokerDispatcher(
+      brokerDispatcherEnvironment(environment),
+      undefined,
+      'broker-dispatcher-1',
+      {
+        queue: persistence.dispatchQueue,
+        executionPermitReader: persistence.executionPermitReader,
+        onPhase: recordDispatchPhase,
+      },
     )
-    let dispatcherLoop: ReturnType<typeof startDispatcherLoop> | undefined
     let closing: Promise<void> | undefined
-    const close = () =>
-      (closing ??= (async () => {
-        await dispatcherLoop?.close()
-        await new Promise<void>((resolve, reject) =>
-          server.close((error) => (error ? reject(error) : resolve())),
-        )
-        await persistence.close()
-      })())
-    if (config.dispatchLoopMode === 'automatic')
-      dispatcherLoop = startDispatcherLoop(dispatcher, () => {
-        void close()
-      })
-    return { close }
+    return {
+      application,
+      dispatcher,
+      bearers: {
+        shadowReview: async () => secrets.shadowReview,
+        controlPlane: async () => secrets.controlPlane,
+        internal: async () => secrets.internal,
+      },
+      close: () => (closing ??= persistence.close()),
+    }
   } catch (error) {
     await persistence.close()
     throw error
