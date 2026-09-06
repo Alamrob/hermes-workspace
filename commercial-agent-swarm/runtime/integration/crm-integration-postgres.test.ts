@@ -55,6 +55,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '034_a1_dispatch_execution_window',
         '035_a1_window_supervisor',
         '036_atomic_dispatch_settlement',
+        '037_a1_single_approval_parent',
       ]
       await runVersionedMigrations(
         pool,

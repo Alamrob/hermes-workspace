@@ -62,6 +62,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
       '034_a1_dispatch_execution_window',
       '035_a1_window_supervisor',
       '036_atomic_dispatch_settlement',
+      '037_a1_single_approval_parent',
     ]
     await runVersionedMigrations(leftPool, await Promise.all(versions.map(async (version) => ({
       version,
@@ -70,7 +71,7 @@ integration('PostgreSQL authoritative Usage budget ledger', { concurrency: 1 }, 
     // This suite isolates the underlying budget ledger. R126's production claim
     // interlock has its own PostgreSQL integration suite and is rolled back here
     // before any test job exists.
-    await leftPool.query(await readFile(new URL('../migrations/036_atomic_dispatch_settlement.rollback.sql',import.meta.url),'utf8'));await leftPool.query(await readFile(new URL('../migrations/035_a1_window_supervisor.rollback.sql',import.meta.url),'utf8'));await leftPool.query(await readFile(
+    await leftPool.query(await readFile(new URL('../migrations/037_a1_single_approval_parent.rollback.sql',import.meta.url),'utf8'));await leftPool.query(await readFile(new URL('../migrations/036_atomic_dispatch_settlement.rollback.sql',import.meta.url),'utf8'));await leftPool.query(await readFile(new URL('../migrations/035_a1_window_supervisor.rollback.sql',import.meta.url),'utf8'));await leftPool.query(await readFile(
       new URL('../migrations/034_a1_dispatch_execution_window.rollback.sql', import.meta.url),
       'utf8',
     ))

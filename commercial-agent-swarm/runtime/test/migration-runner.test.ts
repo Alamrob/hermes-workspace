@@ -42,6 +42,7 @@ describe('versioned migration runner', () => {
       { version: '034_a1_dispatch_execution_window', sql: 'SELECT 34;' },
       { version: '035_a1_window_supervisor', sql: 'SELECT 35;' },
       { version: '036_atomic_dispatch_settlement', sql: 'SELECT 36;' },
+      { version: '037_a1_single_approval_parent', sql: 'SELECT 37;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -85,6 +86,7 @@ describe('versioned migration runner', () => {
         '034_a1_dispatch_execution_window',
         '035_a1_window_supervisor',
         '036_atomic_dispatch_settlement',
+        '037_a1_single_approval_parent',
       ],
     )
     assert.equal(
@@ -93,16 +95,17 @@ describe('versioned migration runner', () => {
     )
   })
 
-  it('loads the complete production migration set through the exact A1 execution-window gate', async () => {
+  it('loads the complete production migration set through the single-approval parent gate', async () => {
     const migrations = await loadMigrationSources()
-    assert.equal(migrations.length, 36)
-    assert.equal(migrations.at(-1)?.version, '036_atomic_dispatch_settlement')
+    assert.equal(migrations.length, 37)
+    assert.equal(migrations.at(-1)?.version, '037_a1_single_approval_parent')
     assert.match(
       migrations.find(m=>m.version==='028_ed25519_a1_work_orders')?.sql ?? '',
       /A1_ED25519_SIGNATURE_REQUIRED/,
     )
     assert.match(migrations.find(m=>m.version==='035_a1_window_supervisor')?.sql ?? '', /A1_SUPERVISOR_NOT_LIVE/)
-    assert.match(migrations.at(-1)?.sql ?? '', /dispatch_settlement_commit/)
+    assert.match(migrations.find(m=>m.version==='036_atomic_dispatch_settlement')?.sql ?? '', /dispatch_settlement_commit/)
+    assert.match(migrations.at(-1)?.sql ?? '', /A1_SINGLE_APPROVAL_PARENT_ALREADY_CONSUMED/)
     assert.doesNotMatch(
       migrations.at(-1)?.sql ?? '',
       /control\.enqueue_dispatch|mail\.send|integration\.enqueue_crm_change/i,

@@ -16,8 +16,21 @@ type Stage = A1SingleApprovalStageContext['stage']
 export interface A1SingleApprovalBrokerParentInput extends Record<string, unknown> {
   request_id: string
   mission_id: string
+  trace_id: string
   authorization_digest_sha256: string
   user_authorization_sha256: string
+  expected_mission_sha256: string
+  assignment_plan_sha256: string
+  job_set_sha256: string
+  assignment_ids: string[]
+  worker_id: 'broker-dispatcher-1'
+  maximum_dispatch_ticks: 6
+  maximum_provider_credit_spend_usd: number
+  reviewer_id: 'user:proptimizaspa@gmail.com'
+  reviewer_email: 'proptimizaspa@gmail.com'
+  reviewed_at: string
+  expires_at: string
+  stage_receipt_keys: Record<string, string>
   stage_receipt_key: string
   idempotency_key: string
 }
@@ -143,8 +156,21 @@ implements A1SingleApprovalCoordinatorAdapter {
     const response = await this.call(stage, () => this.port.consumeParentAuthorization({
       request_id: this.bundle.request.request_id,
       mission_id: this.bundle.request.mission_id,
+      trace_id: this.bundle.request.trace_id,
       authorization_digest_sha256: this.bundle.request.authorization_digest_sha256,
       user_authorization_sha256: this.bundle.authorization.user_authorization_sha256,
+      expected_mission_sha256: this.bundle.request.expected_mission_sha256,
+      assignment_plan_sha256: this.bundle.request.assignment_plan_sha256,
+      job_set_sha256: this.bundle.request.job_set_sha256,
+      assignment_ids: [...this.bundle.request.assignment_ids],
+      worker_id: this.bundle.request.worker_id,
+      maximum_dispatch_ticks: this.bundle.request.maximum_dispatch_ticks,
+      maximum_provider_credit_spend_usd: this.bundle.request.maximum_provider_credit_spend_usd,
+      reviewer_id: this.bundle.authorization.reviewer_id,
+      reviewer_email: this.bundle.authorization.reviewer_email,
+      reviewed_at: this.bundle.authorization.reviewed_at,
+      expires_at: this.bundle.authorization.expires_at,
+      stage_receipt_keys: structuredClone(this.bundle.authorization.stage_receipt_keys),
       stage_receipt_key: context.stage_receipt_key,
       idempotency_key: context.stage_receipt_key,
     }))

@@ -166,8 +166,23 @@ describe('A1 BrokerApplication concrete port', () => {
     const input: A1SingleApprovalBrokerParentInput = {
       request_id: MISSION,
       mission_id: MISSION,
+      trace_id: 'a3100000-0000-4310-8310-000000000002',
       authorization_digest_sha256: AUTH,
       user_authorization_sha256: AUTH,
+      expected_mission_sha256: AUTH,
+      assignment_plan_sha256: AUTH,
+      job_set_sha256: AUTH,
+      assignment_ids: [...IDS],
+      worker_id: 'broker-dispatcher-1',
+      maximum_dispatch_ticks: 6,
+      maximum_provider_credit_spend_usd: 0.06,
+      reviewer_id: 'user:proptimizaspa@gmail.com',
+      reviewer_email: 'proptimizaspa@gmail.com',
+      reviewed_at: '2026-09-06T21:00:00.000Z',
+      expires_at: '2026-09-06T21:30:00.000Z',
+      stage_receipt_keys: Object.fromEntries(
+        A1_SINGLE_APPROVAL_PROFILES.map((profile) => [profile, RECEIPT]),
+      ),
       stage_receipt_key: RECEIPT,
       idempotency_key: RECEIPT,
     }
