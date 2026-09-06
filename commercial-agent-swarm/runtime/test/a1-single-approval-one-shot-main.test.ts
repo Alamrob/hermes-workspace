@@ -11,7 +11,11 @@ import {
   A1SingleApprovalOneShotError,
   runA1SingleApprovalOneShot,
 } from '../src/a1-single-approval-one-shot-main.js'
+import { deriveA1SingleApprovalSubgates } from '../src/a1-single-approval-subgate-derivation.js'
 import { hashAction } from '../src/canonical.js'
+import type { ApplicationRequest, ApplicationResponse } from '../src/application.js'
+import type { BrokerApplicationRuntime } from '../src/broker-main.js'
+import type { MissionExecution } from '../src/dispatch-queue.js'
 
 const NOW = new Date('2026-09-06T21:00:00.000Z')
 const MISSION = 'a3900000-0000-4390-8390-000000000001'
@@ -226,7 +230,371 @@ describe('A1 single-approval one-shot main boundary', () => {
     }), /A1_ONE_SHOT_INVOCATION_INVALID/)
     assert.equal(opened, false)
   })
+
+  it('composes the sealed inputs, function-only database control, in-process broker port and six exact ticks once', async () => {
+    const req = request()
+    const envelope = authorization(req)
+    const authorizationBytes = requiredA1SingleApprovalAuthorizationBytes(req)
+    const bundle = deriveA1SingleApprovalSubgates(req, envelope, authorizationBytes, NOW)
+    const state = {
+      parent: false,
+      window: false,
+      completed: 0,
+      usage: 0,
+      ended: 0,
+      runtimeClosed: 0,
+      timerReads: 0,
+      dispatchCalls: 0,
+    }
+    const execution: MissionExecution = {
+      mission_id: MISSION,
+      status: 'queued',
+      assignments: [],
+    }
+    const requests: ApplicationRequest[] = []
+    const application = {
+      handle: async (input: ApplicationRequest): Promise<ApplicationResponse> => {
+        requests.push(structuredClone(input))
+        if (input.path === `/v1/missions/${MISSION}/assignments`) {
+          execution.assignments = req.assignment_ids.map((assignmentId, index) => ({
+            assignment_id: assignmentId,
+            profile_id: A1_SINGLE_APPROVAL_PROFILES[index]!,
+            status: 'queued',
+            attempts: 0,
+            max_attempts: 1,
+            artifact_sha256: null,
+            result_envelope: null,
+            error: null,
+          }))
+          return {
+            status: 202,
+            body: { mission_id: MISSION, assignment_ids: [...req.assignment_ids], status: 'queued' },
+          }
+        }
+        if (input.path === `/internal/v1/missions/${MISSION}/execution`)
+          return { status: 200, body: structuredClone(execution) }
+        const observedAt = NOW.toISOString()
+        if (input.path === `/internal/v1/a1-dispatch-authorizations/${MISSION}`) {
+          const item = bundle.validated.dispatchAuthorization
+          return { status: 200, body: {
+            authorizationId: bundle.identifiers.dispatchAuthorizationId,
+            missionId: MISSION,
+            traceId: req.trace_id,
+            planVersion: req.plan_version,
+            decision: item.decision,
+            rationale: item.rationale,
+            reviewerId: item.reviewerId,
+            reviewerEmail: item.reviewerEmail,
+            reviewedAt: item.reviewedAt,
+            expiresAt: item.expiresAt,
+            missionSha256: item.expectedMissionSha256,
+            assignmentPlanSha256: req.assignment_plan_sha256,
+            userAuthorizationSha256: item.userAuthorizationSha256,
+            attestations: item.attestations,
+            idempotencyKey: item.idempotencyKey,
+            assignmentCreated: false,
+            dispatchQueued: false,
+            executionAuthorized: false,
+            internetAccessAllowed: false,
+            providerCreditSpendAllowed: false,
+            contactPermitted: false,
+            crmWriteAllowed: false,
+            maximumExternalActions: 0,
+            globalKillSwitchRequired: true,
+            productionGate: 'blocked',
+            nextRequiredGate: 'enqueue_exact_assignment_plan_separately',
+            provenance: { source: 'control-broker', sourceId: `a1-dispatch-authorization:${bundle.identifiers.dispatchAuthorizationId}`, observedAt, synthetic: false },
+          } }
+        }
+        if (input.path === `/internal/v1/a1-assignment-enqueue-authorizations/${MISSION}`) {
+          const item = bundle.validated.enqueueAuthorization
+          return { status: 200, body: {
+            authorizationId: bundle.identifiers.enqueueAuthorizationId,
+            missionId: MISSION,
+            traceId: req.trace_id,
+            planVersion: req.plan_version,
+            dispatchAuthorizationId: bundle.identifiers.dispatchAuthorizationId,
+            decision: item.decision,
+            rationale: item.rationale,
+            reviewerId: item.reviewerId,
+            reviewerEmail: item.reviewerEmail,
+            reviewedAt: item.reviewedAt,
+            expiresAt: item.expiresAt,
+            missionSha256: item.expectedMissionSha256,
+            assignmentPlanSha256: item.expectedAssignmentPlanSha256,
+            userAuthorizationSha256: item.userAuthorizationSha256,
+            attestations: item.attestations,
+            idempotencyKey: item.idempotencyKey,
+            enqueueAuthorizationRecorded: true,
+            assignmentEnqueuePermitted: true,
+            assignmentsEnqueued: false,
+            executionAuthorized: false,
+            dispatchClaimingPermitted: false,
+            internetAccessAllowed: false,
+            providerCreditSpendAllowed: false,
+            contactPermitted: false,
+            crmWriteAllowed: false,
+            maximumExternalActions: 0,
+            globalKillSwitchRequired: true,
+            productionGate: 'blocked',
+            nextRequiredGate: 'enqueue_exact_assignment_plan_separately',
+            provenance: { source: 'control-broker', sourceId: `a1-assignment-enqueue-authorization:${bundle.identifiers.enqueueAuthorizationId}`, observedAt, synthetic: false },
+          } }
+        }
+        if (input.path === `/internal/v1/a1-assignment-execution-authorizations/${MISSION}`) {
+          const item = bundle.validated.executionAuthorization
+          return { status: 200, body: {
+            authorizationId: bundle.identifiers.executionAuthorizationId,
+            missionId: MISSION,
+            traceId: req.trace_id,
+            planVersion: req.plan_version,
+            enqueueAuthorizationId: bundle.identifiers.enqueueAuthorizationId,
+            decision: item.decision,
+            rationale: item.rationale,
+            reviewerId: item.reviewerId,
+            reviewerEmail: item.reviewerEmail,
+            reviewedAt: item.reviewedAt,
+            expiresAt: item.expiresAt,
+            missionSha256: item.expectedMissionSha256,
+            assignmentPlanSha256: item.expectedAssignmentPlanSha256,
+            jobSetSha256: item.expectedJobSetSha256,
+            assignmentIds: [...req.assignment_ids],
+            maximumProviderCreditSpendUsd: item.maximumProviderCreditSpendUsd,
+            userAuthorizationSha256: item.userAuthorizationSha256,
+            attestations: item.attestations,
+            idempotencyKey: item.idempotencyKey,
+            executionAuthorizationRecorded: true,
+            dispatchExecutionEligible: true,
+            executionArmCreated: false,
+            dispatchClaimingPermitted: false,
+            jobsClaimed: false,
+            executionStarted: false,
+            internetAccessAllowed: false,
+            providerCreditSpendAllowed: false,
+            contactPermitted: false,
+            crmWriteAllowed: false,
+            maximumExternalActions: 0,
+            globalKillSwitchRequired: true,
+            productionGate: 'blocked',
+            nextRequiredGate: 'arm_single_mission_execution_separately',
+            provenance: { source: 'control-broker', sourceId: `a1-assignment-execution-authorization:${bundle.identifiers.executionAuthorizationId}`, observedAt, synthetic: false },
+          } }
+        }
+        if (input.path === `/internal/v1/a1-dispatch-execution-arms/${MISSION}`) {
+          const item = bundle.validated.executionArm
+          return { status: 200, body: {
+            armId: bundle.identifiers.armId,
+            authorizationId: bundle.identifiers.armAuthorizationId,
+            missionId: MISSION,
+            traceId: req.trace_id,
+            planVersion: req.plan_version,
+            executionAuthorizationId: bundle.identifiers.executionAuthorizationId,
+            decision: item.decision,
+            rationale: item.rationale,
+            reviewerId: item.reviewerId,
+            reviewerEmail: item.reviewerEmail,
+            reviewedAt: item.reviewedAt,
+            startsAt: item.startsAt,
+            expiresAt: item.expiresAt,
+            missionSha256: item.expectedMissionSha256,
+            assignmentPlanSha256: item.expectedAssignmentPlanSha256,
+            jobSetSha256: item.expectedJobSetSha256,
+            assignmentIds: [...req.assignment_ids],
+            workerId: item.workerId,
+            maximumClaims: item.maximumClaims,
+            maximumProviderCreditSpendUsd: item.maximumProviderCreditSpendUsd,
+            userAuthorizationSha256: item.userAuthorizationSha256,
+            attestations: item.attestations,
+            idempotencyKey: item.idempotencyKey,
+            armAuthorizationRecorded: true,
+            executionArmCreated: true,
+            claimsUsed: 0,
+            executionWindowEnabled: false,
+            dispatchClaimingPermitted: false,
+            jobsClaimed: false,
+            executionStarted: false,
+            internetAccessAllowed: false,
+            providerCreditSpendAllowed: false,
+            contactPermitted: false,
+            crmWriteAllowed: false,
+            maximumExternalActions: 0,
+            globalKillSwitchActive: true,
+            externalChannelsBlocked: true,
+            dispatcherTimerDisabled: true,
+            productionGate: 'blocked',
+            nextRequiredGate: 'open_single_mission_execution_window_separately',
+            provenance: { source: 'control-broker', sourceId: `a1-dispatch-execution-arm:${bundle.identifiers.armId}`, observedAt, synthetic: false },
+          } }
+        }
+        if (input.path === `/internal/v1/a1-dispatch-execution-windows/${MISSION}`) {
+          const item = bundle.validated.executionWindow
+          state.window = true
+          return { status: 200, body: {
+            windowAuthorizationId: bundle.identifiers.windowAuthorizationId,
+            missionId: MISSION,
+            decision: item.decision,
+            rationale: item.rationale,
+            reviewerId: item.reviewerId,
+            reviewerEmail: item.reviewerEmail,
+            reviewedAt: item.reviewedAt,
+            opensAt: item.opensAt,
+            expiresAt: item.expiresAt,
+            expectedArmId: item.expectedArmId,
+            expectedArmAuthorizationId: item.expectedArmAuthorizationId,
+            expectedExecutionAuthorizationId: item.expectedExecutionAuthorizationId,
+            expectedMissionSha256: item.expectedMissionSha256,
+            expectedAssignmentPlanSha256: item.expectedAssignmentPlanSha256,
+            expectedJobSetSha256: item.expectedJobSetSha256,
+            workerId: item.workerId,
+            maximumClaims: item.maximumClaims,
+            maximumProviderCreditSpendUsd: item.maximumProviderCreditSpendUsd,
+            userAuthorizationSha256: item.userAuthorizationSha256,
+            attestations: item.attestations,
+            idempotencyKey: item.idempotencyKey,
+            executionWindowAuthorizationRecorded: true,
+            executionWindowEnabled: true,
+            dispatchClaimingPermitted: true,
+            claimsUsed: 0,
+            jobsClaimed: false,
+            executionStarted: false,
+            providerCreditSpendAllowed: true,
+            contactPermitted: false,
+            crmWriteAllowed: false,
+            maximumExternalActions: 0,
+            globalKillSwitchActive: false,
+            externalChannelsBlocked: true,
+            automaticRecontainmentArmed: true,
+            productionGate: 'single_mission_internal_execution',
+            nextRequiredGate: 'automatic_recontainment_after_terminal_or_expiry',
+            provenance: { source: 'control-broker', sourceId: `a1-dispatch-execution-window:${bundle.identifiers.windowAuthorizationId}`, observedAt, synthetic: false },
+          } }
+        }
+        throw new Error(`UNEXPECTED_APPLICATION_PATH:${input.path}`)
+      },
+    }
+    const files = new Map([
+      ['/run/a1-single-approval/request.json', Buffer.from(JSON.stringify(req))],
+      ['/run/a1-single-approval/envelope.json', Buffer.from(JSON.stringify(envelope))],
+      ['/run/a1-single-approval/authorization.txt', authorizationBytes],
+      ['/run/a1-single-approval/timer.json', Buffer.from(JSON.stringify({
+        schema_version: 1,
+        type: 'a1_host_timer_attestation_v1',
+        request_id: req.request_id,
+        mission_id: req.mission_id,
+        authorization_digest_sha256: req.authorization_digest_sha256,
+        unit: 'proptimiza-commercial-automation.timer',
+        source: 'systemctl-host-masked-probe',
+        enabled_state: 'masked',
+        active_state: 'inactive',
+        generated_at: NOW.toISOString(),
+        expires_at: req.expires_at,
+        nonce: 'a3900000-0000-4390-8390-000000000099',
+      }))],
+    ])
+    const database = {
+      query: async (query: { text: string; values?: unknown[] }) => {
+        if (query.text.includes('FROM pg_roles r WHERE r.rolname=current_user'))
+          return row({
+            current_user: 'proptimiza_a1_chain_runner_login',
+            rolcanlogin: true,
+            unsafe: false,
+            memberships: ['commercial_a1_chain_runner'],
+            unexpected_functions: [],
+            missing_functions: [],
+            unsafe_effective: false,
+          })
+        if (query.text.includes('get_a1_single_approval_chain_state'))
+          return row({ value: {
+            mission_id: MISSION,
+            channel_kills: 7,
+            external_actions_blocked: true,
+            external_actions: 0,
+            crm_writes: 0,
+            crm_outbox: 0,
+            global_kill: !state.window,
+            execution_window_open: state.window,
+            dispatch_claiming_permitted: state.window,
+            active_or_uncertain_jobs: 0,
+            parent_authorization_consumed: state.parent,
+            completed_jobs: state.completed,
+            usage_value_consumed_usd: state.usage,
+          } })
+        if (query.text.includes('consume_a1_single_approval_parent')) {
+          state.parent = true
+          return row({ value: { consumed: true } })
+        }
+        if (query.text.includes('recontain_a1_single_approval_chain')) {
+          state.window = false
+          return row({ value: { recontained: true } })
+        }
+        throw new Error('UNEXPECTED_DATABASE_QUERY')
+      },
+      end: async () => { state.ended += 1 },
+    }
+    const runtime: BrokerApplicationRuntime = {
+      application: application as never,
+      dispatcher: {
+        runOnce: async () => {
+          state.dispatchCalls += 1
+          const next = execution.assignments[state.completed]
+          assert.ok(next)
+          next.status = 'succeeded'
+          next.attempts = 1
+          next.artifact_sha256 = String(state.completed + 1).repeat(64)
+          next.result_envelope = { status: 'completed' }
+          state.completed += 1
+          state.usage = state.completed / 100
+          execution.status = state.completed === 6 ? 'completed' : 'running'
+          return true
+        },
+      },
+      bearers: {
+        shadowReview: async () => 'capability-shadow-review-0123456789',
+        controlPlane: async () => 'capability-control-plane-0123456789',
+        internal: async () => 'capability-internal-0123456789',
+      },
+      close: async () => { state.runtimeClosed += 1 },
+    }
+    const result = await runA1SingleApprovalOneShot(environment(), {
+      readSealed: async (path) => {
+        if (path.endsWith('/timer.json')) state.timerReads += 1
+        const value = files.get(path)
+        if (!value) throw new Error('MISSING_TEST_FILE')
+        return value
+      },
+      readDatabaseUrl: async () => 'postgresql://sealed-capability@runtime/control',
+      createDatabase: () => database as never,
+      createRuntime: async () => runtime,
+      now: () => NOW,
+    })
+    assert.equal(result.status, 'completed')
+    assert.equal(result.completed_jobs, 6)
+    assert.equal(result.dispatch_ticks, 6)
+    assert.equal(result.external_actions, 0)
+    assert.equal(result.crm_writes, 0)
+    assert.equal(result.recontained, true)
+    assert.equal(state.dispatchCalls, 6)
+    assert.equal(state.window, false)
+    assert.equal(state.timerReads >= 15, true)
+    assert.equal(state.ended, 1)
+    assert.equal(state.runtimeClosed, 1)
+    assert.deepEqual(requests.slice(0, 6).map((item) => item.path), [
+      `/internal/v1/a1-dispatch-authorizations/${MISSION}`,
+      `/internal/v1/a1-assignment-enqueue-authorizations/${MISSION}`,
+      `/v1/missions/${MISSION}/assignments`,
+      `/internal/v1/a1-assignment-execution-authorizations/${MISSION}`,
+      `/internal/v1/a1-dispatch-execution-arms/${MISSION}`,
+      `/internal/v1/a1-dispatch-execution-windows/${MISSION}`,
+    ])
+    assert.equal(requests.slice(6).length, 13)
+    assert.equal(requests.slice(6).every((item) =>
+      item.path === `/internal/v1/missions/${MISSION}/execution`), true)
+  })
 })
+
+function row(value: Record<string, unknown>) {
+  return { rowCount: 1, rows: [value], command: 'SELECT', oid: 0, fields: [] }
+}
 
 function sha256(value: Buffer): string {
   return createHash('sha256').update(value).digest('hex')
