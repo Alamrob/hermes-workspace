@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { runA1WindowSupervisor, validateSupervisorState, type SupervisorEvent, type SupervisorPort } from '../src/a1-window-supervisor.js'
+import { A1_SUPERVISOR_SESSION_TIMEOUT_SQL, a1SupervisorClientConfig, runA1WindowSupervisor, validateSupervisorState, type SupervisorEvent, type SupervisorPort } from '../src/a1-window-supervisor.js'
 import { supervisorConfig } from '../src/a1-window-supervisor-main.js'
 const ID='11111111-1111-4111-8111-111111111111'
 const state=(status:'ready'|'stopped'='ready')=>({status,instance_id:ID,server_time:'2026-09-03T00:00:00.000Z',lease_until:status==='ready'?'2026-09-03T00:00:05.000Z':'2026-09-03T00:00:00.000Z',closed:[]})
+test('supervisor keeps PgBouncer-incompatible timeouts out of startup parameters',()=>{
+  const config=a1SupervisorClientConfig('postgresql://supervisor:secret@db-gateway:6432/runtime')
+  assert.equal('statement_timeout' in config,false)
+  assert.equal('options' in config,false)
+  assert.equal(config.query_timeout,3000)
+  assert.equal(A1_SUPERVISOR_SESSION_TIMEOUT_SQL,`SET statement_timeout='2s'; SET lock_timeout='500ms'`)
+})
 test('supervisor accepts server-clock state without interpreting local clock as authority',()=>{
   assert.equal(validateSupervisorState(state(),ID,'ready').status,'ready')
   assert.equal(validateSupervisorState(state('stopped'),ID,'stopped').status,'stopped')

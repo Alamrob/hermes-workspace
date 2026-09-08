@@ -40,6 +40,13 @@ export interface SupervisorEvent {
   instance_id:string
   closed?:SupervisorState['closed']
 }
+export const A1_SUPERVISOR_SESSION_TIMEOUT_SQL =
+  `SET statement_timeout='2s'; SET lock_timeout='500ms'`
+
+export function a1SupervisorClientConfig(connectionString:string){
+  return {connectionString,application_name:'proptimiza-a1-window-supervisor',
+    connectionTimeoutMillis:2000,query_timeout:3000}
+}
 // No dispatcher, approval, LLM, mail or CRM port exists in this process.
 export async function runA1WindowSupervisor(options:{
   instance:string; signal:AbortSignal; connect:()=>Promise<SupervisorPort>;
@@ -79,12 +86,15 @@ export async function runA1WindowSupervisor(options:{
 }
 
 export async function connectA1Supervisor(connectionString:string):Promise<SupervisorPort>{
-  const client=new Client({connectionString,application_name:'proptimiza-a1-window-supervisor',
-    connectionTimeoutMillis:2000,query_timeout:3000,statement_timeout:2000,options:'-c lock_timeout=500'})
+  // PgBouncer rejects PostgreSQL startup parameters such as statement_timeout
+  // and options unless they are explicitly ignored. Set both limits only after
+  // the dedicated per-user session has been established.
+  const client=new Client(a1SupervisorClientConfig(connectionString))
   let lost=false
   client.on('error',()=>{lost=true})
   try{
     await client.connect()
+    await client.query(A1_SUPERVISOR_SESSION_TIMEOUT_SQL)
     const r=await client.query(`SELECT r.rolcanlogin AND NOT(r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls)
       AND pg_has_role(current_user,'commercial_a1_supervisor','MEMBER')
       AND (SELECT count(*) FROM pg_auth_members WHERE member=r.oid)=1
