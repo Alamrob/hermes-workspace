@@ -55,7 +55,11 @@ export async function runManualDispatchOnce(
     brokerDispatcherEnvironment(environment),
     undefined,
     'broker-dispatcher-1',
-    { queue: persistence.dispatchQueue, onPhase: recordDispatchPhase },
+    {
+      queue: persistence.dispatchQueue,
+      executionPermitReader: persistence.executionPermitReader,
+      onPhase: recordDispatchPhase,
+    },
   )
   return executeManualDispatchOnce({
     mode: config.dispatchLoopMode,

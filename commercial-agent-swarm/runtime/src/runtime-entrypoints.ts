@@ -24,6 +24,7 @@ import {PostgresExecutionPermitReader} from './postgres-execution-permit.js'
 
 export interface BrokerDispatcherDependencies {
   queue?: DispatchQueuePort
+  executionPermitReader?: Pick<PostgresExecutionPermitReader, 'read'>
   executor?: ExecutorPort
   usage?: {
     reader?: OpenCodeUsageExportReadPort
@@ -45,11 +46,13 @@ export function createBrokerDispatcher(
   )
   const queue = dependencies.queue ?? (pool ? new PostgresDispatchQueue(pool) : undefined)
   if (!queue) throw new Error('DISPATCH_QUEUE_REQUIRED')
-  if(!pool&&!dependencies.executor)throw Error('EXECUTION_PERMIT_DATABASE_REQUIRED')
-  const permits=pool?new PostgresExecutionPermitReader(pool):undefined
+  const permits = dependencies.executionPermitReader ??
+    (pool ? new PostgresExecutionPermitReader(pool) : undefined)
+  if (!permits) throw Error('EXECUTION_PERMIT_DATABASE_REQUIRED')
   return new DeterministicDispatcher({
     queue,
-    readExecutionPermit:permits?job=>permits.read(job.job_id,job.mission_id,workerId,job.usageBudget.version):undefined,
+    readExecutionPermit: job =>
+      permits.read(job.job_id, job.mission_id, workerId, job.usageBudget.version),
     executor:
       dependencies.executor ??
       new UnixExecutorClient({

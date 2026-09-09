@@ -67,6 +67,7 @@ describe('runtime persistence composition', () => {
       testPersistence.approvalEvidenceStore satisfies ApprovalEvidenceStorePort,
     )
     assert.ok(testPersistence.dispatchQueue)
+    assert.equal(testPersistence.executionPermitReader, undefined)
     assert.equal(
       await testPersistence.dispatchQueue.claim('test', 60, 30),
       null,

@@ -144,6 +144,7 @@ async function startBrokerWithConfig(
           'broker-dispatcher-1',
           {
             queue: persistence.dispatchQueue,
+            executionPermitReader: persistence.executionPermitReader,
             onPhase: recordDispatchPhase,
           },
         ),

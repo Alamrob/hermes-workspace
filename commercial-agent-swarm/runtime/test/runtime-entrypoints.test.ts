@@ -7,6 +7,7 @@ import type {
   DispatchQueuePort,
 } from '../src/dispatch-queue.js'
 import type { ExecutorEnvelope } from '../src/hermes-executor.js'
+import type { ExecutionPermit } from '../src/execution-lease.js'
 
 const HEADER =
   'id,user_email,service_account_name,app,provider,model,input_tokens,output_tokens,reasoning_tokens,cache_read_tokens,cache_write_5m_tokens,cache_write_1h_tokens,reasoning_mode,reasoning_effort,reasoning_budget_tokens,reasoning_source,billing_source,cost_micro_cents,created_at'
@@ -37,6 +38,17 @@ const claimed: ClaimedJob = {
   },
   attempts: 1,
   max_attempts: 3,
+}
+
+const permit: ExecutionPermit = {
+  allowed: true,
+  job_id: claimed.job_id,
+  mission_id: claimed.mission_id,
+  worker_id: 'broker-dispatcher-1',
+  window_id: '423e4567-e89b-42d3-a456-426614174000',
+  epoch_id: '523e4567-e89b-42d3-a456-426614174000',
+  budget_version: claimed.usageBudget.version,
+  valid_for_ms: 5_000,
 }
 
 class Queue implements DispatchQueuePort {
@@ -142,10 +154,11 @@ describe('broker dispatcher factory', () => {
     let exports = 0
     const dispatcher = createBrokerDispatcher(
       environment(true),
-      {} as never,
+      undefined,
       'broker-dispatcher-1',
       {
         queue,
+        executionPermitReader: { read: async () => permit },
         executor: {
           execute: async () => {
             calls.push('executor')
@@ -188,10 +201,11 @@ describe('broker dispatcher factory', () => {
     let usageCredentialTouches = 0
     const dispatcher = createBrokerDispatcher(
       environment(false),
-      {} as never,
+      undefined,
       'broker-dispatcher-1',
       {
         queue,
+        executionPermitReader: { read: async () => permit },
         executor: {
           execute: async () => {
             executorCalls += 1

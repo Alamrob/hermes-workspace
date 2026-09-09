@@ -8,6 +8,7 @@ import { InMemoryRuntimeRepository } from './repository.js'
 import { InMemoryApprovalEvidenceStore } from './approval-mode.js'
 import { PostgresApprovalEvidenceStore } from './postgres-approval-evidence-store.js'
 import { PostgresDispatchQueue } from './dispatch-queue.js'
+import { PostgresExecutionPermitReader } from './postgres-execution-permit.js'
 import type { ApprovalEvidenceStorePort } from './approval-mode.js'
 import type { DispatchQueuePort } from './dispatch-queue.js'
 import type { AuditSink } from './observability.js'
@@ -20,6 +21,7 @@ export interface RuntimePersistence {
   audit: AuditSink
   approvalEvidenceStore: ApprovalEvidenceStorePort
   dispatchQueue: DispatchQueuePort
+  executionPermitReader?: Pick<PostgresExecutionPermitReader, 'read'>
   close: () => Promise<void>
   ready: () => Promise<void>
 }
@@ -91,6 +93,7 @@ export async function createRuntimePersistence(
         approvalEvidencePool,
       ),
       dispatchQueue: new PostgresDispatchQueue(pool),
+      executionPermitReader: new PostgresExecutionPermitReader(pool),
       ready: async () =>
         verifyProductionDatabasePrincipals([
           { pool, expected: principals[0], capability: 'commercial_runtime' },
@@ -142,6 +145,7 @@ export async function createRuntimePersistence(
       audit: new InMemoryAuditSink(),
       approvalEvidenceStore: new InMemoryApprovalEvidenceStore(),
       dispatchQueue: noDispatchQueue(),
+      executionPermitReader: undefined,
       ready: async () => undefined,
       close: async () => undefined,
     }
