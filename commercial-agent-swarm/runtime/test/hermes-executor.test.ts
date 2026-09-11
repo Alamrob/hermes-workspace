@@ -389,7 +389,7 @@ describe('isolated Hermes executor', () => {
       assert.equal(controller.signal.aborted,true)
       assert.equal(envelope.agent_result.status,'failed')
       assert.equal((envelope.agent_result.errors[0] as {code:string}).code,'HERMES_CANCELLED')
-      assert.equal(envelope.usage.tokens.total,15);assert.equal(envelope.usage.cost.usage_value_usd,0.0000055)
+      assert.equal(envelope.usage.tokens.total,15);assert.equal(envelope.usage.cost.usage_value_usd,0.0000045)
       await assert.rejects(access(state.runner.invocations[0].env.HERMES_HOME))
       await assert.rejects(access(state.runner.invocations[0].cwd))
     }finally{await rm(state.root,{recursive:true,force:true})}
@@ -431,14 +431,14 @@ describe('isolated Hermes executor', () => {
     assert.equal(envelope.agent_result.cost.total, 0)
     assert.equal(
       envelope.agent_result.metrics.provider_usage_value_usd,
-      0.0000055,
+      0.0000045,
     )
     assert.deepEqual(envelope.usage.cost, {
       status: 'known',
-      usage_value_usd: 0.0000055,
+      usage_value_usd: 0.0000045,
       cash_cost_usd: 0,
       source: 'official_docs_snapshot',
-      pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+      pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
     })
     const invocation = state.runner.invocations[0]
     assert.equal(invocation.command, '/opt/hermes/.venv/bin/hermes')
@@ -563,7 +563,7 @@ describe('isolated Hermes executor', () => {
     const expired = await setup({ productionPricing: true })
     ;(
       expired.executor as unknown as { options: { pricingClock: () => Date } }
-    ).options.pricingClock = () => new Date('2026-09-01T00:00:00Z')
+    ).options.pricingClock = () => new Date('2026-09-18T03:05:00.001Z')
     await assert.rejects(
       expired.executor.execute(input()),
       /OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED/,

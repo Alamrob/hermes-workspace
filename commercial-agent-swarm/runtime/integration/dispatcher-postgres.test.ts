@@ -275,7 +275,7 @@ integration('durable deterministic dispatch queue', { concurrency: 1 }, () => {
       usage_value_actual_usd: '0.004000',
       usage_value_consumed_usd: '0.004000',
       cash_cost_actual_usd: '0.000000',
-      pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+      pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
       tokens_used: '15',
       api_calls_used: 1,
     })
@@ -507,7 +507,7 @@ function completionEnvelope() {
     usage: {
       cost: {
         source: 'official_docs_snapshot',
-        pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+        pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
         cash_cost_usd: 0,
       },
     },

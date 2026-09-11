@@ -43,13 +43,13 @@ describe('versioned OpenCode Go pricing', () => {
       new Date('2026-08-16T12:00:00Z'),
     )
 
-    assert.equal(OPENCODE_GO_PRICING_SNAPSHOT.id, 'opencode-go-2026-08-21-v2')
+    assert.equal(OPENCODE_GO_PRICING_SNAPSHOT.id, 'opencode-go-2026-09-11-v3')
     assert.deepEqual(priced.cost, {
       status: 'known',
-      usage_value_usd: 0.887,
+      usage_value_usd: 0.753,
       cash_cost_usd: 0,
       source: 'official_docs_snapshot',
-      pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+      pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
     })
   })
 
@@ -66,7 +66,7 @@ describe('versioned OpenCode Go pricing', () => {
 
   it('requires revalidation after the dated pricing and privacy snapshot', () => {
     assert.throws(
-      () => priceOpenCodeGoUsage(usage(), new Date('2026-09-01T00:00:00Z')),
+      () => priceOpenCodeGoUsage(usage(), new Date('2026-09-18T03:05:00.001Z')),
       /OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED/,
     )
   })
@@ -76,7 +76,7 @@ describe('versioned OpenCode Go pricing', () => {
       assertOpenCodeGoExecutionPreflight(
         {
           maximum_tokens: 24_576,
-          budget_reservation: { currency: 'USD', amount: 0.032441 },
+          budget_reservation: { currency: 'USD', amount: 0.029492 },
         },
         new Date('2026-08-21T12:00:00Z'),
       ),
@@ -86,7 +86,7 @@ describe('versioned OpenCode Go pricing', () => {
         assertOpenCodeGoExecutionPreflight(
           {
             maximum_tokens: 24_576,
-            budget_reservation: { currency: 'USD', amount: 0.03244 },
+            budget_reservation: { currency: 'USD', amount: 0.029491 },
           },
           new Date('2026-08-16T12:00:00Z'),
         ),
@@ -96,6 +96,14 @@ describe('versioned OpenCode Go pricing', () => {
 
   it('uses the published peak window in UTC', () => {
     const priced = priceOpenCodeGoUsage(usage(), new Date('2026-08-21T07:00:00Z'))
-    assert.equal(priced.cost.usage_value_usd, 1.774)
+    assert.equal(priced.cost.usage_value_usd, 1.506)
+  })
+
+  it('treats the published peak windows as off-peak on weekends', () => {
+    const priced = priceOpenCodeGoUsage(
+      usage(),
+      new Date('2026-09-12T07:00:00Z'),
+    )
+    assert.equal(priced.cost.usage_value_usd, 0.753)
   })
 })

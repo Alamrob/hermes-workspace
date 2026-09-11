@@ -45,7 +45,7 @@ function envelope(): ExecutorEnvelope {
       actions_taken: [], external_changes: [], evidence: [], artifacts: [],
       metrics: {
         provider_usage_value_usd: 0.01, cash_cost_usd: 0,
-        pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+        pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
         pricing_source: 'official_docs_snapshot',
       },
       cost: { currency: 'USD', llm: 0, tools: 0, total: 0, input_tokens: 1, output_tokens: 2 },
@@ -58,7 +58,7 @@ function envelope(): ExecutorEnvelope {
       completed: true, failed: false,
       cost: {
         status: 'known', usage_value_usd: 0.01, cash_cost_usd: 0,
-        source: 'official_docs_snapshot', pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+        source: 'official_docs_snapshot', pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
       },
     },
   }
@@ -142,7 +142,7 @@ describe('authoritative Usage budget dispatch wiring', () => {
     assert.equal(queue.failed.length, 0)
     assert.deepEqual(queue.completed[0][4], {
       usageValueMicroCents: 1_000_000,
-      usageRecordId: `native:${claimed.job_id}:opencode-go-2026-08-21-v2`,
+      usageRecordId: `native:${claimed.job_id}:opencode-go-2026-09-11-v3`,
       source: 'opencode_go_native_telemetry',
       budgetVersion: 4,
       total_tokens: 3,

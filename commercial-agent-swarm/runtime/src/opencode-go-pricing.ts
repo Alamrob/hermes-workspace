@@ -4,23 +4,23 @@ const PICODOLLARS_PER_USD = 1_000_000_000_000n
 const PICODOLLARS_PER_MICRODOLLAR = 1_000_000n
 
 export const OPENCODE_GO_PRICING_SNAPSHOT = Object.freeze({
-  id: 'opencode-go-2026-08-21-v2',
+  id: 'opencode-go-2026-09-11-v3',
   source: 'https://opencode.ai/docs/go/',
-  captured_at: '2026-08-21T00:00:00Z',
-  revalidate_after: '2026-08-31T23:59:59Z',
+  captured_at: '2026-09-11T03:05:00Z',
+  revalidate_after: '2026-09-18T03:05:00Z',
   model: 'deepseek-v4-flash',
   provider: 'opencode-go',
   peak_hours_utc: Object.freeze([[1, 4], [6, 10]] as const),
   off_peak_picodollars_per_token: Object.freeze({
-    input: 220_000n,
-    output: 660_000n,
-    cache_read: 7_000n,
+    input: 150_000n,
+    output: 600_000n,
+    cache_read: 3_000n,
     cache_write: null,
   }),
   peak_picodollars_per_token: Object.freeze({
-    input: 440_000n,
-    output: 1_320_000n,
-    cache_read: 14_000n,
+    input: 300_000n,
+    output: 1_200_000n,
+    cache_read: 6_000n,
     cache_write: null,
   }),
 })
@@ -92,7 +92,8 @@ export function assertOpenCodeGoExecutionPreflight(
 
 function ratesAt(now: Date) {
   const hour = now.getUTCHours()
-  const peak = OPENCODE_GO_PRICING_SNAPSHOT.peak_hours_utc.some(
+  const weekday = now.getUTCDay() >= 1 && now.getUTCDay() <= 5
+  const peak = weekday && OPENCODE_GO_PRICING_SNAPSHOT.peak_hours_utc.some(
     ([start, end]) => hour >= start && hour < end,
   )
   return peak

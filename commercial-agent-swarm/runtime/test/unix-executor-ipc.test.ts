@@ -67,7 +67,7 @@ function envelope(): ExecutorEnvelope {
       metrics: {
         provider_usage_value_usd: 0.01,
         cash_cost_usd: 0,
-        pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+        pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
         pricing_source: 'official_docs_snapshot',
       },
       cost: {
@@ -104,7 +104,7 @@ function envelope(): ExecutorEnvelope {
         usage_value_usd: 0.01,
         cash_cost_usd: 0,
         source: 'official_docs_snapshot',
-        pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+        pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
       },
     },
   }

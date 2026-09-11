@@ -454,6 +454,6 @@ function job(missionId: string, key: string, reservation = 0.1): EnqueueJob {
 function completionEnvelope() {
   return {
     schema_version: '1.0', agent_result: { status: 'completed' },
-    usage: { cost: { source: 'official_docs_snapshot', pricing_snapshot_id: 'opencode-go-2026-08-21-v2', cash_cost_usd: 0 } },
+    usage: { cost: { source: 'official_docs_snapshot', pricing_snapshot_id: 'opencode-go-2026-09-11-v3', cash_cost_usd: 0 } },
   }
 }

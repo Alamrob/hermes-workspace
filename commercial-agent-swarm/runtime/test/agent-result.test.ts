@@ -32,7 +32,7 @@ const usage = {
     usage_value_usd: 0.004,
     cash_cost_usd: 0 as const,
     source: 'official_docs_snapshot' as const,
-    pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+    pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
   },
 }
 const raw = {
@@ -119,7 +119,7 @@ describe('canonical AgentResult reconciliation', () => {
     assert.deepEqual(result.metrics, {
       provider_usage_value_usd: 0.004,
       cash_cost_usd: 0,
-      pricing_snapshot_id: 'opencode-go-2026-08-21-v2',
+      pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
       pricing_source: 'official_docs_snapshot',
     })
     assert.equal(result.started_at, '2026-08-16T08:00:00.000Z')
