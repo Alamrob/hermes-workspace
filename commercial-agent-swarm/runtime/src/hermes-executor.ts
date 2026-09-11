@@ -330,6 +330,7 @@ export class HermesExecutor implements ExecutorPort {
           [HERMES_KEY_ENV]: customApiKey,
           [HERMES_BASE_URL_ENV]: HERMES_BASE_URL,
           HERMES_HOME: home,
+          HERMES_WRITE_SAFE_ROOT: home,
           HOME: home,
           HTTP_PROXY: this.options.modelProxyUrl,
           HTTPS_PROXY: this.options.modelProxyUrl,

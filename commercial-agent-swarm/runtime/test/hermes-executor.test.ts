@@ -423,7 +423,7 @@ describe('isolated Hermes executor', () => {
     assert.equal(state.runner.invocations.length, 0)
     await rm(state.root, { recursive: true, force: true })
   })
-  it('uses exact Hermes 0.20.1 argv, controlled cwd, non-root identity, filtered env, and cleanup', async () => {
+  it('uses exact Hermes argv, controlled cwd, non-root identity, filtered env, and cleanup', async () => {
     const state = await setup()
     const envelope = await state.executor.execute(input())
     assert.equal(envelope.agent_result.summary, 'safe result')
@@ -461,6 +461,7 @@ describe('isolated Hermes executor', () => {
     )
     assert.deepEqual(Object.keys(invocation.env).sort(), [
       'HERMES_HOME',
+      'HERMES_WRITE_SAFE_ROOT',
       'HOME',
       'HTTPS_PROXY',
       'HTTP_PROXY',
@@ -470,6 +471,7 @@ describe('isolated Hermes executor', () => {
       'OPENCODE_GO_BASE_URL',
       'PATH',
     ])
+    assert.equal(invocation.env.HERMES_WRITE_SAFE_ROOT, invocation.env.HERMES_HOME)
     assert.equal(invocation.env.OPENCODE_GO_API_KEY, 'llm-only-secret')
     assert.equal(
       invocation.env.OPENCODE_GO_BASE_URL,
