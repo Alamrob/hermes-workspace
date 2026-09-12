@@ -22,6 +22,13 @@ import type { OpenCodeUsageExportReadPort } from './opencode-usage-api.js'
 import type { Pool } from 'pg'
 import {PostgresExecutionPermitReader} from './postgres-execution-permit.js'
 
+// Deliberately exports only the injected, inert A0 capability. Runtime startup
+// does not construct it and no production runner or automatic trigger exists.
+export {
+  createA0BehaviorBatchAdmission,
+  type A0BehaviorBatchAdmissionDependencies,
+} from './a0-behavior-batch-admission.js'
+
 export interface BrokerDispatcherDependencies {
   queue?: DispatchQueuePort
   executionPermitReader?: Pick<PostgresExecutionPermitReader, 'read'>
