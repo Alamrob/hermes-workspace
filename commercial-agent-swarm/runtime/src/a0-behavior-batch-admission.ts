@@ -158,7 +158,7 @@ export type A0ReserveResult =
   | { disposition: 'created'; state: 'reserved'; version: number }
   | {
       disposition: 'replayed'
-      state: 'reserved' | 'settled' | 'held_unknown'
+      state: 'reserved' | 'settled' | 'budget_exceeded' | 'held_unknown'
       version: number
     }
   | { disposition: 'denied'; reason: string }
@@ -408,10 +408,12 @@ export async function admitA0BehaviorBatch(input: {
   | {
       status: 'reservation_replayed'
       batch_id: string
-      reservation_state: 'reserved' | 'settled' | 'held_unknown'
+      reservation_state: 'reserved' | 'settled' | 'budget_exceeded' | 'held_unknown'
       reservation_version: number
     }
   | { status: 'settled'; batch_id: string; reservation_version: number }
+  | { status: 'budget_exceeded'; batch_id: string; reservation_version: number }
+  | { status: 'settlement_unconfirmed'; batch_id: string; reservation_version: number }
   | { status: 'held_unknown'; batch_id: string; reservation_version: number }
 > {
   object(input, 'A0_ADMISSION_INPUT_UNSAFE')
@@ -641,16 +643,21 @@ export async function admitA0BehaviorBatch(input: {
       usage_record_id: outcome.usage_record_id,
     })
   } catch {
-    return holdUnknownOnce(
-      holdUnknown,
-      admitted.compiled.run_id,
-      batch.batch_id,
-      reservation.version,
-    )
+    // The database may have committed the known settlement before the reply
+    // was lost. A second mutation could overwrite that truth, so surface the
+    // uncertainty for reconciliation without attempting holdUnknown.
+    return {
+      status: 'settlement_unconfirmed',
+      batch_id: batch.batch_id,
+      reservation_version: reservation.version,
+    }
   }
   if (settled !== true) fail('A0_LEDGER_SETTLE_CAS_FAILED')
   return {
-    status: 'settled',
+    status:
+      outcome.usage_value_micro_cents > batch.reservation_micro_cents
+        ? 'budget_exceeded'
+        : 'settled',
     batch_id: batch.batch_id,
     reservation_version: reservation.version,
   }
@@ -1505,7 +1512,9 @@ function validateReserveResult(value: unknown): A0ReserveResult {
   }
   if (
     result.disposition !== 'replayed' ||
-    !['reserved', 'settled', 'held_unknown'].includes(String(result.state))
+    !['reserved', 'settled', 'budget_exceeded', 'held_unknown'].includes(
+      String(result.state),
+    )
   )
     fail('A0_LEDGER_RESULT_INVALID')
   return result as unknown as A0ReserveResult
@@ -1534,7 +1543,6 @@ function validKnownOutcome(
     value.model_calls === batch.tasks.length &&
     Number.isSafeInteger(value.usage_value_micro_cents) &&
     Number(value.usage_value_micro_cents) > 0 &&
-    Number(value.usage_value_micro_cents) <= batch.reservation_micro_cents &&
     typeof value.usage_record_id === 'string' &&
     /^[A-Za-z0-9._:-]{1,200}$/.test(value.usage_record_id)
   )

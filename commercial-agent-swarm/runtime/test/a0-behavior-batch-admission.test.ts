@@ -881,8 +881,8 @@ describe('A0 exact-batch admission', () => {
     ])
   })
 
-  it('holds once when credential, spawn or settlement becomes uncertain', async () => {
-    for (const phase of ['credential', 'spawn', 'settle'] as const) {
+  it('holds once when credential or spawn becomes uncertain', async () => {
+    for (const phase of ['credential', 'spawn'] as const) {
       const compiled = compileValid()
       const batch = compiled.batches[0]!
       const events: string[] = []
@@ -897,11 +897,6 @@ describe('A0 exact-batch admission', () => {
           events.push('spawn')
           throw new Error('uncertain process boundary')
         }
-      if (phase === 'settle')
-        dependencies.ledger.settle = async () => {
-          events.push('settle')
-          throw new Error('uncertain settlement boundary')
-        }
       const result = await admitA0BehaviorBatch({
         compiled,
         batch_id: batch.batch_id,
@@ -912,6 +907,69 @@ describe('A0 exact-batch admission', () => {
       assert.equal(result.status, 'held_unknown')
       assert.equal(events.filter((event) => event === 'hold').length, 1)
     }
+  })
+
+  it('settles a known overrun without demoting exact usage to unknown', async () => {
+    const compiled = compileValid()
+    const batch = compiled.batches[0]!
+    const events: string[] = []
+    const dependencies = ports(events)
+    dependencies.runner.spawn = async () => {
+      events.push('spawn')
+      return {
+        status: 'known',
+        provider_id: 'opencode-go',
+        model_id: 'deepseek-v4-flash',
+        model_calls: 6,
+        usage_value_micro_cents: 6_000_001,
+        usage_record_id: 'usage-known-overrun',
+      }
+    }
+    dependencies.ledger.settle = async (input) => {
+      events.push('settle')
+      assert.equal(input.usage_value_micro_cents, 6_000_001)
+      return true
+    }
+
+    const result = await admitA0BehaviorBatch({
+      compiled,
+      batch_id: batch.batch_id,
+      authorization: authorization(batch),
+      now: new Date('2026-09-12T12:10:00.000Z'),
+      ...dependencies,
+    })
+    assert.deepEqual(result, {
+      status: 'budget_exceeded',
+      batch_id: batch.batch_id,
+      reservation_version: 7,
+    })
+    assert.equal(events.includes('hold'), false)
+  })
+
+  it('does not mutate the ledger again when a known settlement reply is uncertain', async () => {
+    const compiled = compileValid()
+    const batch = compiled.batches[0]!
+    const events: string[] = []
+    const dependencies = ports(events)
+    dependencies.ledger.settle = async () => {
+      events.push('settle')
+      throw new Error('commit result unknown')
+    }
+
+    const result = await admitA0BehaviorBatch({
+      compiled,
+      batch_id: batch.batch_id,
+      authorization: authorization(batch),
+      now: new Date('2026-09-12T12:10:00.000Z'),
+      ...dependencies,
+    })
+    assert.deepEqual(result, {
+      status: 'settlement_unconfirmed',
+      batch_id: batch.batch_id,
+      reservation_version: 7,
+    })
+    assert.equal(events.filter((event) => event === 'settle').length, 1)
+    assert.equal(events.includes('hold'), false)
   })
 
   it('deeply revalidates task order, contract and critical cardinality after valid rehashes', async () => {
