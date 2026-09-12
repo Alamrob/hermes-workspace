@@ -163,6 +163,14 @@ export type A0ReserveResult =
     }
   | { disposition: 'denied'; reason: string }
 
+export type A0SettlementLookupResult =
+  | {
+      status: 'confirmed'
+      state: 'settled' | 'budget_exceeded'
+      version: number
+    }
+  | { status: 'unconfirmed' }
+
 export interface A0BehaviorLedgerPort {
   reserve(input: {
     idempotency_key: string
@@ -170,6 +178,7 @@ export interface A0BehaviorLedgerPort {
     batch_id: string
     batch_sha256: string
     reservation_micro_cents: 6_000_000
+    expires_at: string
   }): Promise<A0ReserveResult>
   settle(input: {
     run_id: string
@@ -178,6 +187,13 @@ export interface A0BehaviorLedgerPort {
     usage_value_micro_cents: number
     usage_record_id: string
   }): Promise<boolean>
+  getSettlement(input: {
+    run_id: string
+    batch_id: string
+    reservation_version: number
+    usage_value_micro_cents: number
+    usage_record_id: string
+  }): Promise<A0SettlementLookupResult>
   holdUnknown(input: {
     run_id: string
     batch_id: string
@@ -481,6 +497,11 @@ export async function admitA0BehaviorBatch(input: {
     'settle',
     'A0_ADMISSION_PORT_INVALID',
   ) as A0BehaviorLedgerPort['settle']
+  const getSettlement = bindOwnMethod(
+    ledger,
+    'getSettlement',
+    'A0_ADMISSION_PORT_INVALID',
+  ) as A0BehaviorLedgerPort['getSettlement']
   const holdUnknown = bindOwnMethod(
     ledger,
     'holdUnknown',
@@ -565,6 +586,12 @@ export async function admitA0BehaviorBatch(input: {
         batch_id: batch.batch_id,
         batch_sha256: batch.batch_sha256,
         reservation_micro_cents: 6_000_000,
+        expires_at: new Date(
+          Math.min(
+            Date.parse(admitted.authorization.expires_at),
+            Date.parse(admitted.compiled.expires_at),
+          ),
+        ).toISOString(),
       }),
       'A0_LEDGER_RESULT_INVALID',
     ),
@@ -643,9 +670,34 @@ export async function admitA0BehaviorBatch(input: {
       usage_record_id: outcome.usage_record_id,
     })
   } catch {
-    // The database may have committed the known settlement before the reply
-    // was lost. A second mutation could overwrite that truth, so surface the
-    // uncertainty for reconciliation without attempting holdUnknown.
+    // The database may have committed before the reply was lost. Perform one
+    // exact read and never issue a second mutation from this uncertain path.
+    try {
+      const reconciled = validateSettlementLookupResult(
+        immutableJsonSnapshot(
+          await getSettlement({
+            run_id: admitted.compiled.run_id,
+            batch_id: batch.batch_id,
+            reservation_version: reservation.version,
+            usage_value_micro_cents: outcome.usage_value_micro_cents,
+            usage_record_id: outcome.usage_record_id,
+          }),
+          'A0_LEDGER_RECONCILIATION_INVALID',
+        ),
+        reservation.version,
+        outcome.usage_value_micro_cents > batch.reservation_micro_cents
+          ? 'budget_exceeded'
+          : 'settled',
+      )
+      if (reconciled.status === 'confirmed')
+        return {
+          status: reconciled.state,
+          batch_id: batch.batch_id,
+          reservation_version: reservation.version,
+        }
+    } catch {
+      // A failed read stays unconfirmed; there is intentionally no retry.
+    }
     return {
       status: 'settlement_unconfirmed',
       batch_id: batch.batch_id,
@@ -661,6 +713,30 @@ export async function admitA0BehaviorBatch(input: {
     batch_id: batch.batch_id,
     reservation_version: reservation.version,
   }
+}
+
+function validateSettlementLookupResult(
+  value: unknown,
+  reservationVersion: number,
+  expectedState: 'settled' | 'budget_exceeded',
+): A0SettlementLookupResult {
+  const result = object(value, 'A0_LEDGER_RECONCILIATION_INVALID')
+  if (result.status === 'unconfirmed') {
+    exactKeys(result, ['status'], 'A0_LEDGER_RECONCILIATION_INVALID')
+    return { status: 'unconfirmed' }
+  }
+  exactKeys(
+    result,
+    ['status', 'state', 'version'],
+    'A0_LEDGER_RECONCILIATION_INVALID',
+  )
+  if (
+    result.status !== 'confirmed' ||
+    result.state !== expectedState ||
+    result.version !== reservationVersion + 1
+  )
+    fail('A0_LEDGER_RECONCILIATION_INVALID')
+  return result as unknown as A0SettlementLookupResult
 }
 
 export interface A0BehaviorBatchAdmissionDependencies {

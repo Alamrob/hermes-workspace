@@ -2,6 +2,7 @@ import type { QueryConfig, QueryResult, QueryResultRow } from 'pg'
 import type {
   A0BehaviorLedgerPort,
   A0ReserveResult,
+  A0SettlementLookupResult,
 } from './a0-behavior-batch-admission.js'
 
 export interface A0BehaviorLedgerDatabasePort {
@@ -16,7 +17,8 @@ export interface PostgresA0BehaviorLedgerOptions {
 const CAPABILITY_ROLE = 'commercial_a0_behavior_ledger'
 const capabilityFunctions = [
   'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
-  'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint)',
+  'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)',
+  'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz)',
   'control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text)',
 ] as const
 const UUID =
@@ -126,13 +128,14 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
     validateReservation(input)
     const row = await this.one<{ value: unknown }>(
       `SELECT control.reserve_a0_behavior_batch(
-        $1::text,$2::uuid,$3::text,$4::text,$5::bigint) AS value`,
+        $1::text,$2::uuid,$3::text,$4::text,$5::bigint,$6::timestamptz) AS value`,
       [
         input.idempotency_key,
         input.run_id,
         input.batch_id,
         input.batch_sha256,
         input.reservation_micro_cents,
+        input.expires_at,
       ],
       'A0_LEDGER_RESERVATION_UNCONFIRMED',
     )
@@ -158,6 +161,25 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
         'A0_LEDGER_SETTLEMENT_UNCONFIRMED',
       )
     return row.applied
+  }
+
+  async getSettlement(
+    input: Parameters<A0BehaviorLedgerPort['getSettlement']>[0],
+  ) {
+    validateSettlement(input)
+    const row = await this.one<{ value: unknown }>(
+      `SELECT control.get_a0_behavior_batch_settlement(
+        $1::uuid,$2::text,$3::bigint,$4::bigint,$5::text) AS value`,
+      [
+        input.run_id,
+        input.batch_id,
+        input.reservation_version,
+        input.usage_value_micro_cents,
+        input.usage_record_id,
+      ],
+      'A0_LEDGER_RECONCILIATION_UNCONFIRMED',
+    )
+    return validateSettlementLookupResult(row.value)
   }
 
   async holdUnknown(input: Parameters<A0BehaviorLedgerPort['holdUnknown']>[0]) {
@@ -202,11 +224,21 @@ function validateReservation(
     input.idempotency_key !==
       `a0:${input.idempotency_key.split(':')[1]}:${input.batch_sha256}` ||
     !/^a0:[a-f0-9]{64}:[a-f0-9]{64}$/.test(input.idempotency_key) ||
-    input.reservation_micro_cents !== 6_000_000
+    input.reservation_micro_cents !== 6_000_000 ||
+    !canonicalIso(input.expires_at)
   )
     throw new PostgresA0BehaviorLedgerError(
       'A0_LEDGER_RESERVATION_INPUT_INVALID',
     )
+}
+
+function canonicalIso(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const milliseconds = Date.parse(value)
+  return (
+    Number.isFinite(milliseconds) &&
+    new Date(milliseconds).toISOString() === value
+  )
 }
 
 function validateSettlement(
@@ -269,6 +301,31 @@ function validateReserveResult(value: unknown): A0ReserveResult {
   )
     return result as unknown as A0ReserveResult
   throw new PostgresA0BehaviorLedgerError('A0_LEDGER_RESULT_INVALID')
+}
+
+function validateSettlementLookupResult(
+  value: unknown,
+): A0SettlementLookupResult {
+  const result = record(value, 'A0_LEDGER_RECONCILIATION_INVALID')
+  if (result.status === 'unconfirmed') {
+    exactKeys(result, ['status'], 'A0_LEDGER_RECONCILIATION_INVALID')
+    return { status: 'unconfirmed' }
+  }
+  exactKeys(
+    result,
+    ['status', 'state', 'version'],
+    'A0_LEDGER_RECONCILIATION_INVALID',
+  )
+  if (
+    result.status !== 'confirmed' ||
+    !['settled', 'budget_exceeded'].includes(String(result.state)) ||
+    !Number.isSafeInteger(result.version) ||
+    Number(result.version) < 2
+  )
+    throw new PostgresA0BehaviorLedgerError(
+      'A0_LEDGER_RECONCILIATION_INVALID',
+    )
+  return result as unknown as A0SettlementLookupResult
 }
 
 function record(value: unknown, code: string): Record<string, unknown> {

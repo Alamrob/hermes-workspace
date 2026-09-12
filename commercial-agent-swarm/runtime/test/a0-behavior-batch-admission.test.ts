@@ -209,6 +209,10 @@ function ports(
       events.push('settle')
       return true
     },
+    getSettlement: async () => {
+      events.push('reconcile')
+      return { status: 'unconfirmed' }
+    },
     holdUnknown: async () => {
       events.push('hold')
       return true
@@ -498,6 +502,7 @@ describe('A0 exact-batch admission', () => {
         reservation.idempotency_key,
         `a0:${expected.sourcePlanSha256}:${expected.batchSha256}`,
       )
+      assert.equal(reservation.expires_at, '2026-09-12T12:20:00.000Z')
       originalCompiled.sealed_artifact_snapshot.snapshot_sha256 = 'c'.repeat(64)
       originalCompiled.sealed_artifact_snapshot.fixture_artifacts[0].sealed_handle =
         'a0-sealed:caller-mutated-fixture-0000000000000000'
@@ -969,7 +974,84 @@ describe('A0 exact-batch admission', () => {
       reservation_version: 7,
     })
     assert.equal(events.filter((event) => event === 'settle').length, 1)
+    assert.equal(events.filter((event) => event === 'reconcile').length, 1)
     assert.equal(events.includes('hold'), false)
+  })
+
+  it('accepts one exact read reconciliation after a lost settlement reply', async () => {
+    const compiled = compileValid()
+    const batch = compiled.batches[0]!
+    const events: string[] = []
+    const dependencies = ports(events)
+    dependencies.ledger.settle = async () => {
+      events.push('settle')
+      throw new Error('commit reply lost')
+    }
+    dependencies.ledger.getSettlement = async (input) => {
+      events.push('reconcile')
+      assert.deepEqual(input, {
+        run_id: compiled.run_id,
+        batch_id: batch.batch_id,
+        reservation_version: 7,
+        usage_value_micro_cents: 1_000_000,
+        usage_record_id: 'usage-1',
+      })
+      return { status: 'confirmed', state: 'settled', version: 8 }
+    }
+
+    const result = await admitA0BehaviorBatch({
+      compiled,
+      batch_id: batch.batch_id,
+      authorization: authorization(batch),
+      now: new Date('2026-09-12T12:10:00.000Z'),
+      ...dependencies,
+    })
+    assert.deepEqual(result, {
+      status: 'settled',
+      batch_id: batch.batch_id,
+      reservation_version: 7,
+    })
+    assert.deepEqual(events.slice(-2), ['settle', 'reconcile'])
+    assert.equal(events.includes('hold'), false)
+  })
+
+  it('fails reconciliation closed after exactly one read and no mutation', async () => {
+    for (const result of [
+      { status: 'confirmed', state: 'budget_exceeded', version: 8 },
+      { status: 'confirmed', state: 'settled', version: 9 },
+      { status: 'confirmed', state: 'settled', version: 8, extra: true },
+    ] as const) {
+      const compiled = compileValid()
+      const batch = compiled.batches[0]!
+      const events: string[] = []
+      const dependencies = ports(events)
+      dependencies.ledger.settle = async () => {
+        events.push('settle')
+        throw new Error('commit reply lost')
+      }
+      dependencies.ledger.getSettlement = async () => {
+        events.push('reconcile')
+        return result
+      }
+
+      assert.deepEqual(
+        await admitA0BehaviorBatch({
+          compiled,
+          batch_id: batch.batch_id,
+          authorization: authorization(batch),
+          now: new Date('2026-09-12T12:10:00.000Z'),
+          ...dependencies,
+        }),
+        {
+          status: 'settlement_unconfirmed',
+          batch_id: batch.batch_id,
+          reservation_version: 7,
+        },
+      )
+      assert.equal(events.filter((event) => event === 'settle').length, 1)
+      assert.equal(events.filter((event) => event === 'reconcile').length, 1)
+      assert.equal(events.includes('hold'), false)
+    }
   })
 
   it('deeply revalidates task order, contract and critical cardinality after valid rehashes', async () => {

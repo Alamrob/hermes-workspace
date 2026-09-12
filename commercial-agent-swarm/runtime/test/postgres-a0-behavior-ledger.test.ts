@@ -31,7 +31,8 @@ class FakeDatabase {
           missing_functions: [],
           unsafe_effective: false,
         }
-      : config.text.includes('reserve_a0_behavior_batch')
+      : config.text.includes('reserve_a0_behavior_batch') ||
+          config.text.includes('get_a0_behavior_batch_settlement')
         ? { value: structuredClone(this.value) }
         : { applied: this.value }
     return { rows: [row as unknown as T], rowCount: 1 } as QueryResult<T>
@@ -55,7 +56,8 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
     assert.deepEqual(database.calls[0]?.values, [
       [
         'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
-        'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint)',
+        'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)',
+        'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz)',
         'control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text)',
       ],
     ])
@@ -70,6 +72,7 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
       batch_id: BATCH,
       batch_sha256: HASH,
       reservation_micro_cents: 6_000_000 as const,
+      expires_at: '2026-09-12T12:20:00.000Z',
     }
     assert.deepEqual(await ledger.reserve(input), {
       disposition: 'created',
@@ -92,8 +95,50 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
       BATCH,
       HASH,
       6_000_000,
+      '2026-09-12T12:20:00.000Z',
     ])
     assert.match(database.calls[0]?.text ?? '', /reserve_a0_behavior_batch/)
+  })
+
+  it('reconciles one exact known settlement with a read-only function', async () => {
+    const { ledger, database } = create()
+    database.value = {
+      status: 'confirmed',
+      state: 'budget_exceeded',
+      version: 2,
+    }
+    assert.deepEqual(
+      await ledger.getSettlement({
+        run_id: RUN,
+        batch_id: BATCH,
+        reservation_version: 1,
+        usage_value_micro_cents: 6_000_001,
+        usage_record_id: 'usage-known-overrun',
+      }),
+      { status: 'confirmed', state: 'budget_exceeded', version: 2 },
+    )
+    assert.equal(database.calls.length, 1)
+    assert.match(
+      database.calls[0]?.text ?? '',
+      /get_a0_behavior_batch_settlement/,
+    )
+
+    database.value = {
+      status: 'confirmed',
+      state: 'settled',
+      version: 2,
+      extra: true,
+    }
+    await assert.rejects(
+      ledger.getSettlement({
+        run_id: RUN,
+        batch_id: BATCH,
+        reservation_version: 1,
+        usage_value_micro_cents: 6_000_001,
+        usage_record_id: 'usage-known-overrun',
+      }),
+      /A0_LEDGER_RECONCILIATION_INVALID/,
+    )
   })
 
   it('settles known overrun and holds unknown through one fixed call each', async () => {
@@ -154,6 +199,18 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
         batch_id: `${BATCH}-expanded`,
         batch_sha256: HASH,
         reservation_micro_cents: 6_000_000,
+        expires_at: '2026-09-12T12:20:00.000Z',
+      }),
+      /A0_LEDGER_RESERVATION_INPUT_INVALID/,
+    )
+    await assert.rejects(
+      ledger.reserve({
+        idempotency_key: IDEMPOTENCY,
+        run_id: RUN,
+        batch_id: BATCH,
+        batch_sha256: HASH,
+        reservation_micro_cents: 6_000_000,
+        expires_at: {} as string,
       }),
       /A0_LEDGER_RESERVATION_INPUT_INVALID/,
     )

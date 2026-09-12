@@ -24,16 +24,22 @@ held once for manual reconciliation and is never retried by this capability.
 
 `createA0BehaviorAuthorityAdapters` composes the optional production boundaries without enabling
 them. Construction performs no database or filesystem I/O. `PostgresA0BehaviorLedger` exposes
-only the three fixed PostgreSQL functions from migration 038 and verifies an exact function-only
-login before use. `PosixA0ArtifactSnapshotVerifier` resolves opaque handles only below
+only four fixed PostgreSQL functions from migration 038 (reserve, settle, one exact settlement
+read, and hold) and verifies an exact function-only login before use.
+`PosixA0ArtifactSnapshotVerifier` resolves opaque handles only below
 `/run/proptimiza-a0-sealed`, reusing the root-owned, group-0440, one-link, `O_NOFOLLOW` reader and
 then comparing the exact canonical snapshot bytes and every artifact byte count and SHA-256.
 
 The append-only PostgreSQL ledger permits sixteen 6,000,000-microcent reservations per run and a
-96,000,000-microcent activation ceiling. Exact known usage is always settled; usage above a batch
-reservation becomes `budget_exceeded` instead of unknown. If the settlement response is lost,
-admission returns `settlement_unconfirmed` and performs no second ledger mutation. A shared
-immutable receipt registry covers A0 plus future A1 settlements so one provider usage record
-cannot be consumed across both authorities. Migration rollback requires an empty A0 ledger and
-restores the retained A1 settlement function. None of these adapters is wired into a startup,
-timer, scheduler, CLI, route, credential provider, or process runner.
+96,000,000-microcent run ceiling. It admits at most one active A0 batch globally, excludes A0 and
+A1 attempts from coexisting, and counts both authorities against the shared 1,000,000,000-
+microcent activation ceiling under one lock order. An expired reservation becomes
+`held_unknown` and activates shared quarantine. Exact known usage is always settled; usage above
+a batch reservation becomes `budget_exceeded` and also activates shared quarantine. If the
+settlement response is lost, admission performs one exact read, then returns the confirmed state
+or `settlement_unconfirmed`; it performs no second mutation. A shared immutable receipt registry
+keys provider plus usage-record ID and binds authority, value, and fingerprint so the same receipt
+cannot be consumed across A0 and A1. Migration 038 also wraps future A1 claim, activation, and
+settlement paths to enforce these shared invariants; its empty-ledger rollback restores all three
+retained functions and their prior grants. None of these adapters is wired into a startup, timer,
+scheduler, CLI, route, credential provider, or process runner.
