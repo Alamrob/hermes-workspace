@@ -180,6 +180,11 @@ export interface A0BehaviorLedgerPort {
     reservation_micro_cents: 6_000_000
     expires_at: string
   }): Promise<A0ReserveResult>
+  acquireExecutionPermit(input: {
+    run_id: string
+    batch_id: string
+    reservation_version: number
+  }): Promise<boolean>
   settle(input: {
     run_id: string
     batch_id: string
@@ -497,6 +502,11 @@ export async function admitA0BehaviorBatch(input: {
     'settle',
     'A0_ADMISSION_PORT_INVALID',
   ) as A0BehaviorLedgerPort['settle']
+  const acquireExecutionPermit = bindOwnMethod(
+    ledger,
+    'acquireExecutionPermit',
+    'A0_ADMISSION_PORT_INVALID',
+  ) as A0BehaviorLedgerPort['acquireExecutionPermit']
   const getSettlement = bindOwnMethod(
     ledger,
     'getSettlement',
@@ -559,7 +569,6 @@ export async function admitA0BehaviorBatch(input: {
     admitted.authorization,
     admitted.compiled,
     batch,
-    admitted.now_milliseconds,
   )
   const snapshotVerification = immutableJsonSnapshot(
     await verifySnapshot(sealedArtifactSnapshot),
@@ -605,6 +614,25 @@ export async function admitA0BehaviorBatch(input: {
       reservation_version: reservation.version,
     }
   }
+  validateAuthorizationFreshness(
+    admitted.authorization,
+    admitted.compiled,
+    admitted.now_milliseconds,
+  )
+  if (
+    !(await acquirePermitOnce(
+      acquireExecutionPermit,
+      admitted.compiled.run_id,
+      batch.batch_id,
+      reservation.version,
+    ))
+  )
+    return holdUnknownOnce(
+      holdUnknown,
+      admitted.compiled.run_id,
+      batch.batch_id,
+      reservation.version,
+    )
   let credential: { opaque_handle: string }
   try {
     const acquired = object(
@@ -632,6 +660,21 @@ export async function admitA0BehaviorBatch(input: {
       reservation.version,
     )
   }
+
+  if (
+    !(await acquirePermitOnce(
+      acquireExecutionPermit,
+      admitted.compiled.run_id,
+      batch.batch_id,
+      reservation.version,
+    ))
+  )
+    return holdUnknownOnce(
+      holdUnknown,
+      admitted.compiled.run_id,
+      batch.batch_id,
+      reservation.version,
+    )
 
   let outcome: A0BatchRunnerOutcome
   try {
@@ -733,7 +776,8 @@ function validateSettlementLookupResult(
   if (
     result.status !== 'confirmed' ||
     result.state !== expectedState ||
-    result.version !== reservationVersion + 1
+    (result.version !== reservationVersion + 1 &&
+      result.version !== reservationVersion + 2)
   )
     fail('A0_LEDGER_RECONCILIATION_INVALID')
   return result as unknown as A0SettlementLookupResult
@@ -1513,7 +1557,6 @@ function validateAuthorization(
   authValue: unknown,
   compiled: A0CompiledBatchPlan,
   batch: A0CompiledBatch,
-  nowMilliseconds: number,
 ): asserts authValue is A0BatchAuthorization {
   const auth = object(authValue, 'A0_AUTHORIZATION_INVALID')
   exactKeys(
@@ -1555,13 +1598,39 @@ function validateAuthorization(
     true,
     'A0_PROVIDER_SPEND_NOT_AUTHORIZED',
   )
-  const expires = iso(auth.expires_at, 'A0_AUTHORIZATION_EXPIRY_INVALID')
+  iso(auth.expires_at, 'A0_AUTHORIZATION_EXPIRY_INVALID')
+}
+
+function validateAuthorizationFreshness(
+  auth: A0BatchAuthorization,
+  compiled: A0CompiledBatchPlan,
+  nowMilliseconds: number,
+): void {
   if (
     !Number.isFinite(nowMilliseconds) ||
-    nowMilliseconds >= Date.parse(expires) ||
+    nowMilliseconds >= Date.parse(auth.expires_at) ||
     nowMilliseconds >= Date.parse(compiled.expires_at)
   )
     fail('A0_AUTHORIZATION_EXPIRED')
+}
+
+async function acquirePermitOnce(
+  acquireExecutionPermit: A0BehaviorLedgerPort['acquireExecutionPermit'],
+  runId: string,
+  batchId: string,
+  version: number,
+): Promise<boolean> {
+  try {
+    return (
+      (await acquireExecutionPermit({
+        run_id: runId,
+        batch_id: batchId,
+        reservation_version: version,
+      })) === true
+    )
+  } catch {
+    return false
+  }
 }
 
 function validateReserveResult(value: unknown): A0ReserveResult {

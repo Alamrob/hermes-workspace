@@ -78,16 +78,20 @@ GRANT EXECUTE ON FUNCTION control.stage_dispatch_settlement(uuid,text,jsonb,text
 TO commercial_runtime;
 
 REVOKE ALL ON FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
+  control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
   control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
   control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)
 FROM commercial_a0_behavior_ledger;
 DROP FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
+  control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
   control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
   control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text),
   control.expire_a0_behavior_reservations();
 
+DROP TRIGGER a0_behavior_execution_permits_immutable ON control.a0_behavior_execution_permits;
+DROP TABLE control.a0_behavior_execution_permits;
 DROP TRIGGER a0_behavior_batch_ledger_immutable ON control.a0_behavior_batch_ledger;
 DROP TABLE control.a0_behavior_batch_ledger;
 DROP TRIGGER usage_record_registry_immutable ON control.usage_record_registry;

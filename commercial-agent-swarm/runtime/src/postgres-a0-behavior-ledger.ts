@@ -15,7 +15,9 @@ export interface PostgresA0BehaviorLedgerOptions {
 }
 
 const CAPABILITY_ROLE = 'commercial_a0_behavior_ledger'
+const EXPECTED_LOGIN = 'proptimiza_a0_behavior_ledger_login'
 const capabilityFunctions = [
+  'control.acquire_a0_behavior_execution_permit(uuid,text,bigint)',
   'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
   'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)',
   'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz)',
@@ -45,8 +47,7 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
     if (
       !options.database ||
       typeof options.database.query !== 'function' ||
-      !/^[a-z][a-z0-9_]{2,62}$/.test(options.expectedPrincipal) ||
-      options.expectedPrincipal === CAPABILITY_ROLE
+      options.expectedPrincipal !== EXPECTED_LOGIN
     )
       throw new PostgresA0BehaviorLedgerError('A0_LEDGER_CONFIGURATION_INVALID')
     this.query = options.database.query.bind(options.database)
@@ -57,13 +58,14 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
     const row = await this.one<{
       current_user: unknown
       rolcanlogin: unknown
+      rolinherit: unknown
       unsafe: unknown
       memberships: unknown
       unexpected_functions: unknown
       missing_functions: unknown
       unsafe_effective: unknown
     }>(
-      `SELECT current_user,r.rolcanlogin,
+      `SELECT current_user,r.rolcanlogin,r.rolinherit,
         (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls) AS unsafe,
         ARRAY(SELECT parent.rolname::text FROM pg_roles parent
           WHERE parent.oid<>r.oid AND pg_has_role(r.oid,parent.oid,'MEMBER')
@@ -115,6 +117,7 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
     if (
       row.current_user !== this.expectedPrincipal ||
       row.rolcanlogin !== true ||
+      row.rolinherit !== true ||
       row.unsafe !== false ||
       row.unsafe_effective !== false ||
       !sameStrings(row.memberships, [CAPABILITY_ROLE]) ||
@@ -140,6 +143,23 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
       'A0_LEDGER_RESERVATION_UNCONFIRMED',
     )
     return validateReserveResult(row.value)
+  }
+
+  async acquireExecutionPermit(
+    input: Parameters<A0BehaviorLedgerPort['acquireExecutionPermit']>[0],
+  ) {
+    validatePermit(input)
+    const row = await this.one<{ granted: unknown }>(
+      `SELECT control.acquire_a0_behavior_execution_permit(
+        $1::uuid,$2::text,$3::bigint) AS granted`,
+      [input.run_id, input.batch_id, input.reservation_version],
+      'A0_LEDGER_EXECUTION_PERMIT_UNCONFIRMED',
+    )
+    if (typeof row.granted !== 'boolean')
+      throw new PostgresA0BehaviorLedgerError(
+        'A0_LEDGER_EXECUTION_PERMIT_UNCONFIRMED',
+      )
+    return row.granted
   }
 
   async settle(input: Parameters<A0BehaviorLedgerPort['settle']>[0]) {
@@ -257,6 +277,19 @@ function validateSettlement(
     )
 }
 
+function validatePermit(
+  input: Parameters<A0BehaviorLedgerPort['acquireExecutionPermit']>[0],
+): void {
+  if (
+    !UUID.test(input.run_id) ||
+    !validBatchId(input.run_id, input.batch_id) ||
+    input.reservation_version !== 1
+  )
+    throw new PostgresA0BehaviorLedgerError(
+      'A0_LEDGER_EXECUTION_PERMIT_INPUT_INVALID',
+    )
+}
+
 function validateHold(
   input: Parameters<A0BehaviorLedgerPort['holdUnknown']>[0],
 ): void {
@@ -320,7 +353,7 @@ function validateSettlementLookupResult(
     result.status !== 'confirmed' ||
     !['settled', 'budget_exceeded'].includes(String(result.state)) ||
     !Number.isSafeInteger(result.version) ||
-    Number(result.version) < 2
+    ![2, 3].includes(Number(result.version))
   )
     throw new PostgresA0BehaviorLedgerError(
       'A0_LEDGER_RECONCILIATION_INVALID',

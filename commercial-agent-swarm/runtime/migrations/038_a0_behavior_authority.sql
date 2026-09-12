@@ -82,7 +82,7 @@ CREATE TABLE control.a0_behavior_batch_ledger(
   batch_sha256 text NOT NULL CHECK(batch_sha256~'^[a-f0-9]{64}$'),
   reservation_micro_cents bigint NOT NULL CHECK(reservation_micro_cents=6000000),
   expires_at timestamptz NOT NULL,
-  version bigint NOT NULL CHECK(version IN(1,2)),
+  version bigint NOT NULL CHECK(version IN(1,2,3)),
   state text NOT NULL CHECK(state IN('reserved','settled','budget_exceeded','held_unknown')),
   usage_value_micro_cents bigint CHECK(usage_value_micro_cents BETWEEN 1 AND 9007199254740991),
   usage_record_id text,
@@ -97,7 +97,7 @@ CREATE TABLE control.a0_behavior_batch_ledger(
       AND usage_value_micro_cents IS NULL
       AND usage_record_id IS NULL AND unknown_reason IS NULL)
     OR
-    (version=2 AND state IN('settled','budget_exceeded')
+    (version IN(2,3) AND state IN('settled','budget_exceeded')
       AND usage_value_micro_cents IS NOT NULL AND usage_record_id IS NOT NULL
       AND unknown_reason IS NULL
       AND (state='budget_exceeded')=(usage_value_micro_cents>reservation_micro_cents))
@@ -110,6 +110,21 @@ CREATE TABLE control.a0_behavior_batch_ledger(
 );
 CREATE TRIGGER a0_behavior_batch_ledger_immutable
 BEFORE UPDATE OR DELETE ON control.a0_behavior_batch_ledger
+FOR EACH STATEMENT EXECUTE FUNCTION control.reject_audit_event_mutation();
+
+CREATE TABLE control.a0_behavior_execution_permits(
+  run_id uuid NOT NULL,
+  batch_id text NOT NULL,
+  reservation_version bigint NOT NULL CHECK(reservation_version=1),
+  expires_at timestamptz NOT NULL,
+  acquired_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+  PRIMARY KEY(run_id,batch_id,reservation_version),
+  FOREIGN KEY(run_id,batch_id,reservation_version)
+    REFERENCES control.a0_behavior_batch_ledger(run_id,batch_id,version),
+  CHECK(acquired_at<expires_at)
+);
+CREATE TRIGGER a0_behavior_execution_permits_immutable
+BEFORE UPDATE OR DELETE ON control.a0_behavior_execution_permits
 FOR EACH STATEMENT EXECUTE FUNCTION control.reject_audit_event_mutation();
 
 CREATE FUNCTION control.expire_a0_behavior_reservations() RETURNS integer
@@ -129,7 +144,7 @@ BEGIN
       AND NOT EXISTS(
         SELECT 1 FROM control.a0_behavior_batch_ledger terminal
         WHERE terminal.run_id=original.run_id
-          AND terminal.batch_id=original.batch_id AND terminal.version=2
+          AND terminal.batch_id=original.batch_id AND terminal.version>1
       )
     ORDER BY original.run_id,original.batch_id
   LOOP
@@ -173,7 +188,7 @@ BEGIN
     OR $4!~'^[a-f0-9]{64}$' OR split_part($1,':',3) IS DISTINCT FROM $4
     OR $3!~*'^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(0[1-9]|1[0-6])$'
     OR lower($3) NOT LIKE 'a0:'||$2::text||':t%' OR $5<>6000000
-    OR $6<=clock_timestamp() OR $6>clock_timestamp()+interval '30 minutes'
+    OR $6>clock_timestamp()+interval '30 minutes'
   THEN RAISE EXCEPTION 'A0_RESERVATION_INPUT_INVALID'; END IF;
 
   PERFORM guard_id FROM control.kill_switch_guard WHERE guard_id=1 FOR UPDATE;
@@ -206,6 +221,9 @@ BEGIN
   IF FOUND THEN RETURN jsonb_build_object(
     'disposition','replayed','state',existing.state,'version',existing.version
   ); END IF;
+
+  IF $6<=clock_timestamp()
+  THEN RETURN jsonb_build_object('disposition','denied','reason','expired'); END IF;
 
   IF guard.control_id IS NULL
     OR guard.activation_ceiling_micro_cents<>1000000000
@@ -265,6 +283,46 @@ BEGIN
   RETURN jsonb_build_object('disposition','created','state','reserved','version',1);
 END $$;
 
+CREATE FUNCTION control.acquire_a0_behavior_execution_permit(uuid,text,bigint)
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE
+  reserved control.a0_behavior_batch_ledger%ROWTYPE;
+  latest control.a0_behavior_batch_ledger%ROWTYPE;
+  guard control.usage_budget_control%ROWTYPE;
+BEGIN
+  IF $2!~*'^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(0[1-9]|1[0-6])$'
+    OR lower($2) NOT LIKE 'a0:'||$1::text||':t%' OR $3<>1
+  THEN RAISE EXCEPTION 'A0_EXECUTION_PERMIT_INPUT_INVALID'; END IF;
+  PERFORM guard_id FROM control.kill_switch_guard WHERE guard_id=1 FOR UPDATE;
+  SELECT * INTO guard FROM control.usage_budget_control WHERE control_id=1 FOR UPDATE;
+  PERFORM pg_advisory_xact_lock(hashtext('a0:'||$1::text));
+  PERFORM control.expire_a0_behavior_reservations();
+  SELECT * INTO reserved FROM control.a0_behavior_batch_ledger
+  WHERE run_id=$1 AND batch_id=$2 AND version=1;
+  IF NOT FOUND THEN RETURN false; END IF;
+  SELECT * INTO latest FROM control.a0_behavior_batch_ledger
+  WHERE run_id=$1 AND batch_id=$2 ORDER BY version DESC LIMIT 1;
+  IF latest.version<>1 OR latest.state<>'reserved' OR reserved.expires_at<=clock_timestamp()
+    OR guard.control_id IS NULL OR guard.activation_ceiling_micro_cents<>1000000000
+    OR guard.quarantined OR guard.probe_worker IS NOT NULL
+    OR NOT control.is_global_kill_switch_active()
+    OR NOT control.external_actions_blocked()
+    OR (SELECT count(*) FROM control.kill_switches
+        WHERE scope='channel' AND active AND scope_id=ANY(ARRAY[
+          'email','whatsapp','calendar','web_chat','telephone','crm','public_web'
+        ]))<>7
+    OR EXISTS(SELECT 1 FROM control.a1_dispatch_execution_window_authorizations WHERE closed_at IS NULL)
+    OR EXISTS(SELECT 1 FROM control.a1_dispatch_execution_control WHERE claiming_enabled)
+    OR EXISTS(SELECT 1 FROM control.dispatch_jobs WHERE usage_budget_state='reserved')
+    OR EXISTS(SELECT 1 FROM integration.crm_outbox WHERE status IN('pending','leased','outcome_unknown'))
+  THEN RETURN false; END IF;
+  INSERT INTO control.a0_behavior_execution_permits(
+    run_id,batch_id,reservation_version,expires_at
+  ) VALUES($1,$2,$3,reserved.expires_at)
+  ON CONFLICT(run_id,batch_id,reservation_version) DO NOTHING;
+  RETURN true;
+END $$;
+
 CREATE FUNCTION control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE
@@ -273,6 +331,8 @@ DECLARE
   registered control.usage_record_registry%ROWTYPE;
   fingerprint text;
   target text;
+  next_version bigint:=2;
+  superseded_state text;
 BEGIN
   IF $2!~*'^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(0[1-9]|1[0-6])$'
     OR lower($2) NOT LIKE 'a0:'||$1::text||':t%' OR $3<>1
@@ -286,15 +346,30 @@ BEGIN
   SELECT * INTO reserved FROM control.a0_behavior_batch_ledger
   WHERE run_id=$1 AND batch_id=$2 AND version=1;
   IF NOT FOUND THEN RETURN false; END IF;
-  SELECT * INTO terminal FROM control.a0_behavior_batch_ledger
-  WHERE run_id=$1 AND batch_id=$2 AND version=2;
-  IF FOUND THEN RETURN terminal.state IN('settled','budget_exceeded')
-    AND terminal.usage_value_micro_cents=$4 AND terminal.usage_record_id=$5;
-  END IF;
-
+  IF NOT EXISTS(
+    SELECT 1 FROM control.a0_behavior_execution_permits
+    WHERE run_id=$1 AND batch_id=$2 AND reservation_version=$3
+  ) THEN RETURN false; END IF;
   fingerprint:=encode(sha256(convert_to(jsonb_build_array(
     'opencode-go',$5,$4,'a0_behavior',$1,$2,$3
   )::text,'UTF8')),'hex');
+  SELECT * INTO terminal FROM control.a0_behavior_batch_ledger
+  WHERE run_id=$1 AND batch_id=$2 AND version>1
+  ORDER BY version DESC LIMIT 1;
+  IF FOUND AND terminal.state IN('settled','budget_exceeded') THEN
+    SELECT * INTO registered FROM control.usage_record_registry
+    WHERE provider_id='opencode-go' AND usage_record_id=$5;
+    RETURN coalesce(terminal.usage_value_micro_cents=$4 AND terminal.usage_record_id=$5
+      AND registered.authority='a0_behavior'
+      AND registered.usage_value_micro_cents=$4
+      AND registered.usage_fingerprint_sha256=fingerprint
+      AND registered.run_id=$1 AND registered.batch_id=$2,false);
+  ELSIF FOUND THEN
+    IF terminal.version<>2 OR terminal.state<>'held_unknown'
+      OR terminal.unknown_reason<>'A0_RESERVATION_EXPIRED_USAGE_UNKNOWN'
+    THEN RETURN false; END IF;
+    next_version:=3;superseded_state:=terminal.state;
+  END IF;
   INSERT INTO control.usage_record_registry(
     provider_id,usage_record_id,authority,usage_value_micro_cents,
     usage_fingerprint_sha256,run_id,batch_id
@@ -317,12 +392,15 @@ BEGIN
   ) VALUES(
     reserved.idempotency_key,reserved.source_plan_sha256,reserved.run_id,
     reserved.batch_id,reserved.batch_sha256,reserved.reservation_micro_cents,
-    reserved.expires_at,2,target,$4,$5
+    reserved.expires_at,next_version,target,$4,$5
   );
   INSERT INTO control.audit_events(event) VALUES(jsonb_build_object(
     'event','a0_behavior_batch_settled','run_id',$1,'batch_id',$2,
-    'state',target,'usage_value_micro_cents',$4,
+    'state',target,'terminal_version',next_version,
+    'superseded_state',superseded_state,'usage_value_micro_cents',$4,
+    'usage_record_id',$5,'usage_fingerprint_sha256',fingerprint,
     'reservation_micro_cents',reserved.reservation_micro_cents,
+    'quarantine_retained',superseded_state='held_unknown',
     'external_action',false,'recorded_at',clock_timestamp()
   ));
   IF target='budget_exceeded' THEN
@@ -335,17 +413,30 @@ END $$;
 
 CREATE FUNCTION control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
-DECLARE terminal control.a0_behavior_batch_ledger%ROWTYPE;
+DECLARE
+  terminal control.a0_behavior_batch_ledger%ROWTYPE;
+  fingerprint text;
 BEGIN
   IF $2!~*'^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(0[1-9]|1[0-6])$'
     OR lower($2) NOT LIKE 'a0:'||$1::text||':t%' OR $3<>1
     OR $4 NOT BETWEEN 1 AND 9007199254740991
     OR length($5) NOT BETWEEN 1 AND 200 OR $5!~'^[A-Za-z0-9._:-]+$'
   THEN RAISE EXCEPTION 'A0_SETTLEMENT_LOOKUP_INPUT_INVALID'; END IF;
-  SELECT * INTO terminal FROM control.a0_behavior_batch_ledger
-  WHERE run_id=$1 AND batch_id=$2 AND version=$3+1
-    AND state IN('settled','budget_exceeded')
-    AND usage_value_micro_cents=$4 AND usage_record_id=$5;
+  fingerprint:=encode(sha256(convert_to(jsonb_build_array(
+    'opencode-go',$5,$4,'a0_behavior',$1,$2,$3
+  )::text,'UTF8')),'hex');
+  SELECT ledger.* INTO terminal FROM control.a0_behavior_batch_ledger ledger
+  JOIN control.usage_record_registry registry
+    ON registry.provider_id='opencode-go'
+    AND registry.usage_record_id=ledger.usage_record_id
+    AND registry.authority='a0_behavior'
+    AND registry.usage_value_micro_cents=ledger.usage_value_micro_cents
+    AND registry.usage_fingerprint_sha256=fingerprint
+    AND registry.run_id=ledger.run_id AND registry.batch_id=ledger.batch_id
+  WHERE ledger.run_id=$1 AND ledger.batch_id=$2 AND ledger.version>$3
+    AND ledger.state IN('settled','budget_exceeded')
+    AND ledger.usage_value_micro_cents=$4 AND ledger.usage_record_id=$5
+  ORDER BY ledger.version DESC LIMIT 1;
   IF NOT FOUND THEN RETURN jsonb_build_object('status','unconfirmed'); END IF;
   RETURN jsonb_build_object(
     'status','confirmed','state',terminal.state,'version',terminal.version
@@ -369,7 +460,8 @@ BEGIN
   WHERE run_id=$1 AND batch_id=$2 AND version=1;
   IF NOT FOUND THEN RETURN false; END IF;
   SELECT * INTO terminal FROM control.a0_behavior_batch_ledger
-  WHERE run_id=$1 AND batch_id=$2 AND version=2;
+  WHERE run_id=$1 AND batch_id=$2 AND version>1
+  ORDER BY version DESC LIMIT 1;
   IF FOUND THEN
     -- Expiry may have durably held the reservation before this explicit hold.
     -- Either held reason is terminal and safe; never rewrite its provenance.
@@ -510,12 +602,13 @@ BEGIN
   );
 END $$;
 
-REVOKE ALL ON control.a0_behavior_batch_ledger,control.usage_record_registry
+REVOKE ALL ON control.a0_behavior_batch_ledger,control.a0_behavior_execution_permits,control.usage_record_registry
 FROM PUBLIC,commercial_runtime,commercial_work_order_ingestor,commercial_approver,
   commercial_safety_operator,commercial_observer,commercial_a1_supervisor,
   commercial_a1_chain_runner,commercial_a0_behavior_ledger;
 REVOKE ALL ON FUNCTION control.expire_a0_behavior_reservations(),
   control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
+  control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
   control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
   control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)
@@ -536,6 +629,7 @@ GRANT EXECUTE ON FUNCTION control.activate_a1_dispatch_execution_window(uuid,uui
 TO commercial_safety_operator;
 GRANT USAGE ON SCHEMA control TO commercial_a0_behavior_ledger;
 GRANT EXECUTE ON FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
+  control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
   control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
   control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)

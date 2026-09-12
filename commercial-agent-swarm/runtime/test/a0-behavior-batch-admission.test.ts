@@ -205,6 +205,7 @@ function ports(
       events.push('reserve')
       return reserveResult
     },
+    acquireExecutionPermit: async () => true,
     settle: async () => {
       events.push('settle')
       return true
@@ -914,6 +915,106 @@ describe('A0 exact-batch admission', () => {
     }
   })
 
+  it('requires a fresh database permit before both credential acquisition and spawn', async () => {
+    const compiled = compileValid()
+    const batch = compiled.batches[0]!
+    const events: string[] = []
+    const dependencies = ports(events)
+    dependencies.ledger.acquireExecutionPermit = async (input) => {
+      events.push('permit')
+      assert.deepEqual(input, {
+        run_id: compiled.run_id,
+        batch_id: batch.batch_id,
+        reservation_version: 7,
+      })
+      return true
+    }
+    await admitA0BehaviorBatch({
+      compiled,
+      batch_id: batch.batch_id,
+      authorization: authorization(batch),
+      now: new Date('2026-09-12T12:10:00.000Z'),
+      ...dependencies,
+    })
+    assert.deepEqual(events, [
+      'snapshot',
+      'authorize',
+      'reserve',
+      'permit',
+      'credential',
+      'permit',
+      'spawn',
+      'settle',
+    ])
+  })
+
+  it('returns an exact terminal replay after expiry but denies expired new work', async () => {
+    const compiled = compileValid()
+    const batch = compiled.batches[0]!
+    const replayEvents: string[] = []
+    const replay = await admitA0BehaviorBatch({
+      compiled,
+      batch_id: batch.batch_id,
+      authorization: authorization(batch),
+      now: new Date('2026-09-12T12:25:00.000Z'),
+      ...ports(replayEvents, {
+        disposition: 'replayed',
+        state: 'settled',
+        version: 3,
+      }),
+    })
+    assert.deepEqual(replay, {
+      status: 'reservation_replayed',
+      batch_id: batch.batch_id,
+      reservation_state: 'settled',
+      reservation_version: 3,
+    })
+    assert.deepEqual(replayEvents, ['snapshot', 'authorize', 'reserve'])
+
+    const deniedEvents: string[] = []
+    await assert.rejects(
+      admitA0BehaviorBatch({
+        compiled,
+        batch_id: batch.batch_id,
+        authorization: authorization(batch),
+        now: new Date('2026-09-12T12:25:00.000Z'),
+        ...ports(deniedEvents),
+      }),
+      /A0_AUTHORIZATION_EXPIRED/,
+    )
+    assert.deepEqual(deniedEvents, ['snapshot', 'authorize', 'reserve'])
+  })
+
+  it('holds once and never obtains credentials when the fresh permit is denied', async () => {
+    const compiled = compileValid()
+    const batch = compiled.batches[0]!
+    const events: string[] = []
+    const dependencies = ports(events)
+    dependencies.ledger.acquireExecutionPermit = async () => {
+      events.push('permit')
+      return false
+    }
+    const result = await admitA0BehaviorBatch({
+      compiled,
+      batch_id: batch.batch_id,
+      authorization: authorization(batch),
+      now: new Date('2026-09-12T12:10:00.000Z'),
+      ...dependencies,
+    })
+    assert.deepEqual(result, {
+      status: 'held_unknown',
+      batch_id: batch.batch_id,
+      reservation_version: 7,
+    })
+    assert.deepEqual(events, [
+      'snapshot',
+      'authorize',
+      'reserve',
+      'permit',
+      'hold',
+    ])
+  })
+
   it('settles a known overrun without demoting exact usage to unknown', async () => {
     const compiled = compileValid()
     const batch = compiled.batches[0]!
@@ -978,7 +1079,8 @@ describe('A0 exact-batch admission', () => {
     assert.equal(events.includes('hold'), false)
   })
 
-  it('accepts one exact read reconciliation after a lost settlement reply', async () => {
+  it('accepts one exact read reconciliation for direct or late terminal versions', async () => {
+    for (const terminalVersion of [8, 9]) {
     const compiled = compileValid()
     const batch = compiled.batches[0]!
     const events: string[] = []
@@ -996,7 +1098,7 @@ describe('A0 exact-batch admission', () => {
         usage_value_micro_cents: 1_000_000,
         usage_record_id: 'usage-1',
       })
-      return { status: 'confirmed', state: 'settled', version: 8 }
+      return { status: 'confirmed', state: 'settled', version: terminalVersion }
     }
 
     const result = await admitA0BehaviorBatch({
@@ -1013,12 +1115,13 @@ describe('A0 exact-batch admission', () => {
     })
     assert.deepEqual(events.slice(-2), ['settle', 'reconcile'])
     assert.equal(events.includes('hold'), false)
+    }
   })
 
   it('fails reconciliation closed after exactly one read and no mutation', async () => {
     for (const result of [
       { status: 'confirmed', state: 'budget_exceeded', version: 8 },
-      { status: 'confirmed', state: 'settled', version: 9 },
+      { status: 'confirmed', state: 'settled', version: 10 },
       { status: 'confirmed', state: 'settled', version: 8, extra: true },
     ] as const) {
       const compiled = compileValid()

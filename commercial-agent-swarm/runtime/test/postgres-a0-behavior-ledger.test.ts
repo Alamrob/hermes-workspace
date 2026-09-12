@@ -25,13 +25,16 @@ class FakeDatabase {
       ? {
           current_user: 'proptimiza_a0_behavior_ledger_login',
           rolcanlogin: true,
+          rolinherit: true,
           unsafe: false,
           memberships: ['commercial_a0_behavior_ledger'],
           unexpected_functions: [],
           missing_functions: [],
           unsafe_effective: false,
         }
-      : config.text.includes('reserve_a0_behavior_batch') ||
+      : config.text.includes('acquire_a0_behavior_execution_permit')
+        ? { granted: this.value }
+        : config.text.includes('reserve_a0_behavior_batch') ||
           config.text.includes('get_a0_behavior_batch_settlement')
         ? { value: structuredClone(this.value) }
         : { applied: this.value }
@@ -50,11 +53,23 @@ function create(database = new FakeDatabase()) {
 }
 
 describe('PostgreSQL A0 behavior ledger capability', () => {
+  it('accepts only the fixed deployable LOGIN principal', () => {
+    assert.throws(
+      () =>
+        new PostgresA0BehaviorLedger({
+          database: new FakeDatabase(),
+          expectedPrincipal: 'some_other_login',
+        }),
+      /A0_LEDGER_CONFIGURATION_INVALID/,
+    )
+  })
+
   it('verifies an exact function-only principal', async () => {
     const { ledger, database } = create()
     await ledger.ready()
     assert.deepEqual(database.calls[0]?.values, [
       [
+        'control.acquire_a0_behavior_execution_permit(uuid,text,bigint)',
         'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
         'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)',
         'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz)',
@@ -62,6 +77,24 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
       ],
     ])
     assert.equal(database.calls.length, 1)
+  })
+
+  it('acquires a fresh execution permit only through the fixed CAS function', async () => {
+    const { ledger, database } = create()
+    database.value = true
+    assert.equal(
+      await ledger.acquireExecutionPermit({
+        run_id: RUN,
+        batch_id: BATCH,
+        reservation_version: 1,
+      }),
+      true,
+    )
+    assert.deepEqual(database.calls[0]?.values, [RUN, BATCH, 1])
+    assert.match(
+      database.calls[0]?.text ?? '',
+      /acquire_a0_behavior_execution_permit/,
+    )
   })
 
   it('reserves and replays only through the fixed reservation function', async () => {
@@ -121,6 +154,18 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
     assert.match(
       database.calls[0]?.text ?? '',
       /get_a0_behavior_batch_settlement/,
+    )
+
+    database.value = { status: 'confirmed', state: 'settled', version: 3 }
+    assert.deepEqual(
+      await ledger.getSettlement({
+        run_id: RUN,
+        batch_id: BATCH,
+        reservation_version: 1,
+        usage_value_micro_cents: 5_000_000,
+        usage_record_id: 'usage-late-known',
+      }),
+      { status: 'confirmed', state: 'settled', version: 3 },
     )
 
     database.value = {

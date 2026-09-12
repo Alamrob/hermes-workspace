@@ -10,6 +10,10 @@ const rollback = new URL(
   '../migrations/038_a0_behavior_authority.rollback.sql',
   import.meta.url,
 )
+const principal = new URL(
+  '../scripts/provision-a0-behavior-ledger-principal.sql',
+  import.meta.url,
+)
 
 describe('A0 behavior authority migration', () => {
   it('creates an append-only 6x16 microcent ledger with known-overrun state', async () => {
@@ -27,6 +31,9 @@ describe('A0 behavior authority migration', () => {
     assert.match(sql, /expires_at timestamptz NOT NULL/)
     assert.match(sql, /expire_a0_behavior_reservations\(\)/)
     assert.match(sql, /A0_RESERVATION_EXPIRED_USAGE_UNKNOWN/)
+    assert.match(sql, /version bigint NOT NULL CHECK\(version IN\(1,2,3\)\)/)
+    assert.match(sql, /CREATE TABLE control\.a0_behavior_execution_permits/)
+    assert.match(sql, /CHECK\(acquired_at<expires_at\)/)
   })
 
   it('exposes only reserve, settle, exact read and hold functions', async () => {
@@ -35,6 +42,10 @@ describe('A0 behavior authority migration', () => {
     assert.match(
       grants,
       /reserve_a0_behavior_batch\(text,uuid,text,text,bigint,timestamptz\)/,
+    )
+    assert.match(
+      grants,
+      /acquire_a0_behavior_execution_permit\(uuid,text,bigint\)/,
     )
     assert.match(
       grants,
@@ -75,6 +86,14 @@ describe('A0 behavior authority migration', () => {
       /CREATE FUNCTION control\.stage_dispatch_settlement\(uuid,text,jsonb,text,bigint,text,text,bigint,bigint,integer\)/,
     )
     assert.match(sql, /SHARED_USAGE_RECORD_CONFLICT/)
+    assert.match(sql, /terminal\.unknown_reason<>'A0_RESERVATION_EXPIRED_USAGE_UNKNOWN'/)
+    assert.match(sql, /next_version:=3;superseded_state:=terminal\.state/)
+    assert.match(sql, /'usage_record_id',\$5,'usage_fingerprint_sha256',fingerprint/)
+    assert.match(sql, /'quarantine_retained',superseded_state='held_unknown'/)
+    assert.match(
+      functionBody(sql, 'hold_a0_behavior_batch_unknown'),
+      /version>1[\s\S]*ORDER BY version DESC LIMIT 1/,
+    )
     assert.match(sql, /RENAME TO legacy_038_claim_dispatch/)
     assert.match(sql, /SHARED_ACTIVATION_CEILING_EXCEEDED/)
     assert.match(sql, /A0_ACTIVE_ATTEMPT_EXCLUDES_A1/)
@@ -120,6 +139,7 @@ describe('A0 behavior authority migration', () => {
     const sql = await readFile(migration, 'utf8')
     for (const name of [
       'reserve_a0_behavior_batch',
+      'acquire_a0_behavior_execution_permit',
       'settle_a0_behavior_batch',
       'hold_a0_behavior_batch_unknown',
     ]) {
@@ -160,6 +180,26 @@ describe('A0 behavior authority migration', () => {
     assert.match(sql, /A0_KNOWN_USAGE_BUDGET_EXCEEDED/)
     assert.match(sql, /A0_RESERVATION_EXPIRED_USAGE_UNKNOWN/)
     assert.match(sql, /quarantined=true/)
+    const reserve = functionBody(sql, 'reserve_a0_behavior_batch')
+    assert.ok(
+      reserve.indexOf("'disposition','replayed'") <
+        reserve.indexOf("'disposition','denied','reason','expired'"),
+    )
+  })
+
+  it('provides an exact secret-free least-privilege LOGIN provisioning path', async () => {
+    const sql = await readFile(principal, 'utf8')
+    assert.match(
+      sql,
+      /CREATE ROLE proptimiza_a0_behavior_ledger_login LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/,
+    )
+    assert.match(sql, /REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC/)
+    assert.match(
+      sql,
+      /GRANT commercial_a0_behavior_ledger TO proptimiza_a0_behavior_ledger_login/,
+    )
+    assert.match(sql, /GRANT CONNECT ON DATABASE %I TO proptimiza_a0_behavior_ledger_login/)
+    assert.doesNotMatch(sql, /PASSWORD\s+'|postgresql:\/\//i)
   })
 
   it('requires containment and an empty ledger for rollback', async () => {
@@ -188,6 +228,11 @@ describe('A0 behavior authority migration', () => {
     )
     assert.match(undo, /scope='channel' AND active/)
     assert.doesNotMatch(undo, /DELETE FROM control\.a0_behavior_batch_ledger/)
+    assert.match(undo, /DROP TABLE control\.a0_behavior_execution_permits/)
+    assert.match(
+      undo,
+      /DROP FUNCTION control\.reserve_a0_behavior_batch[\s\S]*control\.acquire_a0_behavior_execution_permit/,
+    )
   })
 })
 
