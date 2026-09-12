@@ -28,6 +28,18 @@ export {
   createA0BehaviorBatchAdmission,
   type A0BehaviorBatchAdmissionDependencies,
 } from './a0-behavior-batch-admission.js'
+export {
+  createA0BehaviorAuthorityAdapters,
+  type A0BehaviorAuthorityAdapterOptions,
+} from './a0-behavior-authority-factory.js'
+export {
+  PostgresA0BehaviorLedger,
+  PostgresA0BehaviorLedgerError,
+} from './postgres-a0-behavior-ledger.js'
+export {
+  A0_SEALED_ARTIFACT_ROOT,
+  PosixA0ArtifactSnapshotVerifier,
+} from './posix-a0-artifact-snapshot-verifier.js'
 
 export interface BrokerDispatcherDependencies {
   queue?: DispatchQueuePort
