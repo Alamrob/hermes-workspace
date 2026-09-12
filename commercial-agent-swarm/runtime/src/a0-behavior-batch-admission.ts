@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { types as nodeTypes } from 'node:util'
 import type { ProfileId } from './executor-contract.js'
 
 export const A0_BEHAVIOR_PROFILES = [
@@ -304,7 +305,7 @@ export function compileA0BehaviorBatchPlan(
   )
   exact(binding.memory_enabled, false, 'A0_MEMORY_POLICY_DRIFT')
   exact(binding.maximum_concurrency, 1, 'A0_CONCURRENCY_DRIFT')
-  if (!Array.isArray(binding.profiles) || binding.profiles.length !== 6)
+  if (!isDenseArray(binding.profiles) || binding.profiles.length !== 6)
     fail('A0_PROFILE_COUNT_INVALID')
   validateProfiles(binding.profiles)
   const profileBundleSha256 = sha(
@@ -318,7 +319,7 @@ export function compileA0BehaviorBatchPlan(
   validateGuardrails(plan.guardrails)
   validatePromotionGate(plan.promotion_gate)
   validateSourceAuthorization(plan.authorization)
-  if (!Array.isArray(plan.tasks) || plan.tasks.length !== 96)
+  if (!isDenseArray(plan.tasks) || plan.tasks.length !== 96)
     fail('A0_TASK_COUNT_INVALID')
   const tasksWithoutArtifacts = plan.tasks.map((value, index) =>
     compileTask(value, index),
@@ -413,43 +414,161 @@ export async function admitA0BehaviorBatch(input: {
   | { status: 'settled'; batch_id: string; reservation_version: number }
   | { status: 'held_unknown'; batch_id: string; reservation_version: number }
 > {
-  validateCompiled(input.compiled)
-  const batch = input.compiled.batches.find(
-    (candidate) => candidate.batch_id === input.batch_id,
+  object(input, 'A0_ADMISSION_INPUT_UNSAFE')
+  const compiledInput = ownDataValue(
+    input,
+    'compiled',
+    'A0_ADMISSION_INPUT_UNSAFE',
+  )
+  const authorizationInput = ownDataValue(
+    input,
+    'authorization',
+    'A0_ADMISSION_INPUT_UNSAFE',
+  )
+  const batchIdInput = ownDataValue(
+    input,
+    'batch_id',
+    'A0_ADMISSION_INPUT_UNSAFE',
+  )
+  const nowInput = ownDataValue(input, 'now', 'A0_ADMISSION_INPUT_UNSAFE')
+  const artifactSnapshotVerifier = object(
+    ownDataValue(
+      input,
+      'artifactSnapshotVerifier',
+      'A0_ADMISSION_PORT_INVALID',
+    ),
+    'A0_ADMISSION_PORT_INVALID',
+  )
+  const authorizationVerifier = object(
+    ownDataValue(
+      input,
+      'authorizationVerifier',
+      'A0_ADMISSION_PORT_INVALID',
+    ),
+    'A0_ADMISSION_PORT_INVALID',
+  )
+  const ledger = object(
+    ownDataValue(input, 'ledger', 'A0_ADMISSION_PORT_INVALID'),
+    'A0_ADMISSION_PORT_INVALID',
+  )
+  const credentialPort = object(
+    ownDataValue(input, 'credential', 'A0_ADMISSION_PORT_INVALID'),
+    'A0_ADMISSION_PORT_INVALID',
+  )
+  const runner = object(
+    ownDataValue(input, 'runner', 'A0_ADMISSION_PORT_INVALID'),
+    'A0_ADMISSION_PORT_INVALID',
+  )
+  const verifySnapshot = bindOwnMethod(
+    artifactSnapshotVerifier,
+    'verify',
+    'A0_ADMISSION_PORT_INVALID',
+  ) as A0ArtifactSnapshotVerifierPort['verify']
+  const verifyAuthorization = bindOwnMethod(
+    authorizationVerifier,
+    'verify',
+    'A0_ADMISSION_PORT_INVALID',
+  ) as A0AuthorizationVerifierPort['verify']
+  const reserve = bindOwnMethod(
+    ledger,
+    'reserve',
+    'A0_ADMISSION_PORT_INVALID',
+  ) as A0BehaviorLedgerPort['reserve']
+  const settle = bindOwnMethod(
+    ledger,
+    'settle',
+    'A0_ADMISSION_PORT_INVALID',
+  ) as A0BehaviorLedgerPort['settle']
+  const holdUnknown = bindOwnMethod(
+    ledger,
+    'holdUnknown',
+    'A0_ADMISSION_PORT_INVALID',
+  ) as A0BehaviorLedgerPort['holdUnknown']
+  const acquireCredential = bindOwnMethod(
+    credentialPort,
+    'acquire',
+    'A0_ADMISSION_PORT_INVALID',
+  ) as A0ProviderCredentialPort['acquire']
+  const spawn = bindOwnMethod(
+    runner,
+    'spawn',
+    'A0_ADMISSION_PORT_INVALID',
+  ) as A0BatchRunnerPort['spawn']
+  const runnerDescriptor = ownDataValue(
+    runner,
+    'descriptor',
+    'A0_ADMISSION_PORT_INVALID',
+  )
+  const nowMilliseconds = dateMilliseconds(
+    nowInput,
+    'A0_ADMISSION_INPUT_UNSAFE',
+  )
+
+  // Capture every authorization-bearing value in one synchronous traversal.
+  // Every check and adapter call below uses only this deeply frozen graph, so
+  // caller-owned data cannot drift across an await boundary.
+  const admitted = immutableJsonSnapshot(
+    {
+      compiled: compiledInput,
+      authorization: authorizationInput,
+      batch_id: batchIdInput,
+      now_milliseconds: nowMilliseconds,
+      runner_descriptor: runnerDescriptor,
+    },
+    'A0_ADMISSION_INPUT_UNSAFE',
+  ) as {
+    compiled: A0CompiledBatchPlan
+    authorization: A0BatchAuthorization
+    batch_id: string
+    now_milliseconds: number
+    runner_descriptor: A0BatchRunnerPort['descriptor']
+  }
+
+  validateCompiled(admitted.compiled)
+  const batch = admitted.compiled.batches.find(
+    (candidate) => candidate.batch_id === admitted.batch_id,
   )
   if (!batch) fail('A0_BATCH_NOT_FOUND')
-  validateRunner(input.runner)
-  validateAuthorization(input.authorization, input.compiled, batch, input.now)
-  const snapshotVerification = await input.artifactSnapshotVerifier.verify(
-    structuredClone(input.compiled.sealed_artifact_snapshot),
+  const executionContract = admitted.compiled.execution_contract
+  const sealedArtifactSnapshot = admitted.compiled.sealed_artifact_snapshot
+  validateRunnerDescriptor(admitted.runner_descriptor)
+  validateAuthorization(
+    admitted.authorization,
+    admitted.compiled,
+    batch,
+    admitted.now_milliseconds,
+  )
+  const snapshotVerification = immutableJsonSnapshot(
+    await verifySnapshot(sealedArtifactSnapshot),
+    'A0_ARTIFACT_SNAPSHOT_UNVERIFIED',
   )
   if (
     !isVerifiedSnapshot(
       snapshotVerification,
-      input.compiled.sealed_artifact_snapshot.snapshot_sha256,
+      sealedArtifactSnapshot.snapshot_sha256,
     )
   )
     fail('A0_ARTIFACT_SNAPSHOT_UNVERIFIED')
-  if (
-    !(await input.authorizationVerifier.verify(
-      structuredClone(input.authorization),
-    ))
+  const authorizationVerified = await verifyAuthorization(
+    admitted.authorization,
   )
+  if (authorizationVerified !== true)
     fail('A0_AUTHORIZATION_UNVERIFIED')
 
-  const reservation = await input.ledger.reserve({
-    idempotency_key: `a0:${input.compiled.source_plan_sha256}:${batch.batch_sha256}`,
-    run_id: input.compiled.run_id,
-    batch_id: batch.batch_id,
-    batch_sha256: batch.batch_sha256,
-    reservation_micro_cents: 6_000_000,
-  })
+  const reservation = validateReserveResult(
+    immutableJsonSnapshot(
+      await reserve({
+        idempotency_key: `a0:${admitted.compiled.source_plan_sha256}:${batch.batch_sha256}`,
+        run_id: admitted.compiled.run_id,
+        batch_id: batch.batch_id,
+        batch_sha256: batch.batch_sha256,
+        reservation_micro_cents: 6_000_000,
+      }),
+      'A0_LEDGER_RESULT_INVALID',
+    ),
+  )
   if (reservation.disposition === 'denied') fail('A0_BUDGET_DENIED')
-  if (!Number.isSafeInteger(reservation.version) || reservation.version < 1)
-    fail('A0_LEDGER_RESULT_INVALID')
   if (reservation.disposition === 'replayed') {
-    if (!['reserved', 'settled', 'held_unknown'].includes(reservation.state))
-      fail('A0_LEDGER_RESULT_INVALID')
     return {
       status: 'reservation_replayed',
       batch_id: batch.batch_id,
@@ -457,16 +576,16 @@ export async function admitA0BehaviorBatch(input: {
       reservation_version: reservation.version,
     }
   }
-  if (reservation.disposition !== 'created' || reservation.state !== 'reserved')
-    fail('A0_LEDGER_RESULT_INVALID')
-
   let credential: { opaque_handle: string }
   try {
     const acquired = object(
-      await input.credential.acquire({
-        run_id: input.compiled.run_id,
-        batch_id: batch.batch_id,
-      }),
+      immutableJsonSnapshot(
+        await acquireCredential({
+          run_id: admitted.compiled.run_id,
+          batch_id: batch.batch_id,
+        }),
+        'A0_CREDENTIAL_HANDLE_INVALID',
+      ),
       'A0_CREDENTIAL_HANDLE_INVALID',
     )
     exactKeys(acquired, ['opaque_handle'], 'A0_CREDENTIAL_HANDLE_INVALID')
@@ -475,11 +594,11 @@ export async function admitA0BehaviorBatch(input: {
       !CREDENTIAL_HANDLE.test(acquired.opaque_handle)
     )
       fail('A0_CREDENTIAL_HANDLE_INVALID')
-    credential = { opaque_handle: acquired.opaque_handle }
+    credential = Object.freeze({ opaque_handle: acquired.opaque_handle })
   } catch {
     return holdUnknownOnce(
-      input.ledger,
-      input.compiled.run_id,
+      holdUnknown,
+      admitted.compiled.run_id,
       batch.batch_id,
       reservation.version,
     )
@@ -487,34 +606,35 @@ export async function admitA0BehaviorBatch(input: {
 
   let outcome: A0BatchRunnerOutcome
   try {
-    outcome = await input.runner.spawn({
-      batch: structuredClone(batch),
-      execution_contract: structuredClone(input.compiled.execution_contract),
-      sealed_artifact_snapshot: structuredClone(
-        input.compiled.sealed_artifact_snapshot,
-      ),
-      credential,
-    })
+    outcome = immutableJsonSnapshot(
+      await spawn({
+        batch,
+        execution_contract: executionContract,
+        sealed_artifact_snapshot: sealedArtifactSnapshot,
+        credential,
+      }),
+      'A0_RUNNER_OUTCOME_INVALID',
+    ) as A0BatchRunnerOutcome
   } catch {
     return holdUnknownOnce(
-      input.ledger,
-      input.compiled.run_id,
+      holdUnknown,
+      admitted.compiled.run_id,
       batch.batch_id,
       reservation.version,
     )
   }
   if (!validKnownOutcome(outcome, batch))
     return holdUnknownOnce(
-      input.ledger,
-      input.compiled.run_id,
+      holdUnknown,
+      admitted.compiled.run_id,
       batch.batch_id,
       reservation.version,
     )
 
   let settled: boolean
   try {
-    settled = await input.ledger.settle({
-      run_id: input.compiled.run_id,
+    settled = await settle({
+      run_id: admitted.compiled.run_id,
       batch_id: batch.batch_id,
       reservation_version: reservation.version,
       usage_value_micro_cents: outcome.usage_value_micro_cents,
@@ -522,8 +642,8 @@ export async function admitA0BehaviorBatch(input: {
     })
   } catch {
     return holdUnknownOnce(
-      input.ledger,
-      input.compiled.run_id,
+      holdUnknown,
+      admitted.compiled.run_id,
       batch.batch_id,
       reservation.version,
     )
@@ -636,7 +756,7 @@ function compileTask(value: unknown, index: number): A0TaskWithoutArtifact {
   exact(policy.fixture_is_untrusted_data, true, 'A0_FIXTURE_TRUST_DRIFT')
   exact(policy.real_connectors_allowed, false, 'A0_CONNECTOR_POLICY_DRIFT')
   if (
-    !Array.isArray(policy.approved_tools) ||
+    !isDenseArray(policy.approved_tools) ||
     policy.approved_tools.length !== 0
   )
     fail('A0_APPROVED_TOOLS_DRIFT')
@@ -752,7 +872,7 @@ function validateSealedArtifactSnapshot(
     fail('A0_ARTIFACT_SNAPSHOT_HASH_DRIFT')
 
   if (
-    !Array.isArray(snapshot.fixture_artifacts) ||
+    !isDenseArray(snapshot.fixture_artifacts) ||
     snapshot.fixture_artifacts.length !== 96
   )
     fail('A0_ARTIFACT_FIXTURE_COUNT_INVALID')
@@ -767,7 +887,7 @@ function validateSealedArtifactSnapshot(
   )
 
   if (
-    !Array.isArray(snapshot.profile_artifacts) ||
+    !isDenseArray(snapshot.profile_artifacts) ||
     snapshot.profile_artifacts.length !== 24
   )
     fail('A0_ARTIFACT_PROFILE_COUNT_INVALID')
@@ -978,7 +1098,7 @@ function validateCompiled(compiled: A0CompiledBatchPlan): void {
     96_000_000,
     'A0_COMPILED_TOTALS_DRIFT',
   )
-  if (!Array.isArray(value.batches) || value.batches.length !== 16)
+  if (!isDenseArray(value.batches) || value.batches.length !== 16)
     fail('A0_COMPILED_BATCH_COUNT_INVALID')
 
   const snapshot = value.sealed_artifact_snapshot as A0SealedArtifactSnapshot
@@ -1018,7 +1138,7 @@ function validateCompiled(compiled: A0CompiledBatchPlan): void {
       6_000_000,
       'A0_COMPILED_BATCH_RESERVATION_DRIFT',
     )
-    if (!Array.isArray(batch.tasks) || batch.tasks.length !== 6)
+    if (!isDenseArray(batch.tasks) || batch.tasks.length !== 6)
       fail('A0_COMPILED_BATCH_TASK_COUNT_INVALID')
     for (const [profileIndex, taskValue] of batch.tasks.entries()) {
       const globalIndex = batchIndex * 6 + profileIndex
@@ -1074,7 +1194,7 @@ function validateExecutionContract(value: unknown): void {
   )
   for (const [key, expectedValue] of Object.entries(expected)) {
     if (key === 'approved_tools') {
-      if (!Array.isArray(contract[key]) || contract[key].length !== 0)
+      if (!isDenseArray(contract[key]) || contract[key].length !== 0)
         fail('A0_EXECUTION_CONTRACT_DRIFT')
     } else exact(contract[key], expectedValue, 'A0_EXECUTION_CONTRACT_DRIFT')
   }
@@ -1121,7 +1241,7 @@ function validateCompiledSnapshot(
   sealedHandle(snapshot.snapshot_handle, 'A0_ARTIFACT_SNAPSHOT_HANDLE_INVALID')
 
   if (
-    !Array.isArray(snapshot.fixture_artifacts) ||
+    !isDenseArray(snapshot.fixture_artifacts) ||
     snapshot.fixture_artifacts.length !== 96
   )
     fail('A0_ARTIFACT_FIXTURE_COUNT_INVALID')
@@ -1136,7 +1256,7 @@ function validateCompiledSnapshot(
   }
 
   if (
-    !Array.isArray(snapshot.profile_artifacts) ||
+    !isDenseArray(snapshot.profile_artifacts) ||
     snapshot.profile_artifacts.length !== 24
   )
     fail('A0_ARTIFACT_PROFILE_COUNT_INVALID')
@@ -1275,7 +1395,13 @@ function validateCompiledTask(
 }
 
 function validateRunner(runner: A0BatchRunnerPort): void {
-  const descriptor = object(runner.descriptor, 'A0_RUNNER_DESCRIPTOR_INVALID')
+  validateRunnerDescriptor(
+    ownDataValue(runner, 'descriptor', 'A0_RUNNER_DESCRIPTOR_INVALID'),
+  )
+}
+
+function validateRunnerDescriptor(value: unknown): void {
+  const descriptor = object(value, 'A0_RUNNER_DESCRIPTOR_INVALID')
   exactKeys(
     descriptor,
     [
@@ -1304,7 +1430,7 @@ function validateAuthorization(
   authValue: unknown,
   compiled: A0CompiledBatchPlan,
   batch: A0CompiledBatch,
-  now: Date,
+  nowMilliseconds: number,
 ): asserts authValue is A0BatchAuthorization {
   const auth = object(authValue, 'A0_AUTHORIZATION_INVALID')
   exactKeys(
@@ -1348,11 +1474,41 @@ function validateAuthorization(
   )
   const expires = iso(auth.expires_at, 'A0_AUTHORIZATION_EXPIRY_INVALID')
   if (
-    !Number.isFinite(now.getTime()) ||
-    now.getTime() >= Date.parse(expires) ||
-    now.getTime() >= Date.parse(compiled.expires_at)
+    !Number.isFinite(nowMilliseconds) ||
+    nowMilliseconds >= Date.parse(expires) ||
+    nowMilliseconds >= Date.parse(compiled.expires_at)
   )
     fail('A0_AUTHORIZATION_EXPIRED')
+}
+
+function validateReserveResult(value: unknown): A0ReserveResult {
+  const result = object(value, 'A0_LEDGER_RESULT_INVALID')
+  if (result.disposition === 'denied') {
+    exactKeys(result, ['disposition', 'reason'], 'A0_LEDGER_RESULT_INVALID')
+    if (
+      typeof result.reason !== 'string' ||
+      !/^[A-Za-z0-9._:-]{1,200}$/.test(result.reason)
+    )
+      fail('A0_LEDGER_RESULT_INVALID')
+    return result as unknown as A0ReserveResult
+  }
+  exactKeys(
+    result,
+    ['disposition', 'state', 'version'],
+    'A0_LEDGER_RESULT_INVALID',
+  )
+  if (!Number.isSafeInteger(result.version) || Number(result.version) < 1)
+    fail('A0_LEDGER_RESULT_INVALID')
+  if (result.disposition === 'created') {
+    exact(result.state, 'reserved', 'A0_LEDGER_RESULT_INVALID')
+    return result as unknown as A0ReserveResult
+  }
+  if (
+    result.disposition !== 'replayed' ||
+    !['reserved', 'settled', 'held_unknown'].includes(String(result.state))
+  )
+    fail('A0_LEDGER_RESULT_INVALID')
+  return result as unknown as A0ReserveResult
 }
 
 function validKnownOutcome(
@@ -1385,7 +1541,7 @@ function validKnownOutcome(
 }
 
 async function holdUnknownOnce(
-  ledger: A0BehaviorLedgerPort,
+  holdUnknown: A0BehaviorLedgerPort['holdUnknown'],
   runId: string,
   batchId: string,
   version: number,
@@ -1396,7 +1552,7 @@ async function holdUnknownOnce(
 }> {
   let held: boolean
   try {
-    held = await ledger.holdUnknown({
+    held = await holdUnknown({
       run_id: runId,
       batch_id: batchId,
       reservation_version: version,
@@ -1428,16 +1584,37 @@ function isVerifiedSnapshot(
 }
 
 function normalize(value: unknown): unknown {
+  return normalizeJson(value, new WeakSet<object>())
+}
+
+function normalizeJson(value: unknown, seen: WeakSet<object>): unknown {
   if (value === null || typeof value === 'string' || typeof value === 'boolean')
     return value
   if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (Array.isArray(value)) return value.map(normalize)
-  if (isObject(value))
-    return Object.fromEntries(
+  if (isDenseArray(value)) {
+    if (seen.has(value)) fail('A0_CANONICAL_JSON_INVALID')
+    seen.add(value)
+    const normalized = value.map((entry) => normalizeJson(entry, seen))
+    seen.delete(value)
+    return normalized
+  }
+  if (isObject(value)) {
+    if (seen.has(value)) fail('A0_CANONICAL_JSON_INVALID')
+    seen.add(value)
+    const normalized = Object.fromEntries(
       Object.keys(value)
         .sort()
-        .map((key) => [key, normalize(value[key])]),
+        .map((key) => [
+          key,
+          normalizeJson(
+            ownDataValue(value, key, 'A0_CANONICAL_JSON_INVALID'),
+            seen,
+          ),
+        ]),
     )
+    seen.delete(value)
+    return normalized
+  }
   fail('A0_CANONICAL_JSON_INVALID')
 }
 
@@ -1459,7 +1636,121 @@ function object(value: unknown, code: string): Record<string, unknown> {
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value) ||
+    nodeTypes.isProxy(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  )
+    return false
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== 'string') return false
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (!descriptor || !descriptor.enumerable || !('value' in descriptor))
+      return false
+  }
+  return true
+}
+
+function isDenseArray(value: unknown): value is unknown[] {
+  if (
+    !Array.isArray(value) ||
+    nodeTypes.isProxy(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype
+  )
+    return false
+  const keys = Reflect.ownKeys(value)
+  if (keys.length !== value.length + 1 || !Object.hasOwn(value, 'length'))
+    return false
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) return false
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
+    if (!descriptor || !descriptor.enumerable || !('value' in descriptor))
+      return false
+  }
+  return keys.every(
+    (key) =>
+      key === 'length' ||
+      (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key)),
+  )
+}
+
+function ownDataValue(value: unknown, key: string, code: string): unknown {
+  if (
+    (typeof value !== 'object' && typeof value !== 'function') ||
+    value === null ||
+    nodeTypes.isProxy(value)
+  )
+    fail(code)
+  const descriptor = Object.getOwnPropertyDescriptor(value, key)
+  if (!descriptor || !('value' in descriptor)) fail(code)
+  return descriptor.value
+}
+
+function bindOwnMethod(value: unknown, key: string, code: string): Function {
+  const method = ownDataValue(value, key, code)
+  if (typeof method !== 'function') fail(code)
+  return method.bind(value)
+}
+
+function dateMilliseconds(value: unknown, code: string): number {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    nodeTypes.isProxy(value) ||
+    Object.getPrototypeOf(value) !== Date.prototype
+  )
+    fail(code)
+  const milliseconds = Date.prototype.getTime.call(value)
+  if (!Number.isFinite(milliseconds)) fail(code)
+  return milliseconds
+}
+
+function immutableJsonSnapshot<T>(value: T, code: string): T {
+  return cloneAndFreezeJson(value, code, new WeakSet<object>()) as T
+}
+
+function cloneAndFreezeJson(
+  value: unknown,
+  code: string,
+  seen: WeakSet<object>,
+): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean')
+    return value
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (isDenseArray(value)) {
+    if (seen.has(value)) fail(code)
+    seen.add(value)
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const copy = new Array<unknown>(value.length)
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = descriptors[String(index)]
+      if (!descriptor || !('value' in descriptor)) fail(code)
+      copy[index] = cloneAndFreezeJson(descriptor.value, code, seen)
+    }
+    seen.delete(value)
+    return Object.freeze(copy)
+  }
+  if (isObject(value)) {
+    if (seen.has(value)) fail(code)
+    seen.add(value)
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    const copy: Record<string, unknown> = {}
+    for (const key of Object.keys(descriptors)) {
+      const descriptor = descriptors[key]!
+      if (!descriptor.enumerable || !('value' in descriptor)) fail(code)
+      Object.defineProperty(copy, key, {
+        value: cloneAndFreezeJson(descriptor.value, code, seen),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
+    }
+    seen.delete(value)
+    return Object.freeze(copy)
+  }
+  fail(code)
 }
 
 function sha(value: unknown, code: string): string {

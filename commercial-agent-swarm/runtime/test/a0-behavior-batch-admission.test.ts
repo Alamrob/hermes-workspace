@@ -8,10 +8,12 @@ import {
   hashA0Canonical,
   usdToMicroCents,
   type A0ArtifactSnapshotVerifierPort,
+  type A0AuthorizationVerifierPort,
   type A0BehaviorLedgerPort,
   type A0BatchRunnerPort,
   type A0CompiledBatch,
   type A0CompiledBatchPlan,
+  type A0ProviderCredentialPort,
   type A0SealedArtifactSnapshot,
 } from '../src/a0-behavior-batch-admission.js'
 import { createA0BehaviorBatchAdmission } from '../src/runtime-entrypoints.js'
@@ -237,21 +239,23 @@ function ports(
       return { status: 'verified', snapshot_sha256: snapshot.snapshot_sha256 }
     },
   }
+  const authorizationVerifier: A0AuthorizationVerifierPort = {
+    verify: async () => {
+      events.push('authorize')
+      return true
+    },
+  }
+  const credential: A0ProviderCredentialPort = {
+    acquire: async () => {
+      events.push('credential')
+      return { opaque_handle: 'a0-credential:test-handle-0000000000000000' }
+    },
+  }
   return {
     artifactSnapshotVerifier,
-    authorizationVerifier: {
-      verify: async () => {
-        events.push('authorize')
-        return true
-      },
-    },
+    authorizationVerifier,
     ledger,
-    credential: {
-      acquire: async () => {
-        events.push('credential')
-        return { opaque_handle: 'a0-credential:test-handle-0000000000000000' }
-      },
-    },
+    credential,
     runner,
   }
 }
@@ -398,6 +402,28 @@ describe('A0 6x16 behavior compiler', () => {
       /A0_CRITICAL_TASK_COUNT_INVALID/,
     )
   })
+
+  it('rejects sparse task, fixture and profile artifact arrays instead of hashing holes as null', () => {
+    for (const target of ['tasks', 'fixtures', 'profile_artifacts'] as const) {
+      const bundle = validBundle()
+      const snapshot = sealedSnapshot(bundle)
+      if (target === 'tasks') delete bundle.plan.tasks[0]
+      if (target === 'fixtures') delete snapshot.fixture_artifacts[0]
+      if (target === 'profile_artifacts') delete snapshot.profile_artifacts[0]
+
+      const array =
+        target === 'tasks'
+          ? bundle.plan.tasks
+          : target === 'fixtures'
+            ? snapshot.fixture_artifacts
+            : snapshot.profile_artifacts
+      assert.equal(Object.hasOwn(array, 0), false)
+      assert.throws(
+        () => compileA0BehaviorBatchPlan(bundle, snapshot),
+        A0BehaviorAdmissionError,
+      )
+    }
+  })
 })
 
 describe('A0 exact-batch admission', () => {
@@ -423,6 +449,127 @@ describe('A0 exact-batch admission', () => {
     assert.deepEqual(result, {
       status: 'settled',
       batch_id: batch.batch_id,
+      reservation_version: 7,
+    })
+  })
+
+  it('uses one deeply frozen authorization snapshot despite caller mutations at every await', async () => {
+    const compiled = compileValid()
+    const originalCompiled: any = compiled
+    const batch = compiled.batches[0]!
+    const originalBatch: any = batch
+    const auth: any = authorization(batch)
+    const expected = {
+      runId: compiled.run_id,
+      sourcePlanSha256: compiled.source_plan_sha256,
+      batchId: batch.batch_id,
+      batchSha256: batch.batch_sha256,
+      fixtureHandle: batch.tasks[0]!.fixture_handle,
+      snapshotSha256: compiled.sealed_artifact_snapshot.snapshot_sha256,
+    }
+    const events: string[] = []
+    const dependencies = ports(events)
+
+    dependencies.artifactSnapshotVerifier.verify = async (snapshot) => {
+      events.push('snapshot')
+      assert.equal(Object.isFrozen(snapshot), true)
+      assert.equal(Object.isFrozen(snapshot.fixture_artifacts), true)
+      assert.equal(Object.isFrozen(snapshot.fixture_artifacts[0]!), true)
+      assert.equal(snapshot.snapshot_sha256, expected.snapshotSha256)
+      originalCompiled.run_id = '223e4567-e89b-42d3-a456-426614174000'
+      auth.execution_authorized = false
+      return { status: 'verified', snapshot_sha256: expected.snapshotSha256 }
+    }
+    dependencies.authorizationVerifier.verify = async (stableAuth) => {
+      events.push('authorize')
+      assert.equal(Object.isFrozen(stableAuth), true)
+      assert.equal(stableAuth.run_id, expected.runId)
+      assert.equal(stableAuth.execution_authorized, true)
+      originalCompiled.source_plan_sha256 = 'b'.repeat(64)
+      originalCompiled.execution_contract.maximum_model_calls_per_task = 2
+      return true
+    }
+    dependencies.ledger.reserve = async (reservation) => {
+      events.push('reserve')
+      assert.equal(reservation.run_id, expected.runId)
+      assert.equal(reservation.batch_id, expected.batchId)
+      assert.equal(reservation.batch_sha256, expected.batchSha256)
+      assert.equal(
+        reservation.idempotency_key,
+        `a0:${expected.sourcePlanSha256}:${expected.batchSha256}`,
+      )
+      originalCompiled.sealed_artifact_snapshot.snapshot_sha256 = 'c'.repeat(64)
+      originalCompiled.sealed_artifact_snapshot.fixture_artifacts[0].sealed_handle =
+        'a0-sealed:caller-mutated-fixture-0000000000000000'
+      return { disposition: 'created', state: 'reserved', version: 7 }
+    }
+    dependencies.credential.acquire = async (request) => {
+      events.push('credential')
+      assert.deepEqual(request, {
+        run_id: expected.runId,
+        batch_id: expected.batchId,
+      })
+      originalBatch.batch_id = 'caller-mutated-batch'
+      originalBatch.tasks[0].fixture_handle =
+        'a0-sealed:caller-mutated-task-0000000000000000'
+      return { opaque_handle: 'a0-credential:test-handle-0000000000000000' }
+    }
+    dependencies.runner.spawn = async (request) => {
+      events.push('spawn')
+      assert.notEqual(request.batch, batch)
+      assert.equal(Object.isFrozen(request.batch), true)
+      assert.equal(Object.isFrozen(request.batch.tasks), true)
+      assert.equal(Object.isFrozen(request.execution_contract), true)
+      assert.equal(Object.isFrozen(request.execution_contract.approved_tools), true)
+      assert.equal(request.batch.batch_id, expected.batchId)
+      assert.equal(request.batch.tasks[0]!.fixture_handle, expected.fixtureHandle)
+      assert.equal(request.execution_contract.maximum_model_calls_per_task, 1)
+      assert.equal(
+        request.sealed_artifact_snapshot.snapshot_sha256,
+        expected.snapshotSha256,
+      )
+      auth.provider_credit_spend_authorized = false
+      return {
+        status: 'known',
+        provider_id: 'opencode-go',
+        model_id: 'deepseek-v4-flash',
+        model_calls: 6,
+        usage_value_micro_cents: 1_000_000,
+        usage_record_id: 'usage-stable',
+      }
+    }
+    dependencies.ledger.settle = async (settlement) => {
+      events.push('settle')
+      assert.deepEqual(settlement, {
+        run_id: expected.runId,
+        batch_id: expected.batchId,
+        reservation_version: 7,
+        usage_value_micro_cents: 1_000_000,
+        usage_record_id: 'usage-stable',
+      })
+      originalCompiled.batches.length = 0
+      return true
+    }
+
+    const result = await admitA0BehaviorBatch({
+      compiled,
+      batch_id: expected.batchId,
+      authorization: auth,
+      now: new Date('2026-09-12T12:10:00.000Z'),
+      ...dependencies,
+    })
+
+    assert.deepEqual(events, [
+      'snapshot',
+      'authorize',
+      'reserve',
+      'credential',
+      'spawn',
+      'settle',
+    ])
+    assert.deepEqual(result, {
+      status: 'settled',
+      batch_id: expected.batchId,
       reservation_version: 7,
     })
   })
@@ -478,6 +625,44 @@ describe('A0 exact-batch admission', () => {
     assert.deepEqual(result, {
       status: 'held_unknown',
       batch_id: batch.batch_id,
+      reservation_version: 7,
+    })
+  })
+
+  it('uses captured identifiers for holdUnknown after caller data is mutated', async () => {
+    const compiled = compileValid()
+    const batch = compiled.batches[0]!
+    const expectedRunId = compiled.run_id
+    const expectedBatchId = batch.batch_id
+    const events: string[] = []
+    const dependencies = ports(events)
+    dependencies.runner.spawn = async () => {
+      events.push('spawn')
+      ;(compiled as any).run_id = '323e4567-e89b-42d3-a456-426614174000'
+      ;(batch as any).batch_id = 'caller-mutated-before-hold'
+      return { status: 'unknown', reason: 'process_outcome_unknown' }
+    }
+    dependencies.ledger.holdUnknown = async (request) => {
+      events.push('hold')
+      assert.deepEqual(request, {
+        run_id: expectedRunId,
+        batch_id: expectedBatchId,
+        reservation_version: 7,
+        reason: 'A0_USAGE_UNKNOWN',
+      })
+      return true
+    }
+
+    const result = await admitA0BehaviorBatch({
+      compiled,
+      batch_id: expectedBatchId,
+      authorization: authorization(batch),
+      now: new Date('2026-09-12T12:10:00.000Z'),
+      ...dependencies,
+    })
+    assert.deepEqual(result, {
+      status: 'held_unknown',
+      batch_id: expectedBatchId,
       reservation_version: 7,
     })
   })
@@ -557,6 +742,99 @@ describe('A0 exact-batch admission', () => {
       /A0_ARTIFACT_SNAPSHOT_UNVERIFIED/,
     )
     assert.deepEqual(events, ['snapshot'])
+  })
+
+  it('requires the authorization verifier to return the primitive boolean true', async () => {
+    for (const malformed of [1, 'true', {}, [], new Boolean(true)]) {
+      const compiled = compileValid()
+      const batch = compiled.batches[0]!
+      const events: string[] = []
+      const dependencies = ports(events)
+      dependencies.authorizationVerifier.verify = async () => {
+        events.push('authorize')
+        return malformed as unknown as boolean
+      }
+      await assert.rejects(
+        () =>
+          admitA0BehaviorBatch({
+            compiled,
+            batch_id: batch.batch_id,
+            authorization: authorization(batch),
+            now: new Date('2026-09-12T12:10:00.000Z'),
+            ...dependencies,
+          }),
+        /A0_AUTHORIZATION_UNVERIFIED/,
+      )
+      assert.deepEqual(events, ['snapshot', 'authorize'])
+    }
+  })
+
+  it('rejects sparse compiled task, fixture and profile arrays before any verifier call', async () => {
+    for (const target of ['tasks', 'fixtures', 'profile_artifacts'] as const) {
+      const compiled = compileValid()
+      const batch = compiled.batches[0]!
+      const auth = authorization(batch)
+      if (target === 'tasks') delete (batch.tasks as any)[0]
+      if (target === 'fixtures')
+        delete (compiled.sealed_artifact_snapshot.fixture_artifacts as any)[0]
+      if (target === 'profile_artifacts')
+        delete (compiled.sealed_artifact_snapshot.profile_artifacts as any)[0]
+      const events: string[] = []
+      await assert.rejects(
+        () =>
+          admitA0BehaviorBatch({
+            compiled,
+            batch_id: batch.batch_id,
+            authorization: auth,
+            now: new Date('2026-09-12T12:10:00.000Z'),
+            ...ports(events),
+          }),
+        A0BehaviorAdmissionError,
+      )
+      assert.deepEqual(events, [])
+    }
+  })
+
+  it('rejects authorization inputs with custom prototypes, getters or exotic values', async () => {
+    let getterCalls = 0
+    for (const unsafe of ['prototype', 'getter', 'exotic', 'proxy'] as const) {
+      const compiled = compileValid()
+      const batch = compiled.batches[0]!
+      const auth = authorization(batch)
+      if (unsafe === 'prototype')
+        Object.setPrototypeOf(compiled.execution_contract, { unsafe: true })
+      if (unsafe === 'getter') {
+        const fixtureHandle = batch.tasks[0]!.fixture_handle
+        Object.defineProperty(batch.tasks[0]!, 'fixture_handle', {
+          enumerable: true,
+          configurable: true,
+          get: () => {
+            getterCalls += 1
+            return fixtureHandle
+          },
+        })
+      }
+      if (unsafe === 'exotic')
+        (compiled.sealed_artifact_snapshot.fixture_artifacts as any)[0] =
+          new Date()
+      if (unsafe === 'proxy')
+        (compiled.sealed_artifact_snapshot.profile_artifacts as any)[0] =
+          new Proxy(compiled.sealed_artifact_snapshot.profile_artifacts[0]!, {})
+      const events: string[] = []
+      await assert.rejects(
+        () =>
+          admitA0BehaviorBatch({
+            compiled,
+            batch_id: batch.batch_id,
+            authorization: auth,
+            now: new Date('2026-09-12T12:10:00.000Z'),
+            ...ports(events),
+          }),
+        /A0_ADMISSION_INPUT_UNSAFE/,
+      )
+      assert.deepEqual(events, [])
+    }
+    assert.equal(getterCalls, 0)
   })
 
   it('passes only the dedicated contract and sealed handles to the injected runner', async () => {
