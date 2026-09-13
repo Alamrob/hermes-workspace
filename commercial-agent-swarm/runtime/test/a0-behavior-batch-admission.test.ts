@@ -15,11 +15,26 @@ import {
   type A0CompiledBatchPlan,
   type A0ProviderCredentialPort,
   type A0SealedArtifactSnapshot,
+  type A0UsageRecords,
 } from '../src/a0-behavior-batch-admission.js'
 import { createA0BehaviorBatchAdmission } from '../src/runtime-entrypoints.js'
 
 const SHA = 'a'.repeat(64)
 const RUN_ID = '123e4567-e89b-42d3-a456-426614174000'
+
+function usageRecords(
+  totalMicroCents: number,
+  prefix = 'usage',
+): A0UsageRecords {
+  return [
+    { usage_record_id: `${prefix}-1`, usage_value_micro_cents: totalMicroCents - 5 },
+    { usage_record_id: `${prefix}-2`, usage_value_micro_cents: 1 },
+    { usage_record_id: `${prefix}-3`, usage_value_micro_cents: 1 },
+    { usage_record_id: `${prefix}-4`, usage_value_micro_cents: 1 },
+    { usage_record_id: `${prefix}-5`, usage_value_micro_cents: 1 },
+    { usage_record_id: `${prefix}-6`, usage_value_micro_cents: 1 },
+  ]
+}
 
 function validBundle(): any {
   const profiles = A0_BEHAVIOR_PROFILES.map((agentId) => ({
@@ -234,7 +249,7 @@ function ports(
         model_id: 'deepseek-v4-flash',
         model_calls: 6,
         usage_value_micro_cents: 1_000_000,
-        usage_record_id: 'usage-1',
+        usage_records: usageRecords(1_000_000),
       }
     },
   }
@@ -541,7 +556,7 @@ describe('A0 exact-batch admission', () => {
         model_id: 'deepseek-v4-flash',
         model_calls: 6,
         usage_value_micro_cents: 1_000_000,
-        usage_record_id: 'usage-stable',
+        usage_records: usageRecords(1_000_000, 'usage-stable'),
       }
     }
     dependencies.ledger.settle = async (settlement) => {
@@ -551,7 +566,7 @@ describe('A0 exact-batch admission', () => {
         batch_id: expected.batchId,
         reservation_version: 7,
         usage_value_micro_cents: 1_000_000,
-        usage_record_id: 'usage-stable',
+        usage_records: usageRecords(1_000_000, 'usage-stable'),
       })
       originalCompiled.batches.length = 0
       return true
@@ -633,6 +648,56 @@ describe('A0 exact-batch admission', () => {
       batch_id: batch.batch_id,
       reservation_version: 7,
     })
+  })
+
+  it('holds instead of settling malformed, duplicate or mismatched receipt sets', async () => {
+    const invalidReceiptSets: unknown[] = [
+      usageRecords(1_000_000).slice(0, 5),
+      [...usageRecords(1_000_000), {
+        usage_record_id: 'usage-7',
+        usage_value_micro_cents: 1,
+      }],
+      usageRecords(1_000_000).map((record, index) =>
+        index === 1
+          ? { ...record, usage_record_id: 'usage-1' }
+          : record,
+      ),
+      usageRecords(1_000_000).map((record, index) =>
+        index === 0
+          ? { ...record, usage_value_micro_cents: record.usage_value_micro_cents + 1 }
+          : record,
+      ),
+      usageRecords(1_000_000).map((record, index) =>
+        index === 0 ? { ...record, extra: true } : record,
+      ),
+    ]
+    for (const usage_records of invalidReceiptSets) {
+      const compiled = compileValid()
+      const batch = compiled.batches[0]!
+      const events: string[] = []
+      const dependencies = ports(events)
+      dependencies.runner.spawn = async () => {
+        events.push('spawn')
+        return {
+          status: 'known',
+          provider_id: 'opencode-go',
+          model_id: 'deepseek-v4-flash',
+          model_calls: 6,
+          usage_value_micro_cents: 1_000_000,
+          usage_records,
+        } as any
+      }
+      const result = await admitA0BehaviorBatch({
+        compiled,
+        batch_id: batch.batch_id,
+        authorization: authorization(batch),
+        now: new Date('2026-09-12T12:10:00.000Z'),
+        ...dependencies,
+      })
+      assert.equal(result.status, 'held_unknown')
+      assert.equal(events.includes('settle'), false)
+      assert.equal(events.filter((event) => event === 'hold').length, 1)
+    }
   })
 
   it('uses captured identifiers for holdUnknown after caller data is mutated', async () => {
@@ -867,7 +932,7 @@ describe('A0 exact-batch admission', () => {
         model_id: 'deepseek-v4-flash',
         model_calls: 6,
         usage_value_micro_cents: 1_000_000,
-        usage_record_id: 'usage-1',
+        usage_records: usageRecords(1_000_000),
       }
     }
     await admitA0BehaviorBatch({
@@ -1028,7 +1093,7 @@ describe('A0 exact-batch admission', () => {
         model_id: 'deepseek-v4-flash',
         model_calls: 6,
         usage_value_micro_cents: 6_000_001,
-        usage_record_id: 'usage-known-overrun',
+        usage_records: usageRecords(6_000_001, 'usage-known-overrun'),
       }
     }
     dependencies.ledger.settle = async (input) => {
@@ -1096,7 +1161,7 @@ describe('A0 exact-batch admission', () => {
         batch_id: batch.batch_id,
         reservation_version: 7,
         usage_value_micro_cents: 1_000_000,
-        usage_record_id: 'usage-1',
+        usage_records: usageRecords(1_000_000),
       })
       return { status: 'confirmed', state: 'settled', version: terminalVersion }
     }

@@ -21,9 +21,9 @@ const EXPECTED_DATABASE_OWNER = 'proptimiza_commercial_authority_owner'
 const capabilityFunctions = [
   'control.acquire_a0_behavior_execution_permit(uuid,text,bigint)',
   'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
-  'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)',
+  'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)',
   'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz)',
-  'control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text)',
+  'control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb)',
 ] as const
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -185,15 +185,16 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
 
   async settle(input: Parameters<A0BehaviorLedgerPort['settle']>[0]) {
     validateSettlement(input)
+    const usageRecords = canonicalUsageRecords(input.usage_records)
     const row = await this.one<{ applied: unknown }>(
       `SELECT control.settle_a0_behavior_batch(
-        $1::uuid,$2::text,$3::bigint,$4::bigint,$5::text) AS applied`,
+        $1::uuid,$2::text,$3::bigint,$4::bigint,$5::jsonb) AS applied`,
       [
         input.run_id,
         input.batch_id,
         input.reservation_version,
         input.usage_value_micro_cents,
-        input.usage_record_id,
+        JSON.stringify(usageRecords),
       ],
       'A0_LEDGER_SETTLEMENT_UNCONFIRMED',
     )
@@ -208,15 +209,16 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
     input: Parameters<A0BehaviorLedgerPort['getSettlement']>[0],
   ) {
     validateSettlement(input)
+    const usageRecords = canonicalUsageRecords(input.usage_records)
     const row = await this.one<{ value: unknown }>(
       `SELECT control.get_a0_behavior_batch_settlement(
-        $1::uuid,$2::text,$3::bigint,$4::bigint,$5::text) AS value`,
+        $1::uuid,$2::text,$3::bigint,$4::bigint,$5::jsonb) AS value`,
       [
         input.run_id,
         input.batch_id,
         input.reservation_version,
         input.usage_value_micro_cents,
-        input.usage_record_id,
+        JSON.stringify(usageRecords),
       ],
       'A0_LEDGER_RECONCILIATION_UNCONFIRMED',
     )
@@ -291,10 +293,54 @@ function validateSettlement(
     input.reservation_version !== 1 ||
     !Number.isSafeInteger(input.usage_value_micro_cents) ||
     input.usage_value_micro_cents < 1 ||
-    !SAFE_ID.test(input.usage_record_id)
+    !validUsageRecords(input.usage_records, input.usage_value_micro_cents)
   )
     throw new PostgresA0BehaviorLedgerError(
       'A0_LEDGER_SETTLEMENT_INPUT_INVALID',
+    )
+}
+
+function validUsageRecords(value: unknown, expectedTotal: number): boolean {
+  if (
+    !Array.isArray(value) ||
+    value.length !== 6 ||
+    Object.keys(value).length !== 6
+  )
+    return false
+  const ids = new Set<string>()
+  let total = 0
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+    const record = item as Record<string, unknown>
+    const keys = Object.keys(record).sort()
+    if (
+      keys.length !== 2 ||
+      keys[0] !== 'usage_record_id' ||
+      keys[1] !== 'usage_value_micro_cents' ||
+      typeof record.usage_record_id !== 'string' ||
+      !SAFE_ID.test(record.usage_record_id) ||
+      ids.has(record.usage_record_id) ||
+      !Number.isSafeInteger(record.usage_value_micro_cents) ||
+      Number(record.usage_value_micro_cents) < 1
+    )
+      return false
+    ids.add(record.usage_record_id)
+    total += Number(record.usage_value_micro_cents)
+    if (!Number.isSafeInteger(total)) return false
+  }
+  return total === expectedTotal
+}
+
+function canonicalUsageRecords(
+  records: Parameters<A0BehaviorLedgerPort['settle']>[0]['usage_records'],
+): Array<{ usage_record_id: string; usage_value_micro_cents: number }> {
+  return records
+    .map((record) => ({
+      usage_record_id: record.usage_record_id,
+      usage_value_micro_cents: record.usage_value_micro_cents,
+    }))
+    .sort((left, right) =>
+      left.usage_record_id.localeCompare(right.usage_record_id, 'en'),
     )
 }
 

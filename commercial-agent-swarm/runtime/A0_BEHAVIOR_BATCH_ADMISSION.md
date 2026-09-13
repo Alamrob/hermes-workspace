@@ -49,12 +49,15 @@ The append-only PostgreSQL ledger permits sixteen 6,000,000-microcent reservatio
 A1 attempts from coexisting, and counts both authorities against the shared 1,000,000,000-
 microcent activation ceiling under one lock order. An expired reservation becomes
 `held_unknown` and activates shared quarantine. A later exact known result supersedes only that
-expiry hold with a new append-only terminal version, records the immutable shared receipt and full
-audit evidence, and retains quarantine. Usage above a batch reservation becomes
+expiry hold with a new append-only terminal version, records exactly six immutable provider receipts,
+their canonical set hash and aggregate audit evidence, and retains quarantine. Each receipt has a
+unique provider ID, a positive safe-integer value, and the six values must sum to the exact batch
+total; a conflict on any member rolls back the entire settlement. Usage above a batch reservation becomes
 `budget_exceeded` and also activates shared quarantine. If the
 settlement response is lost, admission performs one exact read, then returns the confirmed state
 or `settlement_unconfirmed`; it performs no second mutation. A shared immutable receipt registry
-keys provider plus usage-record ID and binds authority, value, and fingerprint so the same receipt
+stores each of the six records, keys provider plus usage-record ID, and binds authority, value, and
+fingerprint so the same receipt
 cannot be consumed across A0 and A1. Migration 038 also wraps future A1 claim, activation, and
 settlement paths to enforce these shared invariants; its empty-ledger rollback restores all three
 retained functions and their prior grants. None of these adapters is wired into a startup, timer,

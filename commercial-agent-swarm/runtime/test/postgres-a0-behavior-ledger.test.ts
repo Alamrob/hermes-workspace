@@ -5,11 +5,26 @@ import {
   PostgresA0BehaviorLedger,
   PostgresA0BehaviorLedgerError,
 } from '../src/postgres-a0-behavior-ledger.js'
+import type { A0UsageRecords } from '../src/a0-behavior-batch-admission.js'
 
 const RUN = 'a3800000-0000-4380-8380-000000000001'
 const BATCH = `a0:${RUN}:t01`
 const HASH = 'a'.repeat(64)
 const IDEMPOTENCY = `a0:${'b'.repeat(64)}:${HASH}`
+
+function usageRecords(
+  totalMicroCents: number,
+  prefix = 'usage',
+): A0UsageRecords {
+  return [
+    { usage_record_id: `${prefix}-1`, usage_value_micro_cents: totalMicroCents - 5 },
+    { usage_record_id: `${prefix}-2`, usage_value_micro_cents: 1 },
+    { usage_record_id: `${prefix}-3`, usage_value_micro_cents: 1 },
+    { usage_record_id: `${prefix}-4`, usage_value_micro_cents: 1 },
+    { usage_record_id: `${prefix}-5`, usage_value_micro_cents: 1 },
+    { usage_record_id: `${prefix}-6`, usage_value_micro_cents: 1 },
+  ]
+}
 
 class FakeDatabase {
   readonly calls: QueryConfig[] = []
@@ -77,9 +92,9 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
       [
         'control.acquire_a0_behavior_execution_permit(uuid,text,bigint)',
         'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
-        'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)',
+        'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)',
         'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz)',
-        'control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text)',
+        'control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb)',
       ],
     ])
     assert.equal(database.calls.length, 1)
@@ -174,7 +189,7 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
         batch_id: BATCH,
         reservation_version: 1,
         usage_value_micro_cents: 6_000_001,
-        usage_record_id: 'usage-known-overrun',
+        usage_records: usageRecords(6_000_001, 'usage-known-overrun'),
       }),
       { status: 'confirmed', state: 'budget_exceeded', version: 2 },
     )
@@ -191,7 +206,7 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
         batch_id: BATCH,
         reservation_version: 1,
         usage_value_micro_cents: 5_000_000,
-        usage_record_id: 'usage-late-known',
+        usage_records: usageRecords(5_000_000, 'usage-late-known'),
       }),
       { status: 'confirmed', state: 'settled', version: 3 },
     )
@@ -208,7 +223,7 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
         batch_id: BATCH,
         reservation_version: 1,
         usage_value_micro_cents: 6_000_001,
-        usage_record_id: 'usage-known-overrun',
+        usage_records: usageRecords(6_000_001, 'usage-known-overrun'),
       }),
       /A0_LEDGER_RECONCILIATION_INVALID/,
     )
@@ -223,7 +238,7 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
         batch_id: BATCH,
         reservation_version: 1,
         usage_value_micro_cents: 6_000_001,
-        usage_record_id: 'usage-known-overrun',
+        usage_records: usageRecords(6_000_001, 'usage-known-overrun'),
       }),
       true,
     )
@@ -238,6 +253,11 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
     )
     assert.equal(database.calls.length, 2)
     assert.match(database.calls[0]?.text ?? '', /settle_a0_behavior_batch/)
+    assert.match(database.calls[0]?.text ?? '', /\$5::jsonb/)
+    assert.deepEqual(
+      JSON.parse(String(database.calls[0]?.values?.[4])),
+      usageRecords(6_000_001, 'usage-known-overrun'),
+    )
     assert.match(
       database.calls[1]?.text ?? '',
       /hold_a0_behavior_batch_unknown/,
@@ -252,8 +272,8 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
         run_id: RUN,
         batch_id: BATCH,
         reservation_version: 1,
-        usage_value_micro_cents: 1,
-        usage_record_id: 'usage-1',
+        usage_value_micro_cents: 6,
+        usage_records: usageRecords(6),
       }),
       (error) =>
         error instanceof PostgresA0BehaviorLedgerError &&
@@ -261,6 +281,35 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
         !error.message.includes('secret'),
     )
     assert.equal(database.calls.length, 1)
+  })
+
+  it('rejects non-six, duplicate, unsafe or mismatched receipt sets before SQL', async () => {
+    const invalid: unknown[] = [
+      usageRecords(6).slice(0, 5),
+      usageRecords(6).map((record, index) =>
+        index === 1 ? { ...record, usage_record_id: 'usage-1' } : record,
+      ),
+      usageRecords(6).map((record, index) =>
+        index === 0 ? { ...record, usage_value_micro_cents: 2 } : record,
+      ),
+      usageRecords(6).map((record, index) =>
+        index === 0 ? { ...record, extra: true } : record,
+      ),
+    ]
+    for (const usage_records of invalid) {
+      const { ledger, database } = create()
+      await assert.rejects(
+        ledger.settle({
+          run_id: RUN,
+          batch_id: BATCH,
+          reservation_version: 1,
+          usage_value_micro_cents: 6,
+          usage_records: usage_records as A0UsageRecords,
+        }),
+        /A0_LEDGER_SETTLEMENT_INPUT_INVALID/,
+      )
+      assert.equal(database.calls.length, 0)
+    }
   })
 
   it('rejects malformed authority before issuing SQL', async () => {

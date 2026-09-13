@@ -190,14 +190,14 @@ export interface A0BehaviorLedgerPort {
     batch_id: string
     reservation_version: number
     usage_value_micro_cents: number
-    usage_record_id: string
+    usage_records: A0UsageRecords
   }): Promise<boolean>
   getSettlement(input: {
     run_id: string
     batch_id: string
     reservation_version: number
     usage_value_micro_cents: number
-    usage_record_id: string
+    usage_records: A0UsageRecords
   }): Promise<A0SettlementLookupResult>
   holdUnknown(input: {
     run_id: string
@@ -206,6 +206,20 @@ export interface A0BehaviorLedgerPort {
     reason: 'A0_USAGE_UNKNOWN'
   }): Promise<boolean>
 }
+
+export interface A0UsageRecord {
+  usage_record_id: string
+  usage_value_micro_cents: number
+}
+
+export type A0UsageRecords = readonly [
+  A0UsageRecord,
+  A0UsageRecord,
+  A0UsageRecord,
+  A0UsageRecord,
+  A0UsageRecord,
+  A0UsageRecord,
+]
 
 export interface A0ProviderCredentialPort {
   acquire(input: {
@@ -220,7 +234,7 @@ export interface A0KnownBatchOutcome {
   model_id: 'deepseek-v4-flash'
   model_calls: 6
   usage_value_micro_cents: number
-  usage_record_id: string
+  usage_records: A0UsageRecords
 }
 
 export interface A0UnknownBatchOutcome {
@@ -710,7 +724,7 @@ export async function admitA0BehaviorBatch(input: {
       batch_id: batch.batch_id,
       reservation_version: reservation.version,
       usage_value_micro_cents: outcome.usage_value_micro_cents,
-      usage_record_id: outcome.usage_record_id,
+      usage_records: outcome.usage_records,
     })
   } catch {
     // The database may have committed before the reply was lost. Perform one
@@ -723,7 +737,7 @@ export async function admitA0BehaviorBatch(input: {
             batch_id: batch.batch_id,
             reservation_version: reservation.version,
             usage_value_micro_cents: outcome.usage_value_micro_cents,
-            usage_record_id: outcome.usage_record_id,
+            usage_records: outcome.usage_records,
           }),
           'A0_LEDGER_RECONCILIATION_INVALID',
         ),
@@ -1678,7 +1692,7 @@ function validKnownOutcome(
       'model_id',
       'model_calls',
       'usage_value_micro_cents',
-      'usage_record_id',
+      'usage_records',
     ].every((key) => Object.hasOwn(value, key))
   )
     return false
@@ -1688,9 +1702,44 @@ function validKnownOutcome(
     value.model_calls === batch.tasks.length &&
     Number.isSafeInteger(value.usage_value_micro_cents) &&
     Number(value.usage_value_micro_cents) > 0 &&
-    typeof value.usage_record_id === 'string' &&
-    /^[A-Za-z0-9._:-]{1,200}$/.test(value.usage_record_id)
+    validUsageRecords(
+      value.usage_records,
+      batch.tasks.length,
+      Number(value.usage_value_micro_cents),
+    )
   )
+}
+
+function validUsageRecords(
+  value: unknown,
+  expectedCount: number,
+  expectedTotalMicroCents: number,
+): value is A0UsageRecords {
+  if (!isDenseArray(value) || value.length !== expectedCount) return false
+  const ids = new Set<string>()
+  let total = 0
+  for (const candidate of value) {
+    if (!isObject(candidate)) return false
+    const keys = Object.keys(candidate).sort()
+    if (
+      keys.length !== 2 ||
+      keys[0] !== 'usage_record_id' ||
+      keys[1] !== 'usage_value_micro_cents'
+    )
+      return false
+    if (
+      typeof candidate.usage_record_id !== 'string' ||
+      !/^[A-Za-z0-9._:-]{1,200}$/.test(candidate.usage_record_id) ||
+      ids.has(candidate.usage_record_id) ||
+      !Number.isSafeInteger(candidate.usage_value_micro_cents) ||
+      Number(candidate.usage_value_micro_cents) < 1
+    )
+      return false
+    ids.add(candidate.usage_record_id)
+    total += Number(candidate.usage_value_micro_cents)
+    if (!Number.isSafeInteger(total)) return false
+  }
+  return total === expectedTotalMicroCents
 }
 
 async function holdUnknownOnce(

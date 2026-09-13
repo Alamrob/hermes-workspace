@@ -85,7 +85,10 @@ CREATE TABLE control.a0_behavior_batch_ledger(
   version bigint NOT NULL CHECK(version IN(1,2,3)),
   state text NOT NULL CHECK(state IN('reserved','settled','budget_exceeded','held_unknown')),
   usage_value_micro_cents bigint CHECK(usage_value_micro_cents BETWEEN 1 AND 9007199254740991),
-  usage_record_id text,
+  usage_records jsonb,
+  usage_receipt_set_sha256 text CHECK(
+    usage_receipt_set_sha256 IS NULL OR usage_receipt_set_sha256~'^[a-f0-9]{64}$'
+  ),
   unknown_reason text,
   recorded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   UNIQUE(idempotency_key,version),
@@ -95,15 +98,21 @@ CREATE TABLE control.a0_behavior_batch_ledger(
   CHECK(
     (version=1 AND state='reserved' AND expires_at>recorded_at
       AND usage_value_micro_cents IS NULL
-      AND usage_record_id IS NULL AND unknown_reason IS NULL)
+      AND usage_records IS NULL AND usage_receipt_set_sha256 IS NULL
+      AND unknown_reason IS NULL)
     OR
     (version IN(2,3) AND state IN('settled','budget_exceeded')
-      AND usage_value_micro_cents IS NOT NULL AND usage_record_id IS NOT NULL
+      AND usage_value_micro_cents IS NOT NULL
+      AND usage_records IS NOT NULL
+      AND jsonb_typeof(usage_records)='array'
+      AND jsonb_array_length(usage_records)=6
+      AND usage_receipt_set_sha256 IS NOT NULL
       AND unknown_reason IS NULL
       AND (state='budget_exceeded')=(usage_value_micro_cents>reservation_micro_cents))
     OR
     (version=2 AND state='held_unknown' AND usage_value_micro_cents IS NULL
-      AND usage_record_id IS NULL AND unknown_reason IN(
+      AND usage_records IS NULL AND usage_receipt_set_sha256 IS NULL
+      AND unknown_reason IN(
         'A0_USAGE_UNKNOWN','A0_RESERVATION_EXPIRED_USAGE_UNKNOWN'
       ))
   )
@@ -323,12 +332,20 @@ BEGIN
   RETURN true;
 END $$;
 
-CREATE FUNCTION control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text)
+CREATE FUNCTION control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb)
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE
   reserved control.a0_behavior_batch_ledger%ROWTYPE;
   terminal control.a0_behavior_batch_ledger%ROWTYPE;
   registered control.usage_record_registry%ROWTYPE;
+  usage_entry jsonb;
+  record_id text;
+  record_value bigint;
+  seen_ids text[]:='{}'::text[];
+  receipt_count integer:=0;
+  receipt_sum numeric:=0;
+  canonical_records jsonb;
+  receipt_set_sha256 text;
   fingerprint text;
   target text;
   next_version bigint:=2;
@@ -337,8 +354,38 @@ BEGIN
   IF $2!~*'^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(0[1-9]|1[0-6])$'
     OR lower($2) NOT LIKE 'a0:'||$1::text||':t%' OR $3<>1
     OR $4 NOT BETWEEN 1 AND 9007199254740991
-    OR length($5) NOT BETWEEN 1 AND 200 OR $5!~'^[A-Za-z0-9._:-]+$'
+    OR $5 IS NULL OR jsonb_typeof($5)<>'array' OR jsonb_array_length($5)<>6
   THEN RAISE EXCEPTION 'A0_SETTLEMENT_INPUT_INVALID'; END IF;
+  FOR usage_entry IN SELECT value FROM jsonb_array_elements($5)
+  LOOP
+    IF jsonb_typeof(usage_entry)<>'object'
+      OR (SELECT count(*) FROM jsonb_object_keys(usage_entry))<>2
+      OR NOT usage_entry?'usage_record_id'
+      OR NOT usage_entry?'usage_value_micro_cents'
+      OR jsonb_typeof(usage_entry->'usage_record_id')<>'string'
+      OR jsonb_typeof(usage_entry->'usage_value_micro_cents')<>'number'
+      OR length(usage_entry->>'usage_record_id') NOT BETWEEN 1 AND 200
+      OR usage_entry->>'usage_record_id'!~'^[A-Za-z0-9._:-]+$'
+      OR usage_entry->>'usage_value_micro_cents'!~'^[1-9][0-9]{0,15}$'
+    THEN RAISE EXCEPTION 'A0_SETTLEMENT_INPUT_INVALID'; END IF;
+    record_id:=usage_entry->>'usage_record_id';
+    record_value:=(usage_entry->>'usage_value_micro_cents')::bigint;
+    IF record_value>9007199254740991 OR record_id=ANY(seen_ids)
+    THEN RAISE EXCEPTION 'A0_SETTLEMENT_INPUT_INVALID'; END IF;
+    seen_ids:=array_append(seen_ids,record_id);
+    receipt_count:=receipt_count+1;
+    receipt_sum:=receipt_sum+record_value;
+  END LOOP;
+  IF receipt_count<>6 OR receipt_sum<>$4
+  THEN RAISE EXCEPTION 'A0_SETTLEMENT_INPUT_INVALID'; END IF;
+  SELECT jsonb_agg(jsonb_build_object(
+    'usage_record_id',entry->>'usage_record_id',
+    'usage_value_micro_cents',(entry->>'usage_value_micro_cents')::bigint
+  ) ORDER BY entry->>'usage_record_id') INTO canonical_records
+  FROM jsonb_array_elements($5) AS records(entry);
+  receipt_set_sha256:=encode(sha256(convert_to(jsonb_build_array(
+    'opencode-go',canonical_records,$4,'a0_behavior',$1,$2,$3
+  )::text,'UTF8')),'hex');
   PERFORM guard_id FROM control.kill_switch_guard WHERE guard_id=1 FOR UPDATE;
   PERFORM control_id FROM control.usage_budget_control WHERE control_id=1 FOR UPDATE;
   PERFORM pg_advisory_xact_lock(hashtext('a0:'||$1::text));
@@ -350,55 +397,75 @@ BEGIN
     SELECT 1 FROM control.a0_behavior_execution_permits
     WHERE run_id=$1 AND batch_id=$2 AND reservation_version=$3
   ) THEN RETURN false; END IF;
-  fingerprint:=encode(sha256(convert_to(jsonb_build_array(
-    'opencode-go',$5,$4,'a0_behavior',$1,$2,$3
-  )::text,'UTF8')),'hex');
   SELECT * INTO terminal FROM control.a0_behavior_batch_ledger
   WHERE run_id=$1 AND batch_id=$2 AND version>1
   ORDER BY version DESC LIMIT 1;
   IF FOUND AND terminal.state IN('settled','budget_exceeded') THEN
-    SELECT * INTO registered FROM control.usage_record_registry
-    WHERE provider_id='opencode-go' AND usage_record_id=$5;
-    RETURN coalesce(terminal.usage_value_micro_cents=$4 AND terminal.usage_record_id=$5
-      AND registered.authority='a0_behavior'
-      AND registered.usage_value_micro_cents=$4
-      AND registered.usage_fingerprint_sha256=fingerprint
-      AND registered.run_id=$1 AND registered.batch_id=$2,false);
+    IF terminal.usage_value_micro_cents IS DISTINCT FROM $4
+      OR terminal.usage_records IS DISTINCT FROM canonical_records
+      OR terminal.usage_receipt_set_sha256 IS DISTINCT FROM receipt_set_sha256
+    THEN RETURN false; END IF;
+    FOR usage_entry IN SELECT value FROM jsonb_array_elements(canonical_records)
+    LOOP
+      record_id:=usage_entry->>'usage_record_id';
+      record_value:=(usage_entry->>'usage_value_micro_cents')::bigint;
+      fingerprint:=encode(sha256(convert_to(jsonb_build_array(
+        'opencode-go',record_id,record_value,'a0_behavior',$1,$2,$3
+      )::text,'UTF8')),'hex');
+      SELECT * INTO registered FROM control.usage_record_registry
+      WHERE provider_id='opencode-go' AND usage_record_id=record_id;
+      IF NOT FOUND OR registered.authority IS DISTINCT FROM 'a0_behavior'
+        OR registered.usage_value_micro_cents IS DISTINCT FROM record_value
+        OR registered.usage_fingerprint_sha256 IS DISTINCT FROM fingerprint
+        OR registered.run_id IS DISTINCT FROM $1 OR registered.batch_id IS DISTINCT FROM $2
+      THEN RETURN false; END IF;
+    END LOOP;
+    RETURN true;
   ELSIF FOUND THEN
     IF terminal.version<>2 OR terminal.state<>'held_unknown'
       OR terminal.unknown_reason<>'A0_RESERVATION_EXPIRED_USAGE_UNKNOWN'
     THEN RETURN false; END IF;
     next_version:=3;superseded_state:=terminal.state;
   END IF;
-  INSERT INTO control.usage_record_registry(
-    provider_id,usage_record_id,authority,usage_value_micro_cents,
-    usage_fingerprint_sha256,run_id,batch_id
-  ) VALUES(
-    'opencode-go',$5,'a0_behavior',$4,fingerprint,$1,$2
-  ) ON CONFLICT(provider_id,usage_record_id) DO NOTHING;
-  SELECT * INTO registered FROM control.usage_record_registry
-  WHERE provider_id='opencode-go' AND usage_record_id=$5;
-  IF registered.authority IS DISTINCT FROM 'a0_behavior'
-    OR registered.usage_value_micro_cents IS DISTINCT FROM $4
-    OR registered.usage_fingerprint_sha256 IS DISTINCT FROM fingerprint
-    OR registered.run_id IS DISTINCT FROM $1 OR registered.batch_id IS DISTINCT FROM $2
-  THEN RAISE EXCEPTION 'SHARED_USAGE_RECORD_CONFLICT'; END IF;
+  FOR usage_entry IN SELECT value FROM jsonb_array_elements(canonical_records)
+  LOOP
+    record_id:=usage_entry->>'usage_record_id';
+    record_value:=(usage_entry->>'usage_value_micro_cents')::bigint;
+    fingerprint:=encode(sha256(convert_to(jsonb_build_array(
+      'opencode-go',record_id,record_value,'a0_behavior',$1,$2,$3
+    )::text,'UTF8')),'hex');
+    INSERT INTO control.usage_record_registry(
+      provider_id,usage_record_id,authority,usage_value_micro_cents,
+      usage_fingerprint_sha256,run_id,batch_id
+    ) VALUES(
+      'opencode-go',record_id,'a0_behavior',record_value,fingerprint,$1,$2
+    ) ON CONFLICT(provider_id,usage_record_id) DO NOTHING;
+    SELECT * INTO registered FROM control.usage_record_registry
+    WHERE provider_id='opencode-go' AND usage_record_id=record_id;
+    IF registered.authority IS DISTINCT FROM 'a0_behavior'
+      OR registered.usage_value_micro_cents IS DISTINCT FROM record_value
+      OR registered.usage_fingerprint_sha256 IS DISTINCT FROM fingerprint
+      OR registered.run_id IS DISTINCT FROM $1 OR registered.batch_id IS DISTINCT FROM $2
+    THEN RAISE EXCEPTION 'SHARED_USAGE_RECORD_CONFLICT'; END IF;
+  END LOOP;
 
   target:=CASE WHEN $4>reserved.reservation_micro_cents
     THEN 'budget_exceeded' ELSE 'settled' END;
   INSERT INTO control.a0_behavior_batch_ledger(
     idempotency_key,source_plan_sha256,run_id,batch_id,batch_sha256,
-    reservation_micro_cents,expires_at,version,state,usage_value_micro_cents,usage_record_id
+    reservation_micro_cents,expires_at,version,state,usage_value_micro_cents,
+    usage_records,usage_receipt_set_sha256
   ) VALUES(
     reserved.idempotency_key,reserved.source_plan_sha256,reserved.run_id,
     reserved.batch_id,reserved.batch_sha256,reserved.reservation_micro_cents,
-    reserved.expires_at,next_version,target,$4,$5
+    reserved.expires_at,next_version,target,$4,canonical_records,receipt_set_sha256
   );
   INSERT INTO control.audit_events(event) VALUES(jsonb_build_object(
     'event','a0_behavior_batch_settled','run_id',$1,'batch_id',$2,
     'state',target,'terminal_version',next_version,
     'superseded_state',superseded_state,'usage_value_micro_cents',$4,
-    'usage_record_id',$5,'usage_fingerprint_sha256',fingerprint,
+    'usage_receipt_count',receipt_count,
+    'usage_receipt_set_sha256',receipt_set_sha256,
     'reservation_micro_cents',reserved.reservation_micro_cents,
     'quarantine_retained',superseded_state='held_unknown',
     'external_action',false,'recorded_at',clock_timestamp()
@@ -411,33 +478,79 @@ BEGIN
   RETURN true;
 END $$;
 
-CREATE FUNCTION control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)
+CREATE FUNCTION control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)
 RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE
   terminal control.a0_behavior_batch_ledger%ROWTYPE;
+  registered control.usage_record_registry%ROWTYPE;
+  usage_entry jsonb;
+  record_id text;
+  record_value bigint;
+  seen_ids text[]:='{}'::text[];
+  receipt_count integer:=0;
+  receipt_sum numeric:=0;
+  canonical_records jsonb;
+  receipt_set_sha256 text;
   fingerprint text;
 BEGIN
   IF $2!~*'^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(0[1-9]|1[0-6])$'
     OR lower($2) NOT LIKE 'a0:'||$1::text||':t%' OR $3<>1
     OR $4 NOT BETWEEN 1 AND 9007199254740991
-    OR length($5) NOT BETWEEN 1 AND 200 OR $5!~'^[A-Za-z0-9._:-]+$'
+    OR $5 IS NULL OR jsonb_typeof($5)<>'array' OR jsonb_array_length($5)<>6
   THEN RAISE EXCEPTION 'A0_SETTLEMENT_LOOKUP_INPUT_INVALID'; END IF;
-  fingerprint:=encode(sha256(convert_to(jsonb_build_array(
-    'opencode-go',$5,$4,'a0_behavior',$1,$2,$3
+  FOR usage_entry IN SELECT value FROM jsonb_array_elements($5)
+  LOOP
+    IF jsonb_typeof(usage_entry)<>'object'
+      OR (SELECT count(*) FROM jsonb_object_keys(usage_entry))<>2
+      OR NOT usage_entry?'usage_record_id'
+      OR NOT usage_entry?'usage_value_micro_cents'
+      OR jsonb_typeof(usage_entry->'usage_record_id')<>'string'
+      OR jsonb_typeof(usage_entry->'usage_value_micro_cents')<>'number'
+      OR length(usage_entry->>'usage_record_id') NOT BETWEEN 1 AND 200
+      OR usage_entry->>'usage_record_id'!~'^[A-Za-z0-9._:-]+$'
+      OR usage_entry->>'usage_value_micro_cents'!~'^[1-9][0-9]{0,15}$'
+    THEN RAISE EXCEPTION 'A0_SETTLEMENT_LOOKUP_INPUT_INVALID'; END IF;
+    record_id:=usage_entry->>'usage_record_id';
+    record_value:=(usage_entry->>'usage_value_micro_cents')::bigint;
+    IF record_value>9007199254740991 OR record_id=ANY(seen_ids)
+    THEN RAISE EXCEPTION 'A0_SETTLEMENT_LOOKUP_INPUT_INVALID'; END IF;
+    seen_ids:=array_append(seen_ids,record_id);
+    receipt_count:=receipt_count+1;
+    receipt_sum:=receipt_sum+record_value;
+  END LOOP;
+  IF receipt_count<>6 OR receipt_sum<>$4
+  THEN RAISE EXCEPTION 'A0_SETTLEMENT_LOOKUP_INPUT_INVALID'; END IF;
+  SELECT jsonb_agg(jsonb_build_object(
+    'usage_record_id',entry->>'usage_record_id',
+    'usage_value_micro_cents',(entry->>'usage_value_micro_cents')::bigint
+  ) ORDER BY entry->>'usage_record_id') INTO canonical_records
+  FROM jsonb_array_elements($5) AS records(entry);
+  receipt_set_sha256:=encode(sha256(convert_to(jsonb_build_array(
+    'opencode-go',canonical_records,$4,'a0_behavior',$1,$2,$3
   )::text,'UTF8')),'hex');
   SELECT ledger.* INTO terminal FROM control.a0_behavior_batch_ledger ledger
-  JOIN control.usage_record_registry registry
-    ON registry.provider_id='opencode-go'
-    AND registry.usage_record_id=ledger.usage_record_id
-    AND registry.authority='a0_behavior'
-    AND registry.usage_value_micro_cents=ledger.usage_value_micro_cents
-    AND registry.usage_fingerprint_sha256=fingerprint
-    AND registry.run_id=ledger.run_id AND registry.batch_id=ledger.batch_id
   WHERE ledger.run_id=$1 AND ledger.batch_id=$2 AND ledger.version>$3
     AND ledger.state IN('settled','budget_exceeded')
-    AND ledger.usage_value_micro_cents=$4 AND ledger.usage_record_id=$5
+    AND ledger.usage_value_micro_cents=$4
+    AND ledger.usage_records=canonical_records
+    AND ledger.usage_receipt_set_sha256=receipt_set_sha256
   ORDER BY ledger.version DESC LIMIT 1;
   IF NOT FOUND THEN RETURN jsonb_build_object('status','unconfirmed'); END IF;
+  FOR usage_entry IN SELECT value FROM jsonb_array_elements(canonical_records)
+  LOOP
+    record_id:=usage_entry->>'usage_record_id';
+    record_value:=(usage_entry->>'usage_value_micro_cents')::bigint;
+    fingerprint:=encode(sha256(convert_to(jsonb_build_array(
+      'opencode-go',record_id,record_value,'a0_behavior',$1,$2,$3
+    )::text,'UTF8')),'hex');
+    SELECT * INTO registered FROM control.usage_record_registry
+    WHERE provider_id='opencode-go' AND usage_record_id=record_id;
+    IF NOT FOUND OR registered.authority IS DISTINCT FROM 'a0_behavior'
+      OR registered.usage_value_micro_cents IS DISTINCT FROM record_value
+      OR registered.usage_fingerprint_sha256 IS DISTINCT FROM fingerprint
+      OR registered.run_id IS DISTINCT FROM $1 OR registered.batch_id IS DISTINCT FROM $2
+    THEN RETURN jsonb_build_object('status','unconfirmed'); END IF;
+  END LOOP;
   RETURN jsonb_build_object(
     'status','confirmed','state',terminal.state,'version',terminal.version
   );
@@ -609,9 +722,9 @@ FROM PUBLIC,commercial_runtime,commercial_work_order_ingestor,commercial_approve
 REVOKE ALL ON FUNCTION control.expire_a0_behavior_reservations(),
   control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
   control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
-  control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text),
+  control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
-  control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)
+  control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)
 FROM PUBLIC,commercial_runtime,commercial_work_order_ingestor,commercial_approver,
   commercial_safety_operator,commercial_observer,commercial_a1_supervisor,
   commercial_a1_chain_runner,commercial_a0_behavior_ledger;
@@ -630,9 +743,9 @@ TO commercial_safety_operator;
 GRANT USAGE ON SCHEMA control TO commercial_a0_behavior_ledger;
 GRANT EXECUTE ON FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
   control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
-  control.settle_a0_behavior_batch(uuid,text,bigint,bigint,text),
+  control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
-  control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,text)
+  control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)
 TO commercial_a0_behavior_ledger;
 
 COMMIT;

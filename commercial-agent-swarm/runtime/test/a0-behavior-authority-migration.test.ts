@@ -42,6 +42,9 @@ describe('A0 behavior authority migration', () => {
     assert.match(sql, /version bigint NOT NULL CHECK\(version IN\(1,2,3\)\)/)
     assert.match(sql, /CREATE TABLE control\.a0_behavior_execution_permits/)
     assert.match(sql, /CHECK\(acquired_at<expires_at\)/)
+    assert.match(sql, /usage_records jsonb/)
+    assert.match(sql, /jsonb_array_length\(usage_records\)=6/)
+    assert.match(sql, /usage_receipt_set_sha256 text/)
   })
 
   it('exposes only reserve, settle, exact read and hold functions', async () => {
@@ -57,7 +60,7 @@ describe('A0 behavior authority migration', () => {
     )
     assert.match(
       grants,
-      /settle_a0_behavior_batch\(uuid,text,bigint,bigint,text\)/,
+      /settle_a0_behavior_batch\(uuid,text,bigint,bigint,jsonb\)/,
     )
     assert.match(
       grants,
@@ -65,7 +68,7 @@ describe('A0 behavior authority migration', () => {
     )
     assert.match(
       grants,
-      /get_a0_behavior_batch_settlement\(uuid,text,bigint,bigint,text\)/,
+      /get_a0_behavior_batch_settlement\(uuid,text,bigint,bigint,jsonb\)/,
     )
     assert.match(grants, /TO commercial_a0_behavior_ledger/)
     assert.doesNotMatch(
@@ -96,7 +99,15 @@ describe('A0 behavior authority migration', () => {
     assert.match(sql, /SHARED_USAGE_RECORD_CONFLICT/)
     assert.match(sql, /terminal\.unknown_reason<>'A0_RESERVATION_EXPIRED_USAGE_UNKNOWN'/)
     assert.match(sql, /next_version:=3;superseded_state:=terminal\.state/)
-    assert.match(sql, /'usage_record_id',\$5,'usage_fingerprint_sha256',fingerprint/)
+    assert.match(sql, /receipt_count<>6 OR receipt_sum<>\$4/)
+    assert.match(sql, /jsonb_agg\(jsonb_build_object\(/)
+    assert.match(sql, /ORDER BY entry->>'usage_record_id'/)
+    assert.match(sql, /'usage_receipt_count',receipt_count/)
+    assert.match(sql, /'usage_receipt_set_sha256',receipt_set_sha256/)
+    assert.doesNotMatch(
+      functionBody(sql, 'settle_a0_behavior_batch'),
+      /'usage_record_id',\$5/,
+    )
     assert.match(sql, /'quarantine_retained',superseded_state='held_unknown'/)
     assert.match(
       functionBody(sql, 'hold_a0_behavior_batch_unknown'),

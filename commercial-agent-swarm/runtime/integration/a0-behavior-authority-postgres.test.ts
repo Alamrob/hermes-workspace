@@ -20,6 +20,14 @@ integration('PostgreSQL A0 behavior authority', () => {
       const source = 'a'.repeat(64)
       const batch = 'b'.repeat(64)
       const idempotency = `a0:${source}:${batch}`
+      const usageRecords = [
+        { usage_record_id: 'usage-late-known-6', usage_value_micro_cents: 1 },
+        { usage_record_id: 'usage-late-known-1', usage_value_micro_cents: 4_999_995 },
+        { usage_record_id: 'usage-late-known-5', usage_value_micro_cents: 1 },
+        { usage_record_id: 'usage-late-known-2', usage_value_micro_cents: 1 },
+        { usage_record_id: 'usage-late-known-4', usage_value_micro_cents: 1 },
+        { usage_record_id: 'usage-late-known-3', usage_value_micro_cents: 1 },
+      ]
       const expiresAt = new Date(Date.now() + 1_000).toISOString()
       const client = await pool.connect()
       try {
@@ -45,20 +53,20 @@ integration('PostgreSQL A0 behavior authority', () => {
         await client.query('SELECT pg_sleep(1.1)')
         const settled = await client.query(
           `SELECT control.settle_a0_behavior_batch(
-            $1::uuid,$2::text,1,5000000,$3::text) AS applied`,
-          [runId, batchId, 'usage-late-known-1'],
+            $1::uuid,$2::text,1,5000000,$3::jsonb) AS applied`,
+          [runId, batchId, JSON.stringify(usageRecords)],
         )
         assert.equal(settled.rows[0].applied, true)
         const exactReplay = await client.query(
           `SELECT control.settle_a0_behavior_batch(
-            $1::uuid,$2::text,1,5000000,$3::text) AS applied`,
-          [runId, batchId, 'usage-late-known-1'],
+            $1::uuid,$2::text,1,5000000,$3::jsonb) AS applied`,
+          [runId, batchId, JSON.stringify([...usageRecords].reverse())],
         )
         assert.equal(exactReplay.rows[0].applied, true)
         const lookup = await client.query(
           `SELECT control.get_a0_behavior_batch_settlement(
-            $1::uuid,$2::text,1,5000000,$3::text) AS value`,
-          [runId, batchId, 'usage-late-known-1'],
+            $1::uuid,$2::text,1,5000000,$3::jsonb) AS value`,
+          [runId, batchId, JSON.stringify([...usageRecords].reverse())],
         )
         assert.deepEqual(lookup.rows[0].value, {
           status: 'confirmed',
@@ -84,7 +92,13 @@ integration('PostgreSQL A0 behavior authority', () => {
           (SELECT array_agg(version ORDER BY version) FROM control.a0_behavior_batch_ledger
             WHERE run_id=$1 AND batch_id=$2) AS versions,
           (SELECT count(*)::int FROM control.usage_record_registry
-            WHERE provider_id='opencode-go' AND usage_record_id='usage-late-known-1') AS registry_count,
+            WHERE provider_id='opencode-go' AND authority='a0_behavior'
+              AND run_id=$1 AND batch_id=$2) AS registry_count,
+          (SELECT jsonb_array_length(usage_records) FROM control.a0_behavior_batch_ledger
+            WHERE run_id=$1 AND batch_id=$2 AND version=3) AS receipt_count,
+          (SELECT usage_receipt_set_sha256~'^[a-f0-9]{64}$'
+            FROM control.a0_behavior_batch_ledger
+            WHERE run_id=$1 AND batch_id=$2 AND version=3) AS receipt_set_hash_valid,
           (SELECT count(*)::int FROM control.audit_events
             WHERE event->>'event'='a0_behavior_batch_settled'
               AND event->>'run_id'=$1::text AND event->>'batch_id'=$2) AS settlement_audits,
@@ -93,9 +107,101 @@ integration('PostgreSQL A0 behavior authority', () => {
       )
       assert.deepEqual(evidence.rows[0], {
         versions: ['1', '2', '3'],
-        registry_count: 1,
+        registry_count: 6,
+        receipt_count: 6,
+        receipt_set_hash_valid: true,
         settlement_audits: 1,
         quarantined: true,
+      })
+    } finally {
+      await destroyDatabase(admin, pool, database)
+    }
+  })
+
+  it('rolls back the whole six-receipt settlement when one provider receipt conflicts', async () => {
+    const fixture = await databaseFixture('a0_behavior_receipt_conflict')
+    const { admin, pool, database } = fixture
+    try {
+      await runVersionedMigrations(pool, await loadMigrationSources())
+      const source = 'c'.repeat(64)
+      const firstRun = randomUUID()
+      const secondRun = randomUUID()
+      const firstBatch = `a0:${firstRun}:t01`
+      const secondBatch = `a0:${secondRun}:t01`
+      const firstRecords = [
+        { usage_record_id: 'receipt-z-conflict', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-first-1', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-first-2', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-first-3', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-first-4', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-first-5', usage_value_micro_cents: 1 },
+      ]
+      const secondRecords = [
+        { usage_record_id: 'receipt-second-a', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-second-b', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-second-c', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-second-d', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-second-e', usage_value_micro_cents: 1 },
+        { usage_record_id: 'receipt-z-conflict', usage_value_micro_cents: 1 },
+      ]
+      const client = await pool.connect()
+      try {
+        await client.query('SET ROLE commercial_a0_behavior_ledger')
+        const reserveAndPermit = async (
+          runId: string,
+          batchId: string,
+          batchHash: string,
+        ) => {
+          const idempotency = `a0:${source}:${batchHash}`
+          const reserved = await client.query(
+            `SELECT control.reserve_a0_behavior_batch(
+              $1::text,$2::uuid,$3::text,$4::text,6000000,
+              clock_timestamp()+interval '5 minutes') AS value`,
+            [idempotency, runId, batchId, batchHash],
+          )
+          assert.equal(reserved.rows[0].value.disposition, 'created')
+          const permit = await client.query(
+            `SELECT control.acquire_a0_behavior_execution_permit(
+              $1::uuid,$2::text,1) AS granted`,
+            [runId, batchId],
+          )
+          assert.equal(permit.rows[0].granted, true)
+        }
+        await reserveAndPermit(firstRun, firstBatch, 'd'.repeat(64))
+        assert.equal(
+          (
+            await client.query(
+              `SELECT control.settle_a0_behavior_batch(
+                $1::uuid,$2::text,1,6,$3::jsonb) AS applied`,
+              [firstRun, firstBatch, JSON.stringify(firstRecords)],
+            )
+          ).rows[0].applied,
+          true,
+        )
+        await reserveAndPermit(secondRun, secondBatch, 'e'.repeat(64))
+        await assert.rejects(
+          client.query(
+            `SELECT control.settle_a0_behavior_batch(
+              $1::uuid,$2::text,1,6,$3::jsonb) AS applied`,
+            [secondRun, secondBatch, JSON.stringify(secondRecords)],
+          ),
+          /SHARED_USAGE_RECORD_CONFLICT/,
+        )
+      } finally {
+        await client.query('RESET ROLE')
+        client.release()
+      }
+      const evidence = await pool.query(
+        `SELECT
+          (SELECT array_agg(version ORDER BY version)
+            FROM control.a0_behavior_batch_ledger WHERE run_id=$1) AS versions,
+          (SELECT count(*)::int FROM control.usage_record_registry
+            WHERE run_id=$1) AS second_registry_rows`,
+        [secondRun],
+      )
+      assert.deepEqual(evidence.rows[0], {
+        versions: ['1'],
+        second_registry_rows: 0,
       })
     } finally {
       await destroyDatabase(admin, pool, database)
