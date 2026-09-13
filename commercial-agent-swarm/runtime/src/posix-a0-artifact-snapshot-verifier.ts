@@ -69,11 +69,14 @@ export class PosixA0ArtifactSnapshotVerifier implements A0ArtifactSnapshotVerifi
         this.prepareReference(reference),
       )
       const { snapshot_sha256: _claim, ...snapshotBody } = input
-      const expectedSnapshotBytes = Buffer.from(
+      const snapshotBodyBytes = Buffer.from(
         `${JSON.stringify(normalize(snapshotBody))}\n`,
       )
+      const expectedSnapshotBytes = Buffer.from(
+        `${JSON.stringify(normalize(input))}\n`,
+      )
       const snapshotPath = sealedPath(input.snapshot_handle)
-      if (digest(expectedSnapshotBytes) !== claimedSnapshotSha256)
+      if (digest(snapshotBodyBytes) !== claimedSnapshotSha256)
         throw new Error('SNAPSHOT_DIGEST')
 
       for (const item of prepared) {

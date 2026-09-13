@@ -48,12 +48,14 @@ function snapshot() {
     ],
     snapshot_handle: 'a0-sealed:snapshot-0000000000000001',
   }
-  const snapshotBytes = Buffer.from(`${JSON.stringify(normalize(body))}\n`)
+  const snapshotBodyBytes = Buffer.from(`${JSON.stringify(normalize(body))}\n`)
+  const value = {
+    ...body,
+    snapshot_sha256: digest(snapshotBodyBytes),
+  } as A0SealedArtifactSnapshot
+  const snapshotBytes = Buffer.from(`${JSON.stringify(normalize(value))}\n`)
   return {
-    value: {
-      ...body,
-      snapshot_sha256: digest(snapshotBytes),
-    } as A0SealedArtifactSnapshot,
+    value,
     files: new Map([
       [`${A0_SEALED_ARTIFACT_ROOT}/fixture-0000000000000001`, fixtureBytes],
       [`${A0_SEALED_ARTIFACT_ROOT}/profile-0000000000000001`, profileBytes],
@@ -65,6 +67,9 @@ function snapshot() {
 describe('POSIX A0 sealed artifact verifier', () => {
   it('verifies exact bytes and hashes through opaque handles only', async () => {
     const sealed = snapshot()
+    assert.deepEqual(JSON.parse(sealed.files.get(
+      `${A0_SEALED_ARTIFACT_ROOT}/snapshot-0000000000000001`,
+    )!.toString('utf8')), normalize(sealed.value))
     const reads: string[] = []
     const verifier = new PosixA0ArtifactSnapshotVerifier({
       expectedGid: 10001,
