@@ -14,6 +14,14 @@ const principal = new URL(
   '../scripts/provision-a0-behavior-ledger-principal.sql',
   import.meta.url,
 )
+const principalRollback = new URL(
+  '../scripts/rollback-a0-behavior-ledger-principal.sql',
+  import.meta.url,
+)
+const authorityBootstrap = new URL(
+  '../scripts/bootstrap-commercial-authority-database.sql',
+  import.meta.url,
+)
 
 describe('A0 behavior authority migration', () => {
   it('creates an append-only 6x16 microcent ledger with known-overrun state', async () => {
@@ -187,19 +195,64 @@ describe('A0 behavior authority migration', () => {
     )
   })
 
-  it('provides an exact secret-free least-privilege LOGIN provisioning path', async () => {
-    const sql = await readFile(principal, 'utf8')
+  it('isolates the secret-free least-privilege LOGIN in one dedicated database', async () => {
+    const [bootstrap, sql, undo] = await Promise.all([
+      readFile(authorityBootstrap, 'utf8'),
+      readFile(principal, 'utf8'),
+      readFile(principalRollback, 'utf8'),
+    ])
+    assert.match(
+      bootstrap,
+      /CREATE ROLE proptimiza_commercial_authority_owner NOLOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/,
+    )
+    assert.match(
+      bootstrap,
+      /CREATE DATABASE proptimiza_commercial_authority OWNER proptimiza_commercial_authority_owner TEMPLATE template0/,
+    )
+    assert.match(bootstrap, /proptimiza:commercial-authority:v1/)
+    assert.match(bootstrap, /SET statement_timeout='10s'/)
+    assert.match(bootstrap, /SET lock_timeout='2s'/)
     assert.match(
       sql,
       /CREATE ROLE proptimiza_a0_behavior_ledger_login LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/,
     )
-    assert.match(sql, /REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC/)
+    assert.match(sql, /current_database\(\)<>'proptimiza_commercial_authority'/)
+    assert.match(sql, /proptimiza:commercial-authority:v1/)
+    assert.match(sql, /version='038_a0_behavior_authority'/)
+    assert.match(
+      sql,
+      /REVOKE ALL ON DATABASE proptimiza_commercial_authority FROM PUBLIC/,
+    )
     assert.match(
       sql,
       /GRANT commercial_a0_behavior_ledger TO proptimiza_a0_behavior_ledger_login/,
     )
-    assert.match(sql, /GRANT CONNECT ON DATABASE %I TO proptimiza_a0_behavior_ledger_login/)
-    assert.doesNotMatch(sql, /PASSWORD\s+'|postgresql:\/\//i)
+    assert.match(
+      sql,
+      /GRANT CONNECT ON DATABASE proptimiza_commercial_authority\s+TO proptimiza_a0_behavior_ledger_login/,
+    )
+    assert.match(sql, /has_database_privilege\([\s\S]*'CONNECT'/)
+    assert.match(sql, /has_database_privilege\([\s\S]*'TEMP'/)
+    assert.match(sql, /has_database_privilege\([\s\S]*'CREATE'/)
+    assert.match(sql, /SET LOCAL statement_timeout='5s'/)
+    assert.match(sql, /SET LOCAL lock_timeout='2s'/)
+    assert.doesNotMatch(sql, /format\('REVOKE[\s\S]*current_database/i)
+    for (const source of [bootstrap, sql, undo]) {
+      assert.doesNotMatch(source, /PASSWORD\s+'|postgresql:\/\//i)
+      const databaseTargets = [
+        ...source.matchAll(/ON DATABASE\s+([a-z0-9_]+)/gi),
+      ].map((match) => match[1])
+      assert.ok(
+        databaseTargets.every(
+          (target) => target === 'proptimiza_commercial_authority',
+        ),
+      )
+      assert.doesNotMatch(source, /ON DATABASE\s+(runtime|crm|n8n|postgres)\b/i)
+    }
+    assert.match(undo, /IF EXISTS\([\s\S]*proptimiza_a0_behavior_ledger_login/)
+    assert.match(undo, /EXECUTE 'DROP ROLE proptimiza_a0_behavior_ledger_login'/)
+    assert.match(undo, /SET LOCAL statement_timeout='5s'/)
+    assert.doesNotMatch(undo, /DROP DATABASE|GRANT[\s\S]+TO PUBLIC/i)
   })
 
   it('requires containment and an empty ledger for rollback', async () => {

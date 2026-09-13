@@ -28,10 +28,18 @@ outcome is held once for manual reconciliation and is never retried by this capa
 them. Construction performs no database or filesystem I/O. `PostgresA0BehaviorLedger` exposes
 only five fixed PostgreSQL functions from migration 038 (reserve, execution permit, settle, one
 exact settlement read, and hold) and verifies the exact
-`proptimiza_a0_behavior_ledger_login` function-only principal before use. The separate
-`scripts/provision-a0-behavior-ledger-principal.sql` template creates that secret-free LOGIN,
-removes effective database TEMP through the PUBLIC grant, and grants only the capability role;
-authentication secrets remain a deployment-boundary responsibility.
+`proptimiza_a0_behavior_ledger_login` function-only principal before use. PostgreSQL cannot deny
+`TEMP` to one role while `PUBLIC` retains it, so the authority is isolated in the exact marked
+`proptimiza_commercial_authority` database. This database contains the complete commercial control
+plane (not an A0-only copy), preserving the transactional A0/A1/budget/CRM interlocks while leaving
+external runtime, CRM, n8n, postgres, template, and other database ACLs unchanged.
+`scripts/bootstrap-commercial-authority-database.sql` creates only that dedicated database and its
+NOLOGIN owner. After all migrations through 038, `scripts/provision-a0-behavior-ledger-principal.sql`
+refuses any other database or owner, removes `PUBLIC` database access there only, and grants the
+secret-free LOGIN exactly `CONNECT` plus its capability role. The idempotent
+`scripts/rollback-a0-behavior-ledger-principal.sql` removes only that LOGIN and preserves the
+dedicated database, migrations, capability role, isolation baseline, and sibling databases.
+Authentication secrets remain a deployment-boundary responsibility.
 `PosixA0ArtifactSnapshotVerifier` resolves opaque handles only below
 `/run/proptimiza-a0-sealed`, reusing the root-owned, group-0440, one-link, `O_NOFOLLOW` reader and
 then comparing the exact canonical snapshot bytes and every artifact byte count and SHA-256.

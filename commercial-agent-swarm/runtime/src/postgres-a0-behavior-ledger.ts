@@ -16,6 +16,8 @@ export interface PostgresA0BehaviorLedgerOptions {
 
 const CAPABILITY_ROLE = 'commercial_a0_behavior_ledger'
 const EXPECTED_LOGIN = 'proptimiza_a0_behavior_ledger_login'
+const EXPECTED_DATABASE = 'proptimiza_commercial_authority'
+const EXPECTED_DATABASE_OWNER = 'proptimiza_commercial_authority_owner'
 const capabilityFunctions = [
   'control.acquire_a0_behavior_execution_permit(uuid,text,bigint)',
   'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
@@ -57,6 +59,11 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
   async ready(): Promise<void> {
     const row = await this.one<{
       current_user: unknown
+      database_name: unknown
+      database_owner: unknown
+      can_connect: unknown
+      database_is_template: unknown
+      database_allows_connections: unknown
       rolcanlogin: unknown
       rolinherit: unknown
       unsafe: unknown
@@ -65,14 +72,18 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
       missing_functions: unknown
       unsafe_effective: unknown
     }>(
-      `SELECT current_user,r.rolcanlogin,r.rolinherit,
+      `SELECT current_user,current_database()::text AS database_name,
+        pg_get_userbyid(d.datdba)::text AS database_owner,
+        has_database_privilege(current_user,d.oid,'CONNECT') AS can_connect,
+        d.datistemplate AS database_is_template,d.datallowconn AS database_allows_connections,
+        r.rolcanlogin,r.rolinherit,
         (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls) AS unsafe,
         ARRAY(SELECT parent.rolname::text FROM pg_roles parent
           WHERE parent.oid<>r.oid AND pg_has_role(r.oid,parent.oid,'MEMBER')
           ORDER BY parent.rolname)::text[] AS memberships,
         ARRAY(SELECT p.oid::regprocedure::text FROM pg_proc p
           JOIN pg_namespace n ON n.oid=p.pronamespace
-          WHERE n.nspname=ANY(ARRAY['catalog','control','mail','integration'])
+          WHERE n.nspname=ANY(ARRAY['public','catalog','control','mail','integration'])
             AND has_function_privilege(current_user,p.oid,'EXECUTE')
             AND p.oid<>ALL(ARRAY(SELECT to_regprocedure(expected.name)::oid
               FROM unnest($1::text[]) AS expected(name)))
@@ -84,7 +95,7 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
           ORDER BY expected.name) AS missing_functions,
         (
           EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-            WHERE n.nspname=ANY(ARRAY['catalog','control','mail','integration'])
+            WHERE n.nspname=ANY(ARRAY['public','catalog','control','mail','integration'])
               AND c.relkind IN('r','p','v','m','f')
               AND (has_table_privilege(current_user,c.oid,'SELECT')
                 OR has_table_privilege(current_user,c.oid,'INSERT')
@@ -94,15 +105,19 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
                 OR has_table_privilege(current_user,c.oid,'REFERENCES')
                 OR has_table_privilege(current_user,c.oid,'TRIGGER')))
           OR EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-            WHERE n.nspname=ANY(ARRAY['catalog','control','mail','integration'])
+            WHERE n.nspname=ANY(ARRAY['public','catalog','control','mail','integration'])
               AND c.relkind='S' AND (has_sequence_privilege(current_user,c.oid,'SELECT')
                 OR has_sequence_privilege(current_user,c.oid,'USAGE')
                 OR has_sequence_privilege(current_user,c.oid,'UPDATE')))
           OR EXISTS(SELECT 1 FROM pg_namespace n
-            WHERE n.nspname=ANY(ARRAY['catalog','control','mail','integration'])
+            WHERE n.nspname=ANY(ARRAY['public','catalog','control','mail','integration'])
               AND has_schema_privilege(current_user,n.oid,'CREATE'))
           OR has_database_privilege(current_user,current_database(),'CREATE')
           OR has_database_privilege(current_user,current_database(),'TEMP')
+          OR EXISTS(SELECT 1 FROM pg_database owned WHERE owned.datdba=r.oid)
+          OR EXISTS(SELECT 1 FROM pg_namespace owned WHERE owned.nspowner=r.oid)
+          OR EXISTS(SELECT 1 FROM pg_class owned WHERE owned.relowner=r.oid)
+          OR EXISTS(SELECT 1 FROM pg_proc owned WHERE owned.proowner=r.oid)
           OR EXISTS(SELECT 1 FROM pg_auth_members membership
             WHERE membership.member=r.oid AND membership.admin_option)
           OR EXISTS(SELECT 1 FROM pg_roles parent
@@ -110,12 +125,18 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
               AND (parent.rolsuper OR parent.rolcreatedb OR parent.rolcreaterole
                 OR parent.rolreplication OR parent.rolbypassrls))
         ) AS unsafe_effective
-      FROM pg_roles r WHERE r.rolname=current_user`,
+      FROM pg_roles r JOIN pg_database d ON d.datname=current_database()
+      WHERE r.rolname=current_user`,
       [capabilityFunctions],
       'A0_LEDGER_PRINCIPAL_UNVERIFIED',
     )
     if (
       row.current_user !== this.expectedPrincipal ||
+      row.database_name !== EXPECTED_DATABASE ||
+      row.database_owner !== EXPECTED_DATABASE_OWNER ||
+      row.can_connect !== true ||
+      row.database_is_template !== false ||
+      row.database_allows_connections !== true ||
       row.rolcanlogin !== true ||
       row.rolinherit !== true ||
       row.unsafe !== false ||

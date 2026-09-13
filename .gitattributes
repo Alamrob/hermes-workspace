@@ -1,0 +1,3 @@
+commercial-agent-swarm/runtime/**/*.sql text eol=lf
+commercial-agent-swarm/runtime/**/*.ts text eol=lf
+commercial-agent-swarm/runtime/**/*.md text eol=lf

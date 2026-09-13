@@ -14,6 +14,21 @@ const IDEMPOTENCY = `a0:${'b'.repeat(64)}:${HASH}`
 class FakeDatabase {
   readonly calls: QueryConfig[] = []
   value: unknown = { disposition: 'created', state: 'reserved', version: 1 }
+  readyValue: Record<string, unknown> = {
+    current_user: 'proptimiza_a0_behavior_ledger_login',
+    database_name: 'proptimiza_commercial_authority',
+    database_owner: 'proptimiza_commercial_authority_owner',
+    can_connect: true,
+    database_is_template: false,
+    database_allows_connections: true,
+    rolcanlogin: true,
+    rolinherit: true,
+    unsafe: false,
+    memberships: ['commercial_a0_behavior_ledger'],
+    unexpected_functions: [],
+    missing_functions: [],
+    unsafe_effective: false,
+  }
   fail = false
 
   async query<T extends QueryResultRow>(
@@ -22,16 +37,7 @@ class FakeDatabase {
     this.calls.push(structuredClone(config))
     if (this.fail) throw new Error('postgresql://secret-value')
     const row = config.text.includes('FROM pg_roles r')
-      ? {
-          current_user: 'proptimiza_a0_behavior_ledger_login',
-          rolcanlogin: true,
-          rolinherit: true,
-          unsafe: false,
-          memberships: ['commercial_a0_behavior_ledger'],
-          unexpected_functions: [],
-          missing_functions: [],
-          unsafe_effective: false,
-        }
+      ? structuredClone(this.readyValue)
       : config.text.includes('acquire_a0_behavior_execution_permit')
         ? { granted: this.value }
         : config.text.includes('reserve_a0_behavior_batch') ||
@@ -77,6 +83,28 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
       ],
     ])
     assert.equal(database.calls.length, 1)
+    assert.match(database.calls[0]?.text ?? '', /current_database\(\)::text/)
+    assert.match(database.calls[0]?.text ?? '', /pg_get_userbyid\(d\.datdba\)/)
+    assert.match(database.calls[0]?.text ?? '', /has_database_privilege/)
+    assert.match(database.calls[0]?.text ?? '', /owned\.relowner=r\.oid/)
+    assert.doesNotMatch(database.calls[0]?.text ?? '', /\b(?:SET|RESET)\b/)
+  })
+
+  it('fails closed on database identity or effective database privilege drift', async () => {
+    const unsafe: Array<[string, unknown]> = [
+      ['database_name', 'runtime'],
+      ['database_owner', 'postgres'],
+      ['can_connect', false],
+      ['database_is_template', true],
+      ['database_allows_connections', false],
+      ['unsafe_effective', true],
+    ]
+    for (const [field, value] of unsafe) {
+      const database = new FakeDatabase()
+      database.readyValue[field] = value
+      await assert.rejects(create(database).ledger.ready(), /A0_LEDGER_PRINCIPAL_UNVERIFIED/)
+      assert.equal(database.calls.length, 1)
+    }
   })
 
   it('acquires a fresh execution permit only through the fixed CAS function', async () => {
