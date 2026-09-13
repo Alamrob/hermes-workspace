@@ -6,6 +6,7 @@ import {
   admitA0BehaviorBatch,
   compileA0BehaviorBatchPlan,
   hashA0Canonical,
+  validateA0BatchAuthorizationForPlan,
   usdToMicroCents,
   type A0ArtifactSnapshotVerifierPort,
   type A0AuthorizationVerifierPort,
@@ -214,6 +215,51 @@ function authorization(batch: A0CompiledBatch) {
     },
   }
 }
+
+describe('A0 pre-capability authorization validation', () => {
+  it('accepts only the exact fresh batch binding and returns an immutable snapshot', () => {
+    const compiled = compileValid()
+    const value = authorization(compiled.batches[0]!)
+    const validated = validateA0BatchAuthorizationForPlan(
+      value,
+      compiled,
+      new Date('2026-09-12T12:10:00.000Z'),
+    )
+    assert.equal(validated.batch_id, compiled.batches[0]!.batch_id)
+    assert.equal(Object.isFrozen(validated), true)
+    value.batch_id = compiled.batches[1]!.batch_id
+    assert.equal(validated.batch_id, compiled.batches[0]!.batch_id)
+  })
+
+  it('rejects expired or cross-batch authorization before adapter calls', () => {
+    const compiled = compileValid()
+    const expired = authorization(compiled.batches[0]!)
+    assert.throws(
+      () =>
+        validateA0BatchAuthorizationForPlan(
+          expired,
+          compiled,
+          new Date('2026-09-12T12:20:00.000Z'),
+        ),
+      (error) =>
+        error instanceof A0BehaviorAdmissionError &&
+        error.code === 'A0_AUTHORIZATION_EXPIRED',
+    )
+    const drifted = authorization(compiled.batches[0]!)
+    drifted.batch_id = compiled.batches[1]!.batch_id
+    assert.throws(
+      () =>
+        validateA0BatchAuthorizationForPlan(
+          drifted,
+          compiled,
+          new Date('2026-09-12T12:10:00.000Z'),
+        ),
+      (error) =>
+        error instanceof A0BehaviorAdmissionError &&
+        error.code === 'A0_AUTHORIZATION_BATCH_HASH_DRIFT',
+    )
+  })
+})
 
 function ports(
   events: string[],

@@ -16,6 +16,7 @@
     "oneshot:commercial-automation": "node dist/commercial-automation-one-shot-main.js",
     "oneshot:dispatch": "node dist/manual-dispatch-once-main.js",
     "oneshot:a1-single-approval": "node dist/a1-single-approval-one-shot-main.js",
+    "oneshot:a0-behavior": "node dist/a0-behavior-one-shot-main.js",
     "start:a1-window-supervisor": "node dist/a1-window-supervisor-main.js",
     "start:external-action-broker": "node dist/external-action-broker-main.js",
     "start:telegram-approval-poller": "node dist/telegram-approval-poller-main.js",

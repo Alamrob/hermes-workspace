@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control.alam.cl/schemas/commercial-swarm-a0-batch-one-shot-failure.schema.json",
+  "title": "Commercial Swarm A0 Batch One-Shot Failure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "type",
+    "status",
+    "error_code",
+    "retry_attempted",
+    "external_actions",
+    "real_connector_calls",
+    "crm_writes"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "type": { "const": "commercial_swarm_a0_batch_one_shot_failure/v1" },
+    "status": { "const": "failed" },
+    "error_code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_:-]{2,128}$"
+    },
+    "retry_attempted": { "const": false },
+    "external_actions": { "const": 0 },
+    "real_connector_calls": { "const": 0 },
+    "crm_writes": { "const": 0 }
+  }
+}

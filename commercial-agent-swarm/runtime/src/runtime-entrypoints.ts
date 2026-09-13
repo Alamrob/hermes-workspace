@@ -53,6 +53,14 @@ export {
   type A0BatchAuthorizationAuthority,
   type Ed25519A0BatchAuthorizationVerifierOptions,
 } from './a0-batch-authorization.js'
+export {
+  A0BehaviorOneShotError,
+  prepareA0BehaviorOneShotInvocation,
+  runA0BehaviorOneShot,
+  type A0BehaviorOneShotDependencies,
+  type A0BehaviorOneShotPreparedInvocation,
+  type A0BehaviorOneShotResult,
+} from './a0-behavior-one-shot-main.js'
 
 export interface BrokerDispatcherDependencies {
   queue?: DispatchQueuePort

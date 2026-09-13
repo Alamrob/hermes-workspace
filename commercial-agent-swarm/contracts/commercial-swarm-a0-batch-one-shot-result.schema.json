@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control.alam.cl/schemas/commercial-swarm-a0-batch-one-shot-result.schema.json",
+  "title": "Commercial Swarm A0 Batch One-Shot Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "type",
+    "status",
+    "run_id",
+    "batch_id",
+    "reservation_version",
+    "retry_attempted",
+    "external_actions",
+    "real_connector_calls",
+    "crm_writes"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "type": { "const": "commercial_swarm_a0_batch_one_shot_result/v1" },
+    "status": {
+      "enum": [
+        "settled",
+        "budget_exceeded",
+        "settlement_unconfirmed",
+        "held_unknown",
+        "reservation_replayed"
+      ]
+    },
+    "reservation_state": {
+      "enum": ["reserved", "settled", "budget_exceeded", "held_unknown"]
+    },
+    "run_id": { "type": "string", "format": "uuid" },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(?:0[1-9]|1[0-6])$"
+    },
+    "reservation_version": { "type": "integer", "minimum": 1 },
+    "retry_attempted": { "const": false },
+    "external_actions": { "const": 0 },
+    "real_connector_calls": { "const": 0 },
+    "crm_writes": { "const": 0 }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "reservation_replayed" } },
+        "required": ["status"]
+      },
+      "then": { "required": ["reservation_state"] },
+      "else": { "not": { "required": ["reservation_state"] } }
+    }
+  ]
+}

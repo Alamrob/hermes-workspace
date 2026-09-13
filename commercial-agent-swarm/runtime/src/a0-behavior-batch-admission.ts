@@ -296,6 +296,41 @@ export function hashA0Canonical(value: unknown): string {
     .digest('hex')
 }
 
+/**
+ * Validates and snapshots one exact batch authorization before an entrypoint
+ * opens database, credential or executor capabilities. Signature verification
+ * remains the responsibility of A0AuthorizationVerifierPort.
+ */
+export function validateA0BatchAuthorizationForPlan(
+  authorizationValue: unknown,
+  compiled: A0CompiledBatchPlan,
+  now: Date,
+): A0BatchAuthorization {
+  validateCompiled(compiled)
+  const nowMilliseconds = dateMilliseconds(now, 'A0_ADMISSION_INPUT_UNSAFE')
+  const authorization = immutableJsonSnapshot(
+    authorizationValue,
+    'A0_AUTHORIZATION_INVALID',
+  ) as A0BatchAuthorization
+  const authorizationObject = object(
+    authorization,
+    'A0_AUTHORIZATION_INVALID',
+  )
+  const batchId = ownDataValue(
+    authorizationObject,
+    'batch_id',
+    'A0_AUTHORIZATION_INVALID',
+  )
+  if (typeof batchId !== 'string') fail('A0_AUTHORIZATION_BATCH_DRIFT')
+  const batch = compiled.batches.find(
+    (candidate) => candidate.batch_id === batchId,
+  )
+  if (!batch) fail('A0_BATCH_NOT_FOUND')
+  validateAuthorization(authorization, compiled, batch)
+  validateAuthorizationFreshness(authorization, compiled, nowMilliseconds)
+  return authorization
+}
+
 export function compileA0BehaviorBatchPlan(
   bundleValue: unknown,
   snapshotValue: unknown,
