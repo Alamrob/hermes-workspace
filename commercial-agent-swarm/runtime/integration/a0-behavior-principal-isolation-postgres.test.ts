@@ -52,6 +52,18 @@ integration('PostgreSQL A0 principal database isolation', () => {
       authorityUrl.pathname = `/${authorityDatabase}`
       authority = new Pool({ connectionString: authorityUrl.toString() })
       await runVersionedMigrations(authority, await loadMigrationSources())
+
+      await admin.query(
+        'COMMENT ON DATABASE proptimiza_commercial_authority IS NULL',
+      )
+      await assert.rejects(
+        runPsql(authorityUrl.toString(), provision),
+        /A0_AUTHORITY_DATABASE_NOT_DEDICATED/,
+      )
+      assert.equal(await roleExists(admin, ledgerLogin), false)
+      await admin.query(
+        "COMMENT ON DATABASE proptimiza_commercial_authority IS 'proptimiza:commercial-authority:v1'",
+      )
       await runPsql(authorityUrl.toString(), provision)
 
       const privileges = await authority.query<{
@@ -87,6 +99,17 @@ integration('PostgreSQL A0 principal database isolation', () => {
       }
 
       assert.deepEqual(await databaseAclSnapshot(admin, siblings), before)
+      await admin.query(
+        "COMMENT ON DATABASE proptimiza_commercial_authority IS 'tampered'",
+      )
+      await assert.rejects(
+        runPsql(authorityUrl.toString(), rollback),
+        /A0_AUTHORITY_DATABASE_NOT_DEDICATED/,
+      )
+      assert.equal(await roleExists(admin, ledgerLogin), true)
+      await admin.query(
+        "COMMENT ON DATABASE proptimiza_commercial_authority IS 'proptimiza:commercial-authority:v1'",
+      )
       await runPsql(authorityUrl.toString(), rollback)
       await runPsql(authorityUrl.toString(), rollback)
       const removed = await admin.query<{ present: boolean }>(
@@ -119,6 +142,14 @@ async function databaseAclSnapshot(admin: Pool, databases: string[]) {
     [databases],
   )
   return result.rows
+}
+
+async function roleExists(admin: Pool, role: string): Promise<boolean> {
+  const result = await admin.query<{ present: boolean }>(
+    'SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1) AS present',
+    [role],
+  )
+  return result.rows[0]?.present === true
 }
 
 async function runPsql(connectionString: string, file: string): Promise<void> {

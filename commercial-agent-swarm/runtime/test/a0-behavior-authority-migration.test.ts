@@ -210,6 +210,7 @@ describe('A0 behavior authority migration', () => {
       /CREATE DATABASE proptimiza_commercial_authority OWNER proptimiza_commercial_authority_owner TEMPLATE template0/,
     )
     assert.match(bootstrap, /proptimiza:commercial-authority:v1/)
+    assert.match(bootstrap, /shobj_description\(database\.oid,'pg_database'\)/)
     assert.match(bootstrap, /SET statement_timeout='10s'/)
     assert.match(bootstrap, /SET lock_timeout='2s'/)
     assert.match(
@@ -218,6 +219,8 @@ describe('A0 behavior authority migration', () => {
     )
     assert.match(sql, /current_database\(\)<>'proptimiza_commercial_authority'/)
     assert.match(sql, /proptimiza:commercial-authority:v1/)
+    assert.match(sql, /shobj_description\(database\.oid,'pg_database'\)/)
+    assert.match(undo, /shobj_description\(database\.oid,'pg_database'\)/)
     assert.match(sql, /version='038_a0_behavior_authority'/)
     assert.match(
       sql,
@@ -238,6 +241,7 @@ describe('A0 behavior authority migration', () => {
     assert.match(sql, /SET LOCAL lock_timeout='2s'/)
     assert.doesNotMatch(sql, /format\('REVOKE[\s\S]*current_database/i)
     for (const source of [bootstrap, sql, undo]) {
+      assert.doesNotMatch(source, /\bobj_description\(database\.oid,'pg_database'\)/)
       assert.doesNotMatch(source, /PASSWORD\s+'|postgresql:\/\//i)
       const databaseTargets = [
         ...source.matchAll(/ON DATABASE\s+([a-z0-9_]+)/gi),

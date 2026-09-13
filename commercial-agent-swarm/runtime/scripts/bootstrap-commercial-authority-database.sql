@@ -31,7 +31,7 @@ DO $$ BEGIN
     SELECT 1 FROM pg_database database
     WHERE database.datname='proptimiza_commercial_authority'
       AND (pg_get_userbyid(database.datdba)<>'proptimiza_commercial_authority_owner'
-        OR coalesce(obj_description(database.oid,'pg_database'),'')
+        OR coalesce(shobj_description(database.oid,'pg_database'),'')
           <>'proptimiza:commercial-authority:v1')
   ) THEN RAISE EXCEPTION 'EXISTING_DATABASE_IS_NOT_DEDICATED_AUTHORITY'; END IF;
 END $$;

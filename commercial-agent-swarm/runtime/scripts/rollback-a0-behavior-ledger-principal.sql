@@ -11,7 +11,7 @@ DO $$ BEGIN
       SELECT 1 FROM pg_database database
       WHERE database.datname=current_database()
         AND pg_get_userbyid(database.datdba)='proptimiza_commercial_authority_owner'
-        AND coalesce(obj_description(database.oid,'pg_database'),'')
+        AND coalesce(shobj_description(database.oid,'pg_database'),'')
           ='proptimiza:commercial-authority:v1'
     )
   THEN RAISE EXCEPTION 'A0_AUTHORITY_DATABASE_NOT_DEDICATED'; END IF;
