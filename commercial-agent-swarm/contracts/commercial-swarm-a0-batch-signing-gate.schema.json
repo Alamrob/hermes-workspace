@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control.alam.cl/schemas/commercial-swarm-a0-batch-signing-gate.schema.json",
+  "title": "Commercial Swarm A0 Batch Signing Gate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "type", "decision", "authorization_id",
+    "candidate_sha256", "user_authorization_sha256", "approved_by",
+    "approved_at", "expires_at", "attestations"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "type": { "const": "commercial_swarm_a0_batch_signing_gate/v1" },
+    "decision": { "const": "approved" },
+    "authorization_id": { "type": "string", "format": "uuid" },
+    "candidate_sha256": { "$ref": "#/$defs/sha256" },
+    "user_authorization_sha256": { "$ref": "#/$defs/sha256" },
+    "approved_by": { "const": "user:proptimizaspa@gmail.com" },
+    "approved_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "attestations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exact_batch_confirmed", "synthetic_only", "no_tools",
+        "no_real_connectors", "no_external_actions", "no_crm_writes",
+        "no_contact", "no_a3", "provider_credit_cap_usd",
+        "kill_switch_remains_active", "local_persistence_authorized",
+        "sealed_transfer_authorized", "exact_execution_once_authorized",
+        "no_retry_on_uncertainty"
+      ],
+      "properties": {
+        "exact_batch_confirmed": { "const": true },
+        "synthetic_only": { "const": true },
+        "no_tools": { "const": true },
+        "no_real_connectors": { "const": true },
+        "no_external_actions": { "const": true },
+        "no_crm_writes": { "const": true },
+        "no_contact": { "const": true },
+        "no_a3": { "const": true },
+        "provider_credit_cap_usd": { "const": 0.06 },
+        "kill_switch_remains_active": { "const": true },
+        "local_persistence_authorized": { "const": true },
+        "sealed_transfer_authorized": { "const": true },
+        "exact_execution_once_authorized": { "const": true },
+        "no_retry_on_uncertainty": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

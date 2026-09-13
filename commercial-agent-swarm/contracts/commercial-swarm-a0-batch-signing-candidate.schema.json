@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control.alam.cl/schemas/commercial-swarm-a0-batch-signing-candidate.schema.json",
+  "title": "Commercial Swarm A0 Batch Signing Candidate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "type", "status", "run_id", "plan_sha256",
+    "compiled_plan_sha256", "batch_id", "batch_sha256", "test_case",
+    "snapshot_sha256", "authority", "limits", "guardrails",
+    "required_authorization_text", "required_authorization_sha256",
+    "expires_at", "candidate_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "type": { "const": "commercial_swarm_a0_batch_signing_candidate/v1" },
+    "status": { "const": "authorization_required" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "plan_sha256": { "$ref": "#/$defs/sha256" },
+    "compiled_plan_sha256": { "$ref": "#/$defs/sha256" },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(?:0[1-9]|1[0-6])$"
+    },
+    "batch_sha256": { "$ref": "#/$defs/sha256" },
+    "test_case": { "type": "string", "pattern": "^T(?:0[1-9]|1[0-6])$" },
+    "snapshot_sha256": { "$ref": "#/$defs/sha256" },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issuer", "audience", "key_id", "algorithm", "public_key_sha256"],
+      "properties": {
+        "issuer": { "const": "codex-auditor" },
+        "audience": { "const": "proptimiza-a0-batch-admission" },
+        "key_id": { "const": "codex-a0-ed25519-v1" },
+        "algorithm": { "const": "Ed25519" },
+        "public_key_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_model_calls", "maximum_tokens", "maximum_provider_credit_spend_usd", "maximum_attempts_per_task"],
+      "properties": {
+        "maximum_model_calls": { "const": 6 },
+        "maximum_tokens": { "const": 24576 },
+        "maximum_provider_credit_spend_usd": { "const": 0.06 },
+        "maximum_attempts_per_task": { "const": 1 }
+      }
+    },
+    "guardrails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["autonomy_level", "synthetic_only", "approved_tools", "real_connectors_allowed", "external_actions_allowed", "crm_writes_allowed", "contact_allowed", "a3_allowed", "kill_switch_must_remain_active"],
+      "properties": {
+        "autonomy_level": { "const": "A0" },
+        "synthetic_only": { "const": true },
+        "approved_tools": { "type": "array", "maxItems": 0 },
+        "real_connectors_allowed": { "const": false },
+        "external_actions_allowed": { "const": 0 },
+        "crm_writes_allowed": { "const": 0 },
+        "contact_allowed": { "const": false },
+        "a3_allowed": { "const": false },
+        "kill_switch_must_remain_active": { "const": true }
+      }
+    },
+    "required_authorization_text": { "type": "string", "minLength": 256, "maxLength": 4096 },
+    "required_authorization_sha256": { "$ref": "#/$defs/sha256" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "candidate_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}

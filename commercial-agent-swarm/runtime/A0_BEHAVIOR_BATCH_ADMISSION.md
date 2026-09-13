@@ -7,6 +7,17 @@ dependency-injected `ProtectedA0BehaviorBatchRunner`; this change intentionally 
 command, HTTP route, scheduler, startup wiring, production authorization verifier, or credential
 secret to invoke it.
 
+`a0-batch-sealer-main` is the offline preparation boundary for that invocation. Preview mode
+reconstructs the current 96-fixture/24-profile snapshot and emits one exact six-task candidate.
+Seal mode accepts only a fresh gate for the candidate's displayed authorization text, verifies
+the Ed25519 key pair, and writes a 124-file sealed request atomically. The authorization is
+deliberately honest and single-use: it permits local persistence, sealed transfer, and exactly
+one execution attempt for the named batch, capped at six model calls, 24,576 tokens, and USD
+0.06. It never permits tools, real connectors, CRM writes, contact, A3, or external actions, and
+it forbids retry after an uncertain outcome. The sealer itself has no network, database, provider,
+transfer, dispatch, or execution port; the runtime must still perform fresh preflight and consume
+the authorization exactly once.
+
 The compiler accepts the prepared 6 x 16 source plan only together with an exact sealed artifact
 snapshot. The snapshot binds all 96 fixture files and 24 profile files to byte counts, SHA-256
 digests, and opaque `a0-sealed:` handles. Admission requires an injected snapshot verifier to

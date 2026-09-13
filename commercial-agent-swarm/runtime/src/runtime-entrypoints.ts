@@ -54,6 +54,16 @@ export {
   type Ed25519A0BatchAuthorizationVerifierOptions,
 } from './a0-batch-authorization.js'
 export {
+  A0BatchSealingError,
+  prepareA0BatchSigningCandidate,
+  signAuthorizedA0Batch,
+  type A0ArtifactMaterial,
+  type A0BatchSigningCandidate,
+  type A0BatchSigningGate,
+  type A0PreparedBatchSigningCandidate,
+  type A0SignedBatchRequest,
+} from './a0-batch-sealer.js'
+export {
   A0BehaviorOneShotError,
   prepareA0BehaviorOneShotInvocation,
   runA0BehaviorOneShot,
