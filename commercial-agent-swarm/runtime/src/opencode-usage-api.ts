@@ -190,6 +190,7 @@ export class OpenCodeUsageProbe {
     serviceAccountId: string
     missionCommittedUsageValueMicroCents: number
     totalCommittedUsageValueMicroCents: number
+    maximumRunUsageValueMicroCents?: number
     probe: () => Promise<TrustedUsage>
     onPhase?: (phase: UsageExecutionPhase) => void
   }): Promise<{
@@ -206,10 +207,13 @@ export class OpenCodeUsageProbe {
         'OPENCODE_USAGE_PROBE_BUSY',
         'not_started',
       )
+    const maximumRunUsageValueMicroCents =
+      input.maximumRunUsageValueMicroCents ?? MAX_RUN_USAGE_VALUE_MICRO_CENTS
     try {
       assertBudgetAvailable(
         input.missionCommittedUsageValueMicroCents,
         input.totalCommittedUsageValueMicroCents,
+        maximumRunUsageValueMicroCents,
       )
     } catch (error) {
       throw classifyProbeError(error, 'not_started')
@@ -251,7 +255,7 @@ export class OpenCodeUsageProbe {
         reconcileTelemetry(usage, row)
         const run = row.usageValueMicroCents
         const budgetExceeded =
-          run > MAX_RUN_USAGE_VALUE_MICRO_CENTS ||
+          run > maximumRunUsageValueMicroCents ||
           input.missionCommittedUsageValueMicroCents + run >
             MAX_MISSION_USAGE_VALUE_MICRO_CENTS ||
           input.totalCommittedUsageValueMicroCents + run >
@@ -434,19 +438,24 @@ function reconcileTelemetry(usage: TrustedUsage, row: OpenCodeUsageRow): void {
     throw new Error('OPENCODE_USAGE_RECONCILIATION_FAILED')
 }
 
-function assertBudgetAvailable(mission: number, total: number): void {
+function assertBudgetAvailable(
+  mission: number,
+  total: number,
+  maximumRun: number,
+): void {
   if (
     !Number.isSafeInteger(mission) ||
     mission < 0 ||
     !Number.isSafeInteger(total) ||
-    total < 0
+    total < 0 ||
+    !Number.isSafeInteger(maximumRun) ||
+    maximumRun < 1 ||
+    maximumRun > MAX_RUN_USAGE_VALUE_MICRO_CENTS
   )
     throw new Error('OPENCODE_USAGE_VALUE_BUDGET_STATE_INVALID')
   if (
-    mission + MAX_RUN_USAGE_VALUE_MICRO_CENTS >
-      MAX_MISSION_USAGE_VALUE_MICRO_CENTS ||
-    total + MAX_RUN_USAGE_VALUE_MICRO_CENTS >
-      MAX_TOTAL_USAGE_VALUE_MICRO_CENTS
+    mission + maximumRun > MAX_MISSION_USAGE_VALUE_MICRO_CENTS ||
+    total + maximumRun > MAX_TOTAL_USAGE_VALUE_MICRO_CENTS
   )
     throw new Error('OPENCODE_USAGE_VALUE_BUDGET_EXCEEDED')
 }

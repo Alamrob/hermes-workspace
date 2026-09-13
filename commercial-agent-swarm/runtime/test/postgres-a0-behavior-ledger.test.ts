@@ -5,12 +5,36 @@ import {
   PostgresA0BehaviorLedger,
   PostgresA0BehaviorLedgerError,
 } from '../src/postgres-a0-behavior-ledger.js'
-import type { A0UsageRecords } from '../src/a0-behavior-batch-admission.js'
+import type {
+  A0TaskExecutionContract,
+  A0UsageRecords,
+} from '../src/a0-behavior-batch-admission.js'
 
 const RUN = 'a3800000-0000-4380-8380-000000000001'
 const BATCH = `a0:${RUN}:t01`
 const HASH = 'a'.repeat(64)
 const IDEMPOTENCY = `a0:${'b'.repeat(64)}:${HASH}`
+const PROFILES = [
+  'sales-orchestrator',
+  'market-account-intelligence',
+  'contact-data-steward',
+  'qualification-prioritization',
+  'outreach-draft-manager',
+  'commercial-qa-compliance',
+] as const
+
+function taskContract(): A0TaskExecutionContract[] {
+  return PROFILES.map((agent_id, index) => ({
+    sequence: index + 1,
+    task_id: `a3800000-0000-4380-8380-${String(index + 101).padStart(12, '0')}`,
+    fixture_id: `a3800000-0000-4380-8380-${String(index + 201).padStart(12, '0')}`,
+    agent_id,
+    fixture_sha256: String(index + 1).repeat(64).slice(0, 64),
+    maximum_tokens: 4096,
+    maximum_model_calls: 1,
+    reservation_micro_cents: 1_000_000,
+  }))
+}
 
 function usageRecords(
   totalMicroCents: number,
@@ -56,6 +80,8 @@ class FakeDatabase {
       : config.text.includes('acquire_a0_behavior_execution_permit')
         ? { granted: this.value }
         : config.text.includes('reserve_a0_behavior_batch') ||
+          config.text.includes('get_a0_behavior_task_execution_permit') ||
+          config.text.includes('get_a0_behavior_usage_budget_state') ||
           config.text.includes('get_a0_behavior_batch_settlement')
         ? { value: structuredClone(this.value) }
         : { applied: this.value }
@@ -91,9 +117,11 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
     assert.deepEqual(database.calls[0]?.values, [
       [
         'control.acquire_a0_behavior_execution_permit(uuid,text,bigint)',
+        'control.get_a0_behavior_task_execution_permit(uuid,text,bigint,uuid,text,text)',
+        'control.get_a0_behavior_usage_budget_state(uuid,text,bigint)',
         'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
         'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)',
-        'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz)',
+        'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz,jsonb)',
         'control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb)',
       ],
     ])
@@ -140,6 +168,91 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
     )
   })
 
+  it('reads a task-bound renewable lease and exact shared budget state', async () => {
+    const { ledger, database } = create()
+    const task = taskContract()[0]!
+    database.value = {
+      allowed: true,
+      job_id: task.task_id,
+      mission_id: RUN,
+      worker_id: 'a0-manual-runner-1',
+      window_id: 'b3800000-0000-4380-8380-000000000001',
+      epoch_id: 'c3800000-0000-4380-8380-000000000001',
+      budget_version: 1,
+      valid_for_ms: 5_000,
+    }
+    assert.equal(
+      (
+        await ledger.readTaskExecutionPermit({
+          run_id: RUN,
+          batch_id: BATCH,
+          reservation_version: 1,
+          task_id: task.task_id,
+          profile_id: task.agent_id,
+          worker_id: 'a0-manual-runner-1',
+        })
+      ).job_id,
+      task.task_id,
+    )
+    assert.match(
+      database.calls.at(-1)?.text ?? '',
+      /get_a0_behavior_task_execution_permit/,
+    )
+
+    database.value = {
+      total_committed_excluding_batch_micro_cents: 12_000_000,
+    }
+    assert.deepEqual(
+      await ledger.readUsageBudgetState({
+        run_id: RUN,
+        batch_id: BATCH,
+        reservation_version: 1,
+      }),
+      { total_committed_excluding_batch_micro_cents: 12_000_000 },
+    )
+    assert.match(
+      database.calls.at(-1)?.text ?? '',
+      /get_a0_behavior_usage_budget_state/,
+    )
+  })
+
+  it('rejects a task lease with mismatched authority or worker before use', async () => {
+    const { ledger, database } = create()
+    const task = taskContract()[0]!
+    database.value = {
+      allowed: true,
+      job_id: taskContract()[1]!.task_id,
+      mission_id: RUN,
+      worker_id: 'a0-manual-runner-1',
+      window_id: 'b3800000-0000-4380-8380-000000000001',
+      epoch_id: 'c3800000-0000-4380-8380-000000000001',
+      budget_version: 1,
+      valid_for_ms: 5_000,
+    }
+    await assert.rejects(
+      ledger.readTaskExecutionPermit({
+        run_id: RUN,
+        batch_id: BATCH,
+        reservation_version: 1,
+        task_id: task.task_id,
+        profile_id: task.agent_id,
+        worker_id: 'a0-manual-runner-1',
+      }),
+      /A0_LEDGER_TASK_PERMIT_UNCONFIRMED/,
+    )
+    await assert.rejects(
+      ledger.readTaskExecutionPermit({
+        run_id: RUN,
+        batch_id: BATCH,
+        reservation_version: 1,
+        task_id: task.task_id,
+        profile_id: task.agent_id,
+        worker_id: 'wrong-worker',
+      }),
+      /A0_LEDGER_TASK_PERMIT_INPUT_INVALID/,
+    )
+  })
+
   it('reserves and replays only through the fixed reservation function', async () => {
     const { ledger, database } = create()
     const input = {
@@ -149,6 +262,7 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
       batch_sha256: HASH,
       reservation_micro_cents: 6_000_000 as const,
       expires_at: '2026-09-12T12:20:00.000Z',
+      task_contract: taskContract(),
     }
     assert.deepEqual(await ledger.reserve(input), {
       disposition: 'created',
@@ -172,6 +286,7 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
       HASH,
       6_000_000,
       '2026-09-12T12:20:00.000Z',
+      JSON.stringify(taskContract()),
     ])
     assert.match(database.calls[0]?.text ?? '', /reserve_a0_behavior_batch/)
   })
@@ -322,6 +437,7 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
         batch_sha256: HASH,
         reservation_micro_cents: 6_000_000,
         expires_at: '2026-09-12T12:20:00.000Z',
+        task_contract: taskContract(),
       }),
       /A0_LEDGER_RESERVATION_INPUT_INVALID/,
     )
@@ -333,6 +449,7 @@ describe('PostgreSQL A0 behavior ledger capability', () => {
         batch_sha256: HASH,
         reservation_micro_cents: 6_000_000,
         expires_at: {} as string,
+        task_contract: taskContract(),
       }),
       /A0_LEDGER_RESERVATION_INPUT_INVALID/,
     )

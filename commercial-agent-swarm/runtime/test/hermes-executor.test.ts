@@ -18,6 +18,7 @@ import {
   PosixHomeOwnershipPreparer,
   adaptAccountDraftBatch,
   adaptDraftAdmissionBatch,
+  assertExecutionAuthority,
   classifyHermesExit,
   hashProfileSeed,
   parseBoundedCompactModelJson,
@@ -36,6 +37,64 @@ const traceId = '223e4567-e89b-42d3-a456-426614174000'
 const assignmentId = '323e4567-e89b-42d3-a456-426614174000'
 const profileId = 'market-account-intelligence' as const
 const rootLinux = process.platform === 'linux' && process.getuid?.() === 0
+
+describe('A0 executor authority', () => {
+  it('accepts only the exact opaque handle and internal tool-free policy', () => {
+    const a0: ExecuteInput = {
+      ...input(),
+      provider_credential_handle:
+        'a0-credential:executor-managed-opencode-go-v1',
+      execution_policy: {
+        autonomy_level: 'A0',
+        allowed_actions: ['analysis.internal'],
+        approved_channels: ['internal'],
+        approved_tools: [],
+      },
+      reservation: {
+        maximum_tokens: 4096,
+        maximum_api_calls: 1,
+        budget_reservation: { currency: 'USD', amount: 0.01 },
+      },
+    }
+    assert.doesNotThrow(() => assertExecutionAuthority(a0, false))
+    for (const changed of [
+      { ...a0, provider_credential_handle: undefined },
+      {
+        ...a0,
+        execution_policy: {
+          ...a0.execution_policy,
+          approved_tools: ['hermes.analysis'],
+        },
+      },
+      {
+        ...a0,
+        execution_policy: {
+          ...a0.execution_policy,
+          approved_channels: ['internal', 'public_web'],
+        },
+      },
+    ])
+      assert.throws(
+        () => assertExecutionAuthority(changed as ExecuteInput, false),
+        /EXECUTION_TOOL_POLICY_DENIED/,
+      )
+  })
+
+  it('rejects an A0-only credential handle on non-A0 work', () => {
+    assert.throws(
+      () =>
+        assertExecutionAuthority(
+          {
+            ...input(),
+            provider_credential_handle:
+              'a0-credential:executor-managed-opencode-go-v1',
+          },
+          true,
+        ),
+      /EXECUTION_TOOL_POLICY_DENIED/,
+    )
+  })
+})
 
 describe('strict model JSON parser', () => {
   it('accepts raw JSON, one whole JSON fence and bounded brace-free transport text', () => {
@@ -334,6 +393,7 @@ async function setup(
   options: {
     productionPricing?: boolean
     externalResearchEnabled?: boolean
+    a0Seed?: boolean
   } = {},
 ) {
   const root = join(tmpdir(), `executor-test-${crypto.randomUUID()}`)
@@ -341,7 +401,9 @@ async function setup(
   await mkdir(join(seed, 'profiles', profileId), { recursive: true })
   await writeFile(
     join(seed, 'profiles', profileId, 'config.yaml'),
-    'model:\n  default: deepseek-v4-flash\n  provider: opencode-go\n  max_tokens: 50\nagent:\n  max_turns: 2\n',
+    options.a0Seed
+      ? 'model:\n  default: deepseek-v4-flash\n  provider: opencode-go\n  max_tokens: 4096\nmemory:\n  memory_enabled: false\n  user_profile_enabled: false\nagent:\n  max_turns: 1\ntoolsets:\n  - no_mcp\nplatform_toolsets:\n  cli:\n    - no_mcp\nmcp_servers: {}\n'
+      : 'model:\n  default: deepseek-v4-flash\n  provider: opencode-go\n  max_tokens: 50\nagent:\n  max_turns: 2\n',
   )
   const keyFile = join(root, 'custom-api-key')
   await writeFile(keyFile, 'llm-only-secret\n')
@@ -381,6 +443,34 @@ async function setup(
 }
 
 describe('isolated Hermes executor', () => {
+  it('runs an exact A0 request only with a one-turn no-MCP seed', async () => {
+    const state = await setup({ a0Seed: true, externalResearchEnabled: false })
+    const request: ExecuteInput = {
+      ...input('{"synthetic":true}'),
+      provider_credential_handle:
+        'a0-credential:executor-managed-opencode-go-v1',
+      execution_policy: {
+        autonomy_level: 'A0',
+        allowed_actions: ['analysis.internal'],
+        approved_channels: ['internal'],
+        approved_tools: [],
+      },
+      reservation: {
+        maximum_tokens: 4096,
+        maximum_api_calls: 1,
+        budget_reservation: { currency: 'USD', amount: 0.01 },
+      },
+    }
+    try {
+      const result = await state.executor.execute(request)
+      assert.equal(result.agent_result.status, 'completed')
+      assert.equal(state.runner.invocations.length, 1)
+      assert.equal(state.runner.invocations[0]?.args.includes('--usage-file'), true)
+    } finally {
+      await rm(state.root, { recursive: true, force: true })
+    }
+  })
+
   it('cancellation in final home cleanup rejects model success and preserves validated usage',async()=>{
     const state=await setup(),controller=new AbortController()
     state.ownership.reclaim=async path=>{if(path.includes('hermes-home-'))controller.abort()}

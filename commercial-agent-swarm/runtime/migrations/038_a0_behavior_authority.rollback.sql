@@ -77,14 +77,18 @@ FROM PUBLIC,commercial_runtime,commercial_safety_operator,commercial_a1_supervis
 GRANT EXECUTE ON FUNCTION control.stage_dispatch_settlement(uuid,text,jsonb,text,bigint,text,text,bigint,bigint,integer)
 TO commercial_runtime;
 
-REVOKE ALL ON FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
+REVOKE ALL ON FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz,jsonb),
   control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
+  control.get_a0_behavior_task_execution_permit(uuid,text,bigint,uuid,text,text),
+  control.get_a0_behavior_usage_budget_state(uuid,text,bigint),
   control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
   control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)
 FROM commercial_a0_behavior_ledger;
-DROP FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
+DROP FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz,jsonb),
   control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
+  control.get_a0_behavior_task_execution_permit(uuid,text,bigint,uuid,text,text),
+  control.get_a0_behavior_usage_budget_state(uuid,text,bigint),
   control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
   control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb),

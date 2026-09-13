@@ -3,7 +3,12 @@ import type {
   A0BehaviorLedgerPort,
   A0ReserveResult,
   A0SettlementLookupResult,
+  A0TaskExecutionContract,
 } from './a0-behavior-batch-admission.js'
+import {
+  validateExecutionPermit,
+  type ExecutionPermit,
+} from './execution-lease.js'
 
 export interface A0BehaviorLedgerDatabasePort {
   query<T extends QueryResultRow>(config: QueryConfig): Promise<QueryResult<T>>
@@ -20,9 +25,11 @@ const EXPECTED_DATABASE = 'proptimiza_commercial_authority'
 const EXPECTED_DATABASE_OWNER = 'proptimiza_commercial_authority_owner'
 const capabilityFunctions = [
   'control.acquire_a0_behavior_execution_permit(uuid,text,bigint)',
+  'control.get_a0_behavior_task_execution_permit(uuid,text,bigint,uuid,text,text)',
+  'control.get_a0_behavior_usage_budget_state(uuid,text,bigint)',
   'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
   'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)',
-  'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz)',
+  'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz,jsonb)',
   'control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb)',
 ] as const
 const UUID =
@@ -152,7 +159,8 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
     validateReservation(input)
     const row = await this.one<{ value: unknown }>(
       `SELECT control.reserve_a0_behavior_batch(
-        $1::text,$2::uuid,$3::text,$4::text,$5::bigint,$6::timestamptz) AS value`,
+        $1::text,$2::uuid,$3::text,$4::text,$5::bigint,$6::timestamptz,
+        $7::jsonb) AS value`,
       [
         input.idempotency_key,
         input.run_id,
@@ -160,10 +168,86 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
         input.batch_sha256,
         input.reservation_micro_cents,
         input.expires_at,
+        JSON.stringify(input.task_contract),
       ],
       'A0_LEDGER_RESERVATION_UNCONFIRMED',
     )
     return validateReserveResult(row.value)
+  }
+
+  async readTaskExecutionPermit(input: {
+    run_id: string
+    batch_id: string
+    reservation_version: number
+    task_id: string
+    profile_id: string
+    worker_id: string
+  }): Promise<ExecutionPermit> {
+    validateTaskPermit(input)
+    const row = await this.one<{ value: unknown }>(
+      `SELECT control.get_a0_behavior_task_execution_permit(
+        $1::uuid,$2::text,$3::bigint,$4::uuid,$5::text,$6::text) AS value`,
+      [
+        input.run_id,
+        input.batch_id,
+        input.reservation_version,
+        input.task_id,
+        input.profile_id,
+        input.worker_id,
+      ],
+      'A0_LEDGER_TASK_PERMIT_UNCONFIRMED',
+    )
+    let permit: ExecutionPermit
+    try {
+      permit = validateExecutionPermit(row.value)
+    } catch {
+      throw new PostgresA0BehaviorLedgerError(
+        'A0_LEDGER_TASK_PERMIT_UNCONFIRMED',
+      )
+    }
+    if (
+      permit.job_id !== input.task_id ||
+      permit.mission_id !== input.run_id ||
+      permit.worker_id !== input.worker_id ||
+      permit.budget_version !== input.reservation_version
+    )
+      throw new PostgresA0BehaviorLedgerError(
+        'A0_LEDGER_TASK_PERMIT_UNCONFIRMED',
+      )
+    return permit
+  }
+
+  async readUsageBudgetState(input: {
+    run_id: string
+    batch_id: string
+    reservation_version: number
+  }): Promise<{
+    total_committed_excluding_batch_micro_cents: number
+  }> {
+    validatePermit(input)
+    const row = await this.one<{ value: unknown }>(
+      `SELECT control.get_a0_behavior_usage_budget_state(
+        $1::uuid,$2::text,$3::bigint) AS value`,
+      [input.run_id, input.batch_id, input.reservation_version],
+      'A0_LEDGER_USAGE_BUDGET_STATE_UNCONFIRMED',
+    )
+    const value = row.value
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      Object.keys(value as Record<string, unknown>).length !== 1
+    )
+      throw new PostgresA0BehaviorLedgerError(
+        'A0_LEDGER_USAGE_BUDGET_STATE_UNCONFIRMED',
+      )
+    const total = (value as Record<string, unknown>)
+      .total_committed_excluding_batch_micro_cents
+    if (!Number.isSafeInteger(total) || Number(total) < 0)
+      throw new PostgresA0BehaviorLedgerError(
+        'A0_LEDGER_USAGE_BUDGET_STATE_UNCONFIRMED',
+      )
+    return { total_committed_excluding_batch_micro_cents: Number(total) }
   }
 
   async acquireExecutionPermit(
@@ -268,11 +352,46 @@ function validateReservation(
       `a0:${input.idempotency_key.split(':')[1]}:${input.batch_sha256}` ||
     !/^a0:[a-f0-9]{64}:[a-f0-9]{64}$/.test(input.idempotency_key) ||
     input.reservation_micro_cents !== 6_000_000 ||
-    !canonicalIso(input.expires_at)
+    !canonicalIso(input.expires_at) ||
+    !validTaskContract(input.task_contract)
   )
     throw new PostgresA0BehaviorLedgerError(
       'A0_LEDGER_RESERVATION_INPUT_INVALID',
     )
+}
+
+function validTaskContract(value: unknown): value is A0TaskExecutionContract[] {
+  if (!Array.isArray(value) || value.length !== 6 || Object.keys(value).length !== 6)
+    return false
+  const ids = new Set<string>()
+  const profiles = [
+    'sales-orchestrator',
+    'market-account-intelligence',
+    'contact-data-steward',
+    'qualification-prioritization',
+    'outreach-draft-manager',
+    'commercial-qa-compliance',
+  ]
+  return value.every((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return false
+    const row = item as Record<string, unknown>
+    if (
+      Object.keys(row).sort().join(',') !==
+        'agent_id,fixture_id,fixture_sha256,maximum_model_calls,maximum_tokens,reservation_micro_cents,sequence,task_id' ||
+      row.sequence !== index + 1 ||
+      !UUID.test(String(row.task_id)) ||
+      ids.has(String(row.task_id)) ||
+      !UUID.test(String(row.fixture_id)) ||
+      row.agent_id !== profiles[index] ||
+      !SHA256.test(String(row.fixture_sha256)) ||
+      row.maximum_tokens !== 4096 ||
+      row.maximum_model_calls !== 1 ||
+      row.reservation_micro_cents !== 1_000_000
+    )
+      return false
+    ids.add(String(row.task_id))
+    return true
+  })
 }
 
 function canonicalIso(value: unknown): value is string {
@@ -354,6 +473,32 @@ function validatePermit(
   )
     throw new PostgresA0BehaviorLedgerError(
       'A0_LEDGER_EXECUTION_PERMIT_INPUT_INVALID',
+    )
+}
+
+function validateTaskPermit(input: {
+  run_id: string
+  batch_id: string
+  reservation_version: number
+  task_id: string
+  profile_id: string
+  worker_id: string
+}): void {
+  validatePermit(input)
+  if (
+    !UUID.test(input.task_id) ||
+    ![
+      'sales-orchestrator',
+      'market-account-intelligence',
+      'contact-data-steward',
+      'qualification-prioritization',
+      'outreach-draft-manager',
+      'commercial-qa-compliance',
+    ].includes(input.profile_id) ||
+    input.worker_id !== 'a0-manual-runner-1'
+  )
+    throw new PostgresA0BehaviorLedgerError(
+      'A0_LEDGER_TASK_PERMIT_INPUT_INVALID',
     )
 }
 

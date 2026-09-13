@@ -52,7 +52,7 @@ describe('A0 behavior authority migration', () => {
     const grants = sql.slice(sql.lastIndexOf('GRANT EXECUTE ON FUNCTION'))
     assert.match(
       grants,
-      /reserve_a0_behavior_batch\(text,uuid,text,text,bigint,timestamptz\)/,
+      /reserve_a0_behavior_batch\(text,uuid,text,text,bigint,timestamptz,jsonb\)/,
     )
     assert.match(
       grants,

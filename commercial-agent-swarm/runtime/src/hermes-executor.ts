@@ -287,6 +287,7 @@ export class HermesExecutor implements ExecutorPort {
       this.options.expectedSeedSha256,
       input.profile_id,
       input.reservation,
+      input.execution_policy,
     )
     const customApiKey = await (
       this.options.readCustomApiKey ?? readGroupSecretFile
@@ -1206,8 +1207,23 @@ export function assertExecutionAuthority(
   input: ExecuteInput,
   externalResearchEnabled: boolean,
 ): void {
-  const capability = EXECUTION_CAPABILITIES[input.profile_id]
   const policy = input.execution_policy
+  if (policy.autonomy_level === 'A0') {
+    if (
+      input.provider_credential_handle !==
+        'a0-credential:executor-managed-opencode-go-v1' ||
+      policy.allowed_actions.length !== 1 ||
+      policy.allowed_actions[0] !== 'analysis.internal' ||
+      policy.approved_channels.length !== 1 ||
+      policy.approved_channels[0] !== 'internal' ||
+      policy.approved_tools.length !== 0
+    )
+      throw new Error('EXECUTION_TOOL_POLICY_DENIED')
+    return
+  }
+  if (input.provider_credential_handle !== undefined)
+    throw new Error('EXECUTION_TOOL_POLICY_DENIED')
+  const capability = EXECUTION_CAPABILITIES[input.profile_id]
   const tools = new Set(policy.approved_tools)
   const actions = new Set(policy.allowed_actions)
   const channels = new Set(policy.approved_channels)
@@ -1556,6 +1572,7 @@ async function assertSecureSeed(
   expectedHash: string,
   profile: ProfileId,
   reservation: ExecuteInput['reservation'],
+  policy: ExecuteInput['execution_policy'],
 ): Promise<void> {
   if (!isAbsolute(path)) throw new Error('PROFILE_SEED_ABSOLUTE_REQUIRED')
   await validateSeedTree(path, ownerUid)
@@ -1587,6 +1604,31 @@ async function assertSecureSeed(
     reservation.maximum_api_calls < Number(maxTurns)
   )
     throw new Error('PROFILE_BUDGET_CEILING_MISMATCH')
+  if (policy.autonomy_level === 'A0') {
+    const memory = record(parsed.memory) ? parsed.memory : null
+    const platformToolsets = record(parsed.platform_toolsets)
+      ? parsed.platform_toolsets
+      : null
+    if (
+      maxTokens !== 4096 ||
+      maxTurns !== 1 ||
+      reservation.maximum_tokens !== 4096 ||
+      reservation.maximum_api_calls !== 1 ||
+      !Array.isArray(parsed.toolsets) ||
+      parsed.toolsets.length !== 1 ||
+      parsed.toolsets[0] !== 'no_mcp' ||
+      !platformToolsets ||
+      !Array.isArray(platformToolsets.cli) ||
+      platformToolsets.cli.length !== 1 ||
+      platformToolsets.cli[0] !== 'no_mcp' ||
+      !record(parsed.mcp_servers) ||
+      Object.keys(parsed.mcp_servers).length !== 0 ||
+      !memory ||
+      memory.memory_enabled !== false ||
+      memory.user_profile_enabled !== false
+    )
+      throw new Error('A0_PROFILE_MANIFEST_MISMATCH')
+  }
 }
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)

@@ -301,6 +301,51 @@ describe('read-only OpenCode Usage Export gate', () => {
     assert.equal(MAX_TOTAL_USAGE_VALUE_MICRO_CENTS, 1_000_000_000)
   })
 
+  it('uses an exact smaller per-call reservation for A0 without weakening global ceilings', async () => {
+    let exports = 0
+    let probes = 0
+    const gate = new OpenCodeUsageProbe({
+      now: () => new Date('2026-08-16T12:05:00.000Z'),
+      client: new OpenCodeUsageExportClient({
+        readToken: async () => 'synthetic',
+        reader: {
+          getCsvExport: async () =>
+            ++exports === 1
+              ? BASELINE
+              : AFTER.replace(',1234567,', ',500000,'),
+        },
+      }),
+    })
+    const result = await gate.measure({
+      serviceAccountId: 'svc-12345678',
+      missionCommittedUsageValueMicroCents: 0,
+      totalCommittedUsageValueMicroCents: 999_000_000,
+      maximumRunUsageValueMicroCents: 1_000_000,
+      probe: async () => {
+        probes += 1
+        return localUsage
+      },
+    })
+    assert.equal(result.runUsageValueMicroCents, 500_000)
+    assert.equal(result.budgetExceeded, undefined)
+    assert.equal(probes, 1)
+    assert.equal(exports, 2)
+
+    await assert.rejects(
+      gate.measure({
+        serviceAccountId: 'svc-12345678',
+        missionCommittedUsageValueMicroCents: 0,
+        totalCommittedUsageValueMicroCents: 0,
+        maximumRunUsageValueMicroCents:
+          MAX_RUN_USAGE_VALUE_MICRO_CENTS + 1,
+        probe: async () => localUsage,
+      }),
+      (error) =>
+        error instanceof OpenCodeUsageProbeError &&
+        error.executionState === 'not_started',
+    )
+  })
+
   it('preserves an unequivocally reconciled overcharge without allowing another execution', async () => {
     let exports = 0, probes = 0
     const gate = new OpenCodeUsageProbe({

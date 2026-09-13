@@ -23,6 +23,7 @@ export interface ExecuteInput {
   trace_id: string
   assignment_id: string
   profile_id: ProfileId
+  provider_credential_handle?: string
   execution_timeout_ms: number
   instruction: string
   evidence: { trust: 'untrusted_data'; content: string }
@@ -172,7 +173,7 @@ type KnownCostSource = Exclude<HermesCostSource, 'none'>
 export function validateExecuteRequest(value: unknown): ExecuteRequest {
   if (
     !isRecord(value) ||
-    !onlyKeys(value, [
+    !onlyKeysWithOptional(value, [
       'request_id',
       'type',
       'mission_id',
@@ -184,7 +185,7 @@ export function validateExecuteRequest(value: unknown): ExecuteRequest {
       'evidence',
       'execution_policy',
       'reservation',
-    ])
+    ], ['provider_credential_handle'])
   )
     invalid('INVALID_EXECUTOR_REQUEST')
   const evidence = value.evidence
@@ -217,6 +218,11 @@ export function validateExecuteRequest(value: unknown): ExecuteRequest {
     !UUID.test(String(value.trace_id)) ||
     !UUID.test(String(value.assignment_id)) ||
     !ACTIVE_PROFILES.includes(value.profile_id as ProfileId) ||
+    (value.provider_credential_handle !== undefined &&
+      (typeof value.provider_credential_handle !== 'string' ||
+        !/^a0-credential:[A-Za-z0-9._-]{16,200}$/.test(
+          value.provider_credential_handle,
+        ))) ||
     !Number.isSafeInteger(value.execution_timeout_ms) ||
     Number(value.execution_timeout_ms) < 1 ||
     Number(value.execution_timeout_ms) > 3_600_000 ||
@@ -1108,6 +1114,17 @@ function onlyKeys(
   return (
     Object.keys(value).length === keys.length &&
     keys.every((key) => Object.hasOwn(value, key))
+  )
+}
+function onlyKeysWithOptional(
+  value: Record<string, unknown>,
+  required: string[],
+  optional: string[],
+): boolean {
+  const actual = Object.keys(value)
+  return (
+    required.every((key) => Object.hasOwn(value, key)) &&
+    actual.every((key) => required.includes(key) || optional.includes(key))
   )
 }
 function validReservation(value: Record<string, unknown>): boolean {

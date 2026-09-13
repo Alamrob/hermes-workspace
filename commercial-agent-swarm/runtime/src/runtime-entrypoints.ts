@@ -40,6 +40,13 @@ export {
   A0_SEALED_ARTIFACT_ROOT,
   PosixA0ArtifactSnapshotVerifier,
 } from './posix-a0-artifact-snapshot-verifier.js'
+export {
+  A0_EXECUTOR_CREDENTIAL_HANDLE,
+  A0_MANUAL_RUNNER_WORKER_ID,
+  PosixA0FixtureReader,
+  ProtectedA0BehaviorBatchRunner,
+  StaticA0ExecutorCredentialProvider,
+} from './a0-behavior-manual-runner.js'
 
 export interface BrokerDispatcherDependencies {
   queue?: DispatchQueuePort

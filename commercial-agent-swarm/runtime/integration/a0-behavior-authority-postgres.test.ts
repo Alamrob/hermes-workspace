@@ -20,6 +20,7 @@ integration('PostgreSQL A0 behavior authority', () => {
       const source = 'a'.repeat(64)
       const batch = 'b'.repeat(64)
       const idempotency = `a0:${source}:${batch}`
+      const taskContract = buildTaskContract()
       const usageRecords = [
         { usage_record_id: 'usage-late-known-6', usage_value_micro_cents: 1 },
         { usage_record_id: 'usage-late-known-1', usage_value_micro_cents: 4_999_995 },
@@ -34,8 +35,9 @@ integration('PostgreSQL A0 behavior authority', () => {
         await client.query('SET ROLE commercial_a0_behavior_ledger')
         const reserved = await client.query(
           `SELECT control.reserve_a0_behavior_batch(
-            $1::text,$2::uuid,$3::text,$4::text,6000000,$5::timestamptz) AS value`,
-          [idempotency, runId, batchId, batch, expiresAt],
+            $1::text,$2::uuid,$3::text,$4::text,6000000,$5::timestamptz,
+            $6::jsonb) AS value`,
+          [idempotency, runId, batchId, batch, expiresAt, JSON.stringify(taskContract)],
         )
         assert.deepEqual(reserved.rows[0].value, {
           disposition: 'created',
@@ -75,8 +77,9 @@ integration('PostgreSQL A0 behavior authority', () => {
         })
         const replay = await client.query(
           `SELECT control.reserve_a0_behavior_batch(
-            $1::text,$2::uuid,$3::text,$4::text,6000000,$5::timestamptz) AS value`,
-          [idempotency, runId, batchId, batch, expiresAt],
+            $1::text,$2::uuid,$3::text,$4::text,6000000,$5::timestamptz,
+            $6::jsonb) AS value`,
+          [idempotency, runId, batchId, batch, expiresAt, JSON.stringify(taskContract)],
         )
         assert.deepEqual(replay.rows[0].value, {
           disposition: 'replayed',
@@ -145,6 +148,7 @@ integration('PostgreSQL A0 behavior authority', () => {
         { usage_record_id: 'receipt-z-conflict', usage_value_micro_cents: 1 },
       ]
       const client = await pool.connect()
+      const taskContract = buildTaskContract()
       try {
         await client.query('SET ROLE commercial_a0_behavior_ledger')
         const reserveAndPermit = async (
@@ -156,8 +160,8 @@ integration('PostgreSQL A0 behavior authority', () => {
           const reserved = await client.query(
             `SELECT control.reserve_a0_behavior_batch(
               $1::text,$2::uuid,$3::text,$4::text,6000000,
-              clock_timestamp()+interval '5 minutes') AS value`,
-            [idempotency, runId, batchId, batchHash],
+              clock_timestamp()+interval '5 minutes',$5::jsonb) AS value`,
+            [idempotency, runId, batchId, batchHash, JSON.stringify(taskContract)],
           )
           assert.equal(reserved.rows[0].value.disposition, 'created')
           const permit = await client.query(
@@ -208,6 +212,28 @@ integration('PostgreSQL A0 behavior authority', () => {
     }
   })
 })
+
+const A0_PROFILES = [
+  'sales-orchestrator',
+  'market-account-intelligence',
+  'contact-data-steward',
+  'qualification-prioritization',
+  'outreach-draft-manager',
+  'commercial-qa-compliance',
+] as const
+
+function buildTaskContract() {
+  return A0_PROFILES.map((agentId, index) => ({
+    sequence: index + 1,
+    task_id: randomUUID(),
+    fixture_id: randomUUID(),
+    agent_id: agentId,
+    fixture_sha256: String(index + 1).repeat(64),
+    maximum_tokens: 4096,
+    maximum_model_calls: 1,
+    reservation_micro_cents: 1_000_000,
+  }))
+}
 
 async function databaseFixture(prefix: string) {
   const admin = new Pool({ connectionString: ADMIN })

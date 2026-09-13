@@ -179,6 +179,7 @@ export interface A0BehaviorLedgerPort {
     batch_sha256: string
     reservation_micro_cents: 6_000_000
     expires_at: string
+    task_contract: A0TaskExecutionContract[]
   }): Promise<A0ReserveResult>
   acquireExecutionPermit(input: {
     run_id: string
@@ -210,6 +211,17 @@ export interface A0BehaviorLedgerPort {
 export interface A0UsageRecord {
   usage_record_id: string
   usage_value_micro_cents: number
+}
+
+export interface A0TaskExecutionContract {
+  sequence: number
+  task_id: string
+  fixture_id: string
+  agent_id: (typeof A0_BEHAVIOR_PROFILES)[number]
+  fixture_sha256: string
+  maximum_tokens: 4096
+  maximum_model_calls: 1
+  reservation_micro_cents: 1_000_000
 }
 
 export type A0UsageRecords = readonly [
@@ -252,7 +264,9 @@ export interface A0BatchRunnerPort {
     real_connectors_enabled: false
   }
   spawn(input: {
+    run_id: string
     batch: A0CompiledBatch
+    reservation_version: number
     execution_contract: A0ExecutionContract
     sealed_artifact_snapshot: A0SealedArtifactSnapshot
     credential: { opaque_handle: string }
@@ -615,6 +629,7 @@ export async function admitA0BehaviorBatch(input: {
             Date.parse(admitted.compiled.expires_at),
           ),
         ).toISOString(),
+        task_contract: taskExecutionContract(batch),
       }),
       'A0_LEDGER_RESULT_INVALID',
     ),
@@ -694,7 +709,9 @@ export async function admitA0BehaviorBatch(input: {
   try {
     outcome = immutableJsonSnapshot(
       await spawn({
+        run_id: admitted.compiled.run_id,
         batch,
+        reservation_version: reservation.version,
         execution_contract: executionContract,
         sealed_artifact_snapshot: sealedArtifactSnapshot,
         credential,
@@ -770,6 +787,21 @@ export async function admitA0BehaviorBatch(input: {
     batch_id: batch.batch_id,
     reservation_version: reservation.version,
   }
+}
+
+export function taskExecutionContract(
+  batch: A0CompiledBatch,
+): A0TaskExecutionContract[] {
+  return batch.tasks.map((task, index) => ({
+    sequence: index + 1,
+    task_id: task.task_id,
+    fixture_id: task.fixture_id,
+    agent_id: task.agent_id,
+    fixture_sha256: task.fixture_sha256,
+    maximum_tokens: 4096 as const,
+    maximum_model_calls: 1 as const,
+    reservation_micro_cents: 1_000_000 as const,
+  }))
 }
 
 function validateSettlementLookupResult(
@@ -1092,7 +1124,7 @@ function validateSealedArtifactReference(
   if (
     !Number.isSafeInteger(artifact.bytes) ||
     Number(artifact.bytes) < 1 ||
-    Number(artifact.bytes) > 262_144
+    Number(artifact.bytes) > (kind === 'FIXTURE' ? 131_072 : 262_144)
   )
     fail(`A0_ARTIFACT_${kind}_BYTES_INVALID`)
   if (expectedBytes !== undefined)
@@ -1450,7 +1482,7 @@ function validateCompiledArtifactReference(
   if (
     !Number.isSafeInteger(artifact.bytes) ||
     Number(artifact.bytes) < 1 ||
-    Number(artifact.bytes) > 262_144
+    Number(artifact.bytes) > (kind === 'FIXTURE' ? 131_072 : 262_144)
   )
     fail(`A0_ARTIFACT_${kind}_BYTES_INVALID`)
   return {

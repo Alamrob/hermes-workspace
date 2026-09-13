@@ -2,8 +2,10 @@
 
 `createA0BehaviorBatchAdmission` is an inert, dependency-injected capability exported from
 `src/runtime-entrypoints.ts`. Importing or constructing it does not read credentials, reserve
-credit, start a timer, call a model, or spawn a process. This change intentionally provides no
-production runner, command, HTTP route, scheduler, or startup wiring.
+credit, start a timer, call a model, or spawn a process. The module also exports an inert,
+dependency-injected `ProtectedA0BehaviorBatchRunner`; this change intentionally provides no
+command, HTTP route, scheduler, startup wiring, production authorization verifier, or credential
+secret to invoke it.
 
 The compiler accepts the prepared 6 x 16 source plan only together with an exact sealed artifact
 snapshot. The snapshot binds all 96 fixture files and 24 profile files to byte counts, SHA-256
@@ -26,8 +28,9 @@ outcome is held once for manual reconciliation and is never retried by this capa
 
 `createA0BehaviorAuthorityAdapters` composes the optional production boundaries without enabling
 them. Construction performs no database or filesystem I/O. `PostgresA0BehaviorLedger` exposes
-only five fixed PostgreSQL functions from migration 038 (reserve, execution permit, settle, one
-exact settlement read, and hold) and verifies the exact
+only seven fixed PostgreSQL functions from migration 038 (reserve, batch execution permit,
+task-bound execution permit, shared-budget projection, settle, one exact settlement read, and
+hold) and verifies the exact
 `proptimiza_a0_behavior_ledger_login` function-only principal before use. PostgreSQL cannot deny
 `TEMP` to one role while `PUBLIC` retains it, so the authority is isolated in the exact marked
 `proptimiza_commercial_authority` database. This database contains the complete commercial control
@@ -43,6 +46,20 @@ Authentication secrets remain a deployment-boundary responsibility.
 `PosixA0ArtifactSnapshotVerifier` resolves opaque handles only below
 `/run/proptimiza-a0-sealed`, reusing the root-owned, group-0440, one-link, `O_NOFOLLOW` reader and
 then comparing the exact canonical snapshot bytes and every artifact byte count and SHA-256.
+
+The protected manual runner rechecks the exact profile-bundle digest, obtains a database-bound
+five-second lease for every task, reads each sealed synthetic fixture, and executes the six
+profiles strictly in sequence. Each task is limited to one provider call, 4096 tokens, no tools,
+no connectors, no memory, and 1,000,000 microcents. Usage is measured baseline-to-after for every
+single call; duplicate, missing, oversized, ambiguous, or conflicting receipts produce an unknown
+outcome and no retry. The executor receives only the opaque handle
+`a0-credential:executor-managed-opencode-go-v1`; the actual provider credential remains in the
+executor boundary and is read only after the A0 policy, profile seed, and task lease pass.
+
+Task observations emitted by the optional callback are non-authoritative telemetry. They are not
+durably persisted by this change and therefore cannot satisfy the 96-result promotion gate by
+themselves. A future composition must add a separately reviewed immutable result sink and signed
+authorization verifier before any live A0 batch can be invoked.
 
 The append-only PostgreSQL ledger permits sixteen 6,000,000-microcent reservations per run and a
 96,000,000-microcent run ceiling. It admits at most one active A0 batch globally, excludes A0 and

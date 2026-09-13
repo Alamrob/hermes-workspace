@@ -80,6 +80,10 @@ CREATE TABLE control.a0_behavior_batch_ledger(
     batch_id~*'^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(0[1-9]|1[0-6])$'
   ),
   batch_sha256 text NOT NULL CHECK(batch_sha256~'^[a-f0-9]{64}$'),
+  task_contract jsonb NOT NULL CHECK(
+    jsonb_typeof(task_contract)='array' AND jsonb_array_length(task_contract)=6
+  ),
+  task_contract_sha256 text NOT NULL CHECK(task_contract_sha256~'^[a-f0-9]{64}$'),
   reservation_micro_cents bigint NOT NULL CHECK(reservation_micro_cents=6000000),
   expires_at timestamptz NOT NULL,
   version bigint NOT NULL CHECK(version IN(1,2,3)),
@@ -126,6 +130,8 @@ CREATE TABLE control.a0_behavior_execution_permits(
   batch_id text NOT NULL,
   reservation_version bigint NOT NULL CHECK(reservation_version=1),
   expires_at timestamptz NOT NULL,
+  window_id uuid NOT NULL DEFAULT gen_random_uuid(),
+  epoch_id uuid NOT NULL DEFAULT gen_random_uuid(),
   acquired_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY(run_id,batch_id,reservation_version),
   FOREIGN KEY(run_id,batch_id,reservation_version)
@@ -159,10 +165,12 @@ BEGIN
   LOOP
     INSERT INTO control.a0_behavior_batch_ledger(
       idempotency_key,source_plan_sha256,run_id,batch_id,batch_sha256,
+      task_contract,task_contract_sha256,
       reservation_micro_cents,expires_at,version,state,unknown_reason
     ) VALUES(
       reserved.idempotency_key,reserved.source_plan_sha256,reserved.run_id,
-      reserved.batch_id,reserved.batch_sha256,reserved.reservation_micro_cents,
+      reserved.batch_id,reserved.batch_sha256,reserved.task_contract,
+      reserved.task_contract_sha256,reserved.reservation_micro_cents,
       reserved.expires_at,2,'held_unknown','A0_RESERVATION_EXPIRED_USAGE_UNKNOWN'
     ) ON CONFLICT(run_id,batch_id,version) DO NOTHING;
     IF FOUND THEN
@@ -183,7 +191,7 @@ BEGIN
   RETURN expired_count;
 END $$;
 
-CREATE FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz)
+CREATE FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz,jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE
   source_sha text:=split_part($1,':',2);
@@ -192,13 +200,43 @@ DECLARE
   plan_committed bigint;
   a0_committed bigint;
   a1_committed bigint;
+  task_entry jsonb;
+  task_index integer:=0;
+  task_contract_sha text;
+  expected_profiles text[]:=ARRAY[
+    'sales-orchestrator','market-account-intelligence','contact-data-steward',
+    'qualification-prioritization','outreach-draft-manager','commercial-qa-compliance'
+  ];
 BEGIN
   IF $1!~'^a0:[a-f0-9]{64}:[a-f0-9]{64}$'
     OR $4!~'^[a-f0-9]{64}$' OR split_part($1,':',3) IS DISTINCT FROM $4
     OR $3!~*'^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(0[1-9]|1[0-6])$'
     OR lower($3) NOT LIKE 'a0:'||$2::text||':t%' OR $5<>6000000
     OR $6>clock_timestamp()+interval '30 minutes'
+    OR $7 IS NULL OR jsonb_typeof($7)<>'array' OR jsonb_array_length($7)<>6
   THEN RAISE EXCEPTION 'A0_RESERVATION_INPUT_INVALID'; END IF;
+  FOR task_entry IN SELECT value FROM jsonb_array_elements($7) LOOP
+    task_index:=task_index+1;
+    IF jsonb_typeof(task_entry)<>'object'
+      OR (SELECT count(*) FROM jsonb_object_keys(task_entry))<>8
+      OR NOT task_entry ?& ARRAY[
+        'sequence','task_id','fixture_id','agent_id','fixture_sha256',
+        'maximum_tokens','maximum_model_calls','reservation_micro_cents'
+      ]
+      OR task_entry->>'sequence'<>task_index::text
+      OR task_entry->>'task_id'!~*'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      OR task_entry->>'fixture_id'!~*'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      OR task_entry->>'agent_id'<>expected_profiles[task_index]
+      OR task_entry->>'fixture_sha256'!~'^[a-f0-9]{64}$'
+      OR task_entry->>'maximum_tokens'<>'4096'
+      OR task_entry->>'maximum_model_calls'<>'1'
+      OR task_entry->>'reservation_micro_cents'<>'1000000'
+    THEN RAISE EXCEPTION 'A0_TASK_CONTRACT_INVALID'; END IF;
+  END LOOP;
+  IF (SELECT count(DISTINCT item->>'task_id') FROM jsonb_array_elements($7) item)<>6
+    OR (SELECT count(DISTINCT item->>'fixture_id') FROM jsonb_array_elements($7) item)<>6
+  THEN RAISE EXCEPTION 'A0_TASK_CONTRACT_INVALID'; END IF;
+  task_contract_sha:=encode(sha256(convert_to($7::text,'UTF8')),'hex');
 
   PERFORM guard_id FROM control.kill_switch_guard WHERE guard_id=1 FOR UPDATE;
   SELECT * INTO guard FROM control.usage_budget_control WHERE control_id=1 FOR UPDATE;
@@ -222,6 +260,8 @@ BEGIN
       AND (idempotency_key IS DISTINCT FROM $1 OR run_id IS DISTINCT FROM $2
         OR batch_id IS DISTINCT FROM $3 OR batch_sha256 IS DISTINCT FROM $4
         OR reservation_micro_cents IS DISTINCT FROM $5
+        OR task_contract IS DISTINCT FROM $7
+        OR task_contract_sha256 IS DISTINCT FROM task_contract_sha
         OR expires_at IS DISTINCT FROM $6)
   ) THEN RAISE EXCEPTION 'A0_RESERVATION_IMMUTABLE_CONFLICT'; END IF;
   SELECT * INTO existing FROM control.a0_behavior_batch_ledger
@@ -282,14 +322,66 @@ BEGIN
 
   INSERT INTO control.a0_behavior_batch_ledger(
     idempotency_key,source_plan_sha256,run_id,batch_id,batch_sha256,
-    reservation_micro_cents,expires_at,version,state
-  ) VALUES($1,source_sha,$2,$3,$4,$5,$6,1,'reserved');
+    task_contract,task_contract_sha256,reservation_micro_cents,expires_at,version,state
+  ) VALUES($1,source_sha,$2,$3,$4,$7,task_contract_sha,$5,$6,1,'reserved');
   INSERT INTO control.audit_events(event) VALUES(jsonb_build_object(
     'event','a0_behavior_batch_reserved','run_id',$2,'batch_id',$3,
     'batch_sha256',$4,'reservation_micro_cents',$5,'expires_at',$6,'external_action',false,
     'recorded_at',clock_timestamp()
   ));
   RETURN jsonb_build_object('disposition','created','state','reserved','version',1);
+END $$;
+
+CREATE FUNCTION control.get_a0_behavior_task_execution_permit(uuid,text,bigint,uuid,text,text)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE
+  reserved control.a0_behavior_batch_ledger%ROWTYPE;
+  permit control.a0_behavior_execution_permits%ROWTYPE;
+  task_entry jsonb;
+  remaining_ms bigint;
+BEGIN
+  IF $6<>'a0-manual-runner-1' OR NOT control.acquire_a0_behavior_execution_permit($1,$2,$3)
+  THEN RETURN NULL; END IF;
+  SELECT * INTO reserved FROM control.a0_behavior_batch_ledger
+  WHERE run_id=$1 AND batch_id=$2 AND version=$3;
+  SELECT value INTO task_entry FROM jsonb_array_elements(reserved.task_contract)
+  WHERE value->>'task_id'=$4::text AND value->>'agent_id'=$5;
+  IF task_entry IS NULL THEN RETURN NULL; END IF;
+  SELECT * INTO permit FROM control.a0_behavior_execution_permits
+  WHERE run_id=$1 AND batch_id=$2 AND reservation_version=$3;
+  remaining_ms:=floor(extract(epoch FROM (least(reserved.expires_at,clock_timestamp()+interval '5 seconds')-clock_timestamp()))*1000);
+  IF remaining_ms<1 THEN RETURN NULL; END IF;
+  RETURN jsonb_build_object(
+    'allowed',true,'job_id',$4,'mission_id',$1,'worker_id',$6,
+    'window_id',permit.window_id,'epoch_id',permit.epoch_id,
+    'budget_version',$3,'valid_for_ms',least(5000,remaining_ms)
+  );
+END $$;
+
+CREATE FUNCTION control.get_a0_behavior_usage_budget_state(uuid,text,bigint)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
+DECLARE
+  a0_committed bigint;
+  a1_committed bigint;
+BEGIN
+  IF NOT control.acquire_a0_behavior_execution_permit($1,$2,$3)
+  THEN RETURN NULL; END IF;
+  SELECT coalesce(sum(CASE
+    WHEN latest.state IN('settled','budget_exceeded') THEN latest.usage_value_micro_cents
+    ELSE latest.reservation_micro_cents END),0)::bigint INTO a0_committed
+  FROM (
+    SELECT DISTINCT ON(run_id,batch_id) * FROM control.a0_behavior_batch_ledger
+    WHERE NOT(run_id=$1 AND batch_id=$2)
+    ORDER BY run_id,batch_id,version DESC
+  ) latest;
+  SELECT coalesce(sum(CASE usage_budget_state
+    WHEN 'settled' THEN usage_value_actual_micro_cents
+    WHEN 'reserved' THEN usage_value_reservation_micro_cents
+    WHEN 'held_uncertain' THEN usage_value_reservation_micro_cents ELSE 0 END),0)::bigint
+  INTO a1_committed FROM control.dispatch_jobs;
+  RETURN jsonb_build_object(
+    'total_committed_excluding_batch_micro_cents',a0_committed+a1_committed
+  );
 END $$;
 
 CREATE FUNCTION control.acquire_a0_behavior_execution_permit(uuid,text,bigint)
@@ -306,6 +398,7 @@ BEGIN
   SELECT * INTO guard FROM control.usage_budget_control WHERE control_id=1 FOR UPDATE;
   PERFORM pg_advisory_xact_lock(hashtext('a0:'||$1::text));
   PERFORM control.expire_a0_behavior_reservations();
+  SELECT * INTO guard FROM control.usage_budget_control WHERE control_id=1;
   SELECT * INTO reserved FROM control.a0_behavior_batch_ledger
   WHERE run_id=$1 AND batch_id=$2 AND version=1;
   IF NOT FOUND THEN RETURN false; END IF;
@@ -453,11 +546,13 @@ BEGIN
     THEN 'budget_exceeded' ELSE 'settled' END;
   INSERT INTO control.a0_behavior_batch_ledger(
     idempotency_key,source_plan_sha256,run_id,batch_id,batch_sha256,
+    task_contract,task_contract_sha256,
     reservation_micro_cents,expires_at,version,state,usage_value_micro_cents,
     usage_records,usage_receipt_set_sha256
   ) VALUES(
     reserved.idempotency_key,reserved.source_plan_sha256,reserved.run_id,
-    reserved.batch_id,reserved.batch_sha256,reserved.reservation_micro_cents,
+    reserved.batch_id,reserved.batch_sha256,reserved.task_contract,
+    reserved.task_contract_sha256,reserved.reservation_micro_cents,
     reserved.expires_at,next_version,target,$4,canonical_records,receipt_set_sha256
   );
   INSERT INTO control.audit_events(event) VALUES(jsonb_build_object(
@@ -583,10 +678,12 @@ BEGIN
   END IF;
   INSERT INTO control.a0_behavior_batch_ledger(
     idempotency_key,source_plan_sha256,run_id,batch_id,batch_sha256,
+    task_contract,task_contract_sha256,
     reservation_micro_cents,expires_at,version,state,unknown_reason
   ) VALUES(
     reserved.idempotency_key,reserved.source_plan_sha256,reserved.run_id,
-    reserved.batch_id,reserved.batch_sha256,reserved.reservation_micro_cents,
+    reserved.batch_id,reserved.batch_sha256,reserved.task_contract,
+    reserved.task_contract_sha256,reserved.reservation_micro_cents,
     reserved.expires_at,2,'held_unknown',$4
   );
   INSERT INTO control.audit_events(event) VALUES(jsonb_build_object(
@@ -720,8 +817,10 @@ FROM PUBLIC,commercial_runtime,commercial_work_order_ingestor,commercial_approve
   commercial_safety_operator,commercial_observer,commercial_a1_supervisor,
   commercial_a1_chain_runner,commercial_a0_behavior_ledger;
 REVOKE ALL ON FUNCTION control.expire_a0_behavior_reservations(),
-  control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
+  control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz,jsonb),
   control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
+  control.get_a0_behavior_task_execution_permit(uuid,text,bigint,uuid,text,text),
+  control.get_a0_behavior_usage_budget_state(uuid,text,bigint),
   control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
   control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)
@@ -741,8 +840,10 @@ TO commercial_runtime;
 GRANT EXECUTE ON FUNCTION control.activate_a1_dispatch_execution_window(uuid,uuid,text,text,text,text,timestamptz,timestamptz,timestamptz,uuid,uuid,uuid,text,text,text,text,integer,numeric,text,jsonb,text,text)
 TO commercial_safety_operator;
 GRANT USAGE ON SCHEMA control TO commercial_a0_behavior_ledger;
-GRANT EXECUTE ON FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz),
+GRANT EXECUTE ON FUNCTION control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz,jsonb),
   control.acquire_a0_behavior_execution_permit(uuid,text,bigint),
+  control.get_a0_behavior_task_execution_permit(uuid,text,bigint,uuid,text,text),
+  control.get_a0_behavior_usage_budget_state(uuid,text,bigint),
   control.settle_a0_behavior_batch(uuid,text,bigint,bigint,jsonb),
   control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text),
   control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)
