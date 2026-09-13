@@ -45,6 +45,7 @@ COMMENT ON DATABASE proptimiza_commercial_authority
 IS 'proptimiza:commercial-authority:v1';
 REVOKE ALL ON DATABASE proptimiza_commercial_authority FROM PUBLIC;
 
--- Apply every runtime migration through 038 to this exact database before
--- running provision-a0-behavior-ledger-principal.sql. Authentication secrets
--- and pg_hba rules remain deployment-boundary inputs and are never in Git.
+-- Apply every runtime migration through 039 to this exact database before
+-- provisioning the A0 ledger login with the host-side sealed provisioner.
+-- Authentication secrets and PgBouncer rules remain deployment-boundary
+-- inputs and are never stored in Git.

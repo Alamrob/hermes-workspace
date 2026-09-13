@@ -60,7 +60,7 @@ integration('PostgreSQL A0 principal database isolation', () => {
         'COMMENT ON DATABASE proptimiza_commercial_authority IS NULL',
       )
       await assert.rejects(
-        runPsql(authorityUrl.toString(), provision),
+        runPsql(authorityUrl.toString(), provision, true),
         /A0_AUTHORITY_DATABASE_NOT_DEDICATED/,
       )
       assert.equal(await roleExists(admin, ledgerLogin), false)
@@ -71,7 +71,7 @@ integration('PostgreSQL A0 principal database isolation', () => {
       await admin.query(
         "COMMENT ON DATABASE proptimiza_commercial_authority IS 'proptimiza:commercial-authority:v1'",
       )
-      await runPsql(authorityUrl.toString(), provision)
+      await runPsql(authorityUrl.toString(), provision, true)
 
       const privileges = await authority.query<{
         connect: boolean
@@ -114,7 +114,7 @@ integration('PostgreSQL A0 principal database isolation', () => {
         "COMMENT ON DATABASE proptimiza_commercial_authority IS 'tampered'",
       )
       await assert.rejects(
-        runPsql(authorityUrl.toString(), rollback),
+        runPsql(authorityUrl.toString(), rollback, true),
         /A0_AUTHORITY_DATABASE_NOT_DEDICATED/,
       )
       assert.equal(await roleExists(admin, ledgerLogin), true)
@@ -125,8 +125,8 @@ integration('PostgreSQL A0 principal database isolation', () => {
       await admin.query(
         "COMMENT ON DATABASE proptimiza_commercial_authority IS 'proptimiza:commercial-authority:v1'",
       )
-      await runPsql(authorityUrl.toString(), rollback)
-      await runPsql(authorityUrl.toString(), rollback)
+      await runPsql(authorityUrl.toString(), rollback, true)
+      await runPsql(authorityUrl.toString(), rollback, true)
       const removed = await admin.query<{ present: boolean }>(
         'SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1) AS present',
         [ledgerLogin],
@@ -223,7 +223,11 @@ async function roleExists(admin: Pool, role: string): Promise<boolean> {
   return result.rows[0]?.present === true
 }
 
-async function runPsql(connectionString: string, file: string): Promise<void> {
+async function runPsql(
+  connectionString: string,
+  file: string,
+  allowSecretFreeTestLogin = false,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     execFile(
       PSQL,
@@ -236,7 +240,17 @@ async function runPsql(connectionString: string, file: string): Promise<void> {
         '--file',
         file,
       ],
-      { windowsHide: true, timeout: 30_000 },
+      {
+        windowsHide: true,
+        timeout: 30_000,
+        env: allowSecretFreeTestLogin
+          ? {
+              ...process.env,
+              PGOPTIONS:
+                '-c proptimiza.allow_secret_free_a0_test_login=on',
+            }
+          : process.env,
+      },
       (error) => (error ? reject(error) : resolve()),
     )
   })

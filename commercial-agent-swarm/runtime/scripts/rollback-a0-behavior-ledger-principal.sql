@@ -1,11 +1,14 @@
--- Idempotently removes only the A0 LOGIN from the dedicated authority DB.
--- The database, migrations, capability role, PUBLIC isolation, and every
--- runtime/CRM/n8n/other-database ACL remain untouched.
+-- Integration-test fixture only. Production rollback belongs to the sealed
+-- host provisioner. This file fails closed unless the integration harness opts
+-- in through PGOPTIONS=-c proptimiza.allow_secret_free_a0_test_login=on.
 BEGIN;
 SET LOCAL statement_timeout='5s';
 SET LOCAL lock_timeout='2s';
 
 DO $$ BEGIN
+  IF current_setting('proptimiza.allow_secret_free_a0_test_login',true)<>'on'
+  THEN RAISE EXCEPTION 'A0_SECRET_FREE_TEST_LOGIN_ROLLBACK_FORBIDDEN'; END IF;
+
   IF current_database()<>'proptimiza_commercial_authority'
     OR NOT EXISTS(
       SELECT 1 FROM pg_database database

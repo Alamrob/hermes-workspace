@@ -224,15 +224,30 @@ describe('A0 behavior authority migration', () => {
     assert.match(bootstrap, /shobj_description\(database\.oid,'pg_database'\)/)
     assert.match(bootstrap, /SET statement_timeout='10s'/)
     assert.match(bootstrap, /SET lock_timeout='2s'/)
+    assert.match(bootstrap, /through 039/)
     assert.match(
       sql,
       /CREATE ROLE proptimiza_a0_behavior_ledger_login LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/,
+    )
+    assert.match(sql, /Integration-test fixture only/)
+    assert.match(sql, /A0_SECRET_FREE_TEST_LOGIN_FORBIDDEN/)
+    assert.match(undo, /A0_SECRET_FREE_TEST_LOGIN_ROLLBACK_FORBIDDEN/)
+    assert.match(
+      sql,
+      /current_setting\('proptimiza\.allow_secret_free_a0_test_login',true\)<>'on'/,
+    )
+    assert.match(
+      undo,
+      /current_setting\('proptimiza\.allow_secret_free_a0_test_login',true\)<>'on'/,
     )
     assert.match(sql, /current_database\(\)<>'proptimiza_commercial_authority'/)
     assert.match(sql, /proptimiza:commercial-authority:v1/)
     assert.match(sql, /shobj_description\(database\.oid,'pg_database'\)/)
     assert.match(undo, /shobj_description\(database\.oid,'pg_database'\)/)
-    assert.match(sql, /version='038_a0_behavior_authority'/)
+    assert.match(
+      sql,
+      /version IN\('038_a0_behavior_authority','039_a0_behavior_task_results'\)/,
+    )
     assert.match(
       sql,
       /REVOKE ALL ON DATABASE proptimiza_commercial_authority FROM PUBLIC/,

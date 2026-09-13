@@ -1,11 +1,16 @@
--- Run as a cluster administrator, connected only to the dedicated commercial
--- authority database after migration 038. The LOGIN intentionally has no
--- password in source control; authentication remains a deployment boundary.
+-- Integration-test fixture only. Production provisioning is performed by the
+-- sealed host provisioner, which creates a SCRAM secret in memory, limits the
+-- login to one connection, updates PgBouncer and probes the effective grants.
+-- This secret-free fixture fails closed unless the test harness opts in through
+-- PGOPTIONS=-c proptimiza.allow_secret_free_a0_test_login=on.
 BEGIN;
 SET LOCAL statement_timeout='5s';
 SET LOCAL lock_timeout='2s';
 
 DO $$ BEGIN
+  IF current_setting('proptimiza.allow_secret_free_a0_test_login',true)<>'on'
+  THEN RAISE EXCEPTION 'A0_SECRET_FREE_TEST_LOGIN_FORBIDDEN'; END IF;
+
   IF current_database()<>'proptimiza_commercial_authority'
     OR NOT EXISTS(
       SELECT 1 FROM pg_database database
@@ -14,10 +19,8 @@ DO $$ BEGIN
         AND coalesce(shobj_description(database.oid,'pg_database'),'')
           ='proptimiza:commercial-authority:v1'
     )
-    OR NOT EXISTS(
-      SELECT 1 FROM control.schema_migrations
-      WHERE version='038_a0_behavior_authority'
-    )
+    OR (SELECT count(*) FROM control.schema_migrations
+      WHERE version IN('038_a0_behavior_authority','039_a0_behavior_task_results'))<>2
   THEN RAISE EXCEPTION 'A0_AUTHORITY_DATABASE_NOT_DEDICATED'; END IF;
 END $$;
 
