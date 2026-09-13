@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { TextDecoder } from 'node:util'
-import type { ExecutorPort } from './hermes-executor.js'
+import type { ExecutorEnvelope, ExecutorPort } from './hermes-executor.js'
 import type { ExecutionPermit } from './execution-lease.js'
 import {
   OpenCodeUsageProbeError,
@@ -55,6 +55,7 @@ export interface A0UsageProbePort {
 export interface A0TaskResultObservation {
   run_id: string
   batch_id: string
+  reservation_version: number
   task_id: string
   fixture_id: string
   agent_id: string
@@ -62,12 +63,19 @@ export interface A0TaskResultObservation {
   critical: boolean
   expected_status: string
   actual_status: string
+  agent_result: ExecutorEnvelope['agent_result']
   behavior_passed: boolean
   result_sha256: string
   usage_record_id: string
   usage_value_micro_cents: number
   external_actions: 0
   real_connector_calls: 0
+}
+
+export interface A0TaskResultStorePort {
+  recordTaskResult(
+    observation: A0TaskResultObservation,
+  ): Promise<'inserted' | 'existing'>
 }
 
 export class StaticA0ExecutorCredentialProvider
@@ -137,7 +145,9 @@ export class ProtectedA0BehaviorBatchRunner implements A0BatchRunnerPort {
       executor: ExecutorPort
       usageProbe: A0UsageProbePort
       usageServiceAccountId: string
-      executionAuthority: A0TaskExecutionPermitPort & A0UsageBudgetStatePort
+      executionAuthority: A0TaskExecutionPermitPort &
+        A0UsageBudgetStatePort &
+        A0TaskResultStorePort
       fixtureReader: A0FixtureReaderPort
       executionTimeoutMs: number
       expectedProfileBundleSha256: string
@@ -248,8 +258,12 @@ export class ProtectedA0BehaviorBatchRunner implements A0BatchRunnerPort {
           measured.usage.api_calls !== 1 ||
           measured.budgetExceeded ||
           !USAGE_RECORD_ID.test(measured.usageRecordId) ||
+          records.some(
+            (record) => record.usage_record_id === measured.usageRecordId,
+          ) ||
           !Number.isSafeInteger(measured.runUsageValueMicroCents) ||
-          measured.runUsageValueMicroCents < 1
+          measured.runUsageValueMicroCents < 1 ||
+          measured.runUsageValueMicroCents > 1_000_000
         )
           return { status: 'unknown', reason: 'provider_usage_unknown' }
         const expected = task.expected_status
@@ -263,6 +277,7 @@ export class ProtectedA0BehaviorBatchRunner implements A0BatchRunnerPort {
         const observation: A0TaskResultObservation = {
           run_id: input.run_id,
           batch_id: input.batch.batch_id,
+          reservation_version: input.reservation_version,
           task_id: task.task_id,
           fixture_id: task.fixture_id,
           agent_id: task.agent_id,
@@ -270,6 +285,7 @@ export class ProtectedA0BehaviorBatchRunner implements A0BatchRunnerPort {
           critical: task.critical,
           expected_status: expected,
           actual_status: actual,
+          agent_result: envelope.agent_result,
           behavior_passed: behaviorPassed,
           result_sha256: createHash('sha256')
             .update(`${JSON.stringify(envelope)}\n`)
@@ -279,6 +295,11 @@ export class ProtectedA0BehaviorBatchRunner implements A0BatchRunnerPort {
           external_actions: 0,
           real_connector_calls: 0,
         }
+        const recorded = await this.options.executionAuthority.recordTaskResult(
+          Object.freeze(observation),
+        )
+        if (recorded !== 'inserted' && recorded !== 'existing')
+          return { status: 'unknown', reason: 'process_outcome_unknown' }
         try {
           this.options.onTaskResult?.(Object.freeze(observation))
         } catch {
@@ -289,6 +310,8 @@ export class ProtectedA0BehaviorBatchRunner implements A0BatchRunnerPort {
           usage_value_micro_cents: measured.runUsageValueMicroCents,
         })
         accumulated += measured.runUsageValueMicroCents
+        if (task.critical && !behaviorPassed)
+          return { status: 'unknown', reason: 'critical_behavior_failed' }
         if (!Number.isSafeInteger(accumulated))
           return { status: 'unknown', reason: 'provider_usage_unknown' }
       } catch (error) {

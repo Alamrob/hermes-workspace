@@ -44,6 +44,7 @@ describe('versioned migration runner', () => {
       { version: '036_atomic_dispatch_settlement', sql: 'SELECT 36;' },
       { version: '037_a1_single_approval_parent', sql: 'SELECT 37;' },
       { version: '038_a0_behavior_authority', sql: 'SELECT 38;' },
+      { version: '039_a0_behavior_task_results', sql: 'SELECT 39;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -89,6 +90,7 @@ describe('versioned migration runner', () => {
         '036_atomic_dispatch_settlement',
         '037_a1_single_approval_parent',
         '038_a0_behavior_authority',
+        '039_a0_behavior_task_results',
       ],
     )
     assert.equal(
@@ -97,17 +99,24 @@ describe('versioned migration runner', () => {
     )
   })
 
-  it('loads the complete production migration set through the A0 authority gate', async () => {
+  it('loads the complete production migration set through durable A0 results', async () => {
     const migrations = await loadMigrationSources()
-    assert.equal(migrations.length, 38)
-    assert.equal(migrations.at(-1)?.version, '038_a0_behavior_authority')
+    assert.equal(migrations.length, 39)
+    assert.equal(migrations.at(-1)?.version, '039_a0_behavior_task_results')
     assert.match(
       migrations.find(m=>m.version==='028_ed25519_a1_work_orders')?.sql ?? '',
       /A1_ED25519_SIGNATURE_REQUIRED/,
     )
     assert.match(migrations.find(m=>m.version==='035_a1_window_supervisor')?.sql ?? '', /A1_SUPERVISOR_NOT_LIVE/)
     assert.match(migrations.find(m=>m.version==='036_atomic_dispatch_settlement')?.sql ?? '', /dispatch_settlement_commit/)
-    assert.match(migrations.at(-1)?.sql ?? '', /A0_RESERVATION_IMMUTABLE_CONFLICT/)
+    assert.match(
+      migrations.find(m=>m.version==='038_a0_behavior_authority')?.sql ?? '',
+      /A0_RESERVATION_IMMUTABLE_CONFLICT/,
+    )
+    assert.match(
+      migrations.at(-1)?.sql ?? '',
+      /A0_SETTLEMENT_REQUIRES_DURABLE_TASK_RESULTS/,
+    )
     assert.doesNotMatch(
       migrations.at(-1)?.sql ?? '',
       /control\.enqueue_dispatch|mail\.send|integration\.enqueue_crm_change/i,

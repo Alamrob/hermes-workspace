@@ -40,6 +40,7 @@ const EXPECTED_MIGRATIONS = [
   '036_atomic_dispatch_settlement',
   '037_a1_single_approval_parent',
   '038_a0_behavior_authority',
+  '039_a0_behavior_task_results',
 ] as const
 
 export interface MigrationSource {

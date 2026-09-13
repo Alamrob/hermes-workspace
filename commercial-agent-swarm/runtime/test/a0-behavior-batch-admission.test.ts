@@ -204,6 +204,14 @@ function authorization(batch: A0CompiledBatch) {
     authorization_granted: true as const,
     execution_authorized: true as const,
     provider_credit_spend_authorized: true as const,
+    authority: {
+      issuer: 'codex-auditor',
+      audience: 'proptimiza-a0-batch-admission',
+      key_id: 'codex-a0-ed25519-v1',
+      algorithm: 'Ed25519' as const,
+      signed_at: '2026-09-12T12:05:00.000Z',
+      signature: '0'.repeat(128),
+    },
   }
 }
 

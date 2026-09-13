@@ -47,6 +47,12 @@ export {
   ProtectedA0BehaviorBatchRunner,
   StaticA0ExecutorCredentialProvider,
 } from './a0-behavior-manual-runner.js'
+export {
+  canonicalA0BatchAuthorizationBytes,
+  Ed25519A0BatchAuthorizationVerifier,
+  type A0BatchAuthorizationAuthority,
+  type Ed25519A0BatchAuthorizationVerifierOptions,
+} from './a0-batch-authorization.js'
 
 export interface BrokerDispatcherDependencies {
   queue?: DispatchQueuePort

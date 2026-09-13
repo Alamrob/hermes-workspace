@@ -145,6 +145,7 @@ describe('protected A0 manual behavior runner', () => {
   it('executes exactly six sequential tool-free calls with six unique receipts', async () => {
     const events: string[] = []
     const observations: A0TaskResultObservation[] = []
+    const durableResults: A0TaskResultObservation[] = []
     const executionInputs: Parameters<ExecutorPort['execute']>[0][] = []
     const permitInputs: Array<{ task_id: string; profile_id: string }> = []
     let usageIndex = 0
@@ -183,6 +184,10 @@ describe('protected A0 manual behavior runner', () => {
         },
       },
       executionAuthority: {
+        recordTaskResult: async (value) => {
+          durableResults.push(structuredClone(value))
+          return 'inserted'
+        },
         readUsageBudgetState: async () => ({
           total_committed_excluding_batch_micro_cents: 0,
         }),
@@ -213,6 +218,9 @@ describe('protected A0 manual behavior runner', () => {
     assert.equal(executionInputs.length, 6)
     assert.equal(permitInputs.length, 6)
     assert.equal(observations.length, 6)
+    assert.deepEqual(durableResults, observations)
+    assert.ok(durableResults.every((value) => value.reservation_version === 1))
+    assert.ok(durableResults.every((value) => value.agent_result.status === 'completed'))
     assert.deepEqual(
       executionInputs.map((value) => value.profile_id),
       [...A0_BEHAVIOR_PROFILES],
@@ -239,6 +247,7 @@ describe('protected A0 manual behavior runner', () => {
       usageServiceAccountId: 'svcacct_a0_behavior',
       usageProbe: { measure: async () => { calls += 1; throw new Error('unexpected') } },
       executionAuthority: {
+        recordTaskResult: async () => { calls += 1; return 'inserted' },
         readUsageBudgetState: async () => { calls += 1; return { total_committed_excluding_batch_micro_cents: 0 } },
         readTaskExecutionPermit: async (input) => { calls += 1; return permit(input.task_id) },
       },
@@ -281,6 +290,7 @@ describe('protected A0 manual behavior runner', () => {
         },
       },
       executionAuthority: {
+        recordTaskResult: async () => 'inserted',
         readUsageBudgetState: async () => ({ total_committed_excluding_batch_micro_cents: 0 }),
         readTaskExecutionPermit: async () => {
           permitCalls += 1
@@ -317,6 +327,7 @@ describe('protected A0 manual behavior runner', () => {
         }),
       },
       executionAuthority: {
+        recordTaskResult: async () => 'inserted',
         readUsageBudgetState: async () => ({ total_committed_excluding_batch_micro_cents: 0 }),
         readTaskExecutionPermit: async (input) => permit(input.task_id),
       },
@@ -329,7 +340,7 @@ describe('protected A0 manual behavior runner', () => {
       status: 'unknown',
       reason: 'provider_usage_unknown',
     })
-    assert.equal(executorCalls, 6)
+    assert.equal(executorCalls, 2)
   })
 
   it('rejects a Usage receipt ID that the PostgreSQL settlement boundary cannot store', async () => {
@@ -353,6 +364,7 @@ describe('protected A0 manual behavior runner', () => {
         }),
       },
       executionAuthority: {
+        recordTaskResult: async () => 'inserted',
         readUsageBudgetState: async () => ({
           total_committed_excluding_batch_micro_cents: 0,
         }),
@@ -368,5 +380,103 @@ describe('protected A0 manual behavior runner', () => {
       reason: 'provider_usage_unknown',
     })
     assert.equal(executorCalls, 1)
+  })
+
+  it('stops after one provider call when durable result storage is unconfirmed', async () => {
+    let executorCalls = 0
+    let recordCalls = 0
+    const runner = new ProtectedA0BehaviorBatchRunner({
+      executor: {
+        execute: async () => {
+          executorCalls += 1
+          return envelope()
+        },
+      },
+      usageServiceAccountId: 'svcacct_a0_behavior',
+      usageProbe: {
+        measure: async (input) => ({
+          usage: await input.probe(),
+          usageRecordId: 'usage-storage-unknown',
+          runUsageValueMicroCents: 1,
+          missionUsageValueMicroCents: 1,
+          totalUsageValueMicroCents: 1,
+          incrementalCashCostMicroCents: 0,
+        }),
+      },
+      executionAuthority: {
+        recordTaskResult: async () => {
+          recordCalls += 1
+          throw new Error('storage unavailable')
+        },
+        readUsageBudgetState: async () => ({
+          total_committed_excluding_batch_micro_cents: 0,
+        }),
+        readTaskExecutionPermit: async (input) => permit(input.task_id),
+      },
+      fixtureReader: { read: async () => '{}' },
+      executionTimeoutMs: 1_000,
+      expectedProfileBundleSha256: BUNDLE_SHA,
+    })
+
+    assert.deepEqual(await runner.spawn(spawnInput()), {
+      status: 'unknown',
+      reason: 'process_outcome_unknown',
+    })
+    assert.equal(executorCalls, 1)
+    assert.equal(recordCalls, 1)
+  })
+
+  it('durably records a critical failure and stops before the next task', async () => {
+    let executorCalls = 0
+    const durableResults: A0TaskResultObservation[] = []
+    const input = spawnInput()
+    input.batch.tasks[0]!.critical = true
+    const runner = new ProtectedA0BehaviorBatchRunner({
+      executor: {
+        execute: async () => {
+          executorCalls += 1
+          return {
+            ...envelope(),
+            agent_result: {
+              status: 'failed',
+            } as ExecutorEnvelope['agent_result'],
+          }
+        },
+      },
+      usageServiceAccountId: 'svcacct_a0_behavior',
+      usageProbe: {
+        measure: async (probeInput) => ({
+          usage: await probeInput.probe(),
+          usageRecordId: 'usage-critical-failure',
+          runUsageValueMicroCents: 1,
+          missionUsageValueMicroCents: 1,
+          totalUsageValueMicroCents: 1,
+          incrementalCashCostMicroCents: 0,
+        }),
+      },
+      executionAuthority: {
+        recordTaskResult: async (value) => {
+          durableResults.push(structuredClone(value))
+          return 'inserted'
+        },
+        readUsageBudgetState: async () => ({
+          total_committed_excluding_batch_micro_cents: 0,
+        }),
+        readTaskExecutionPermit: async (permitInput) =>
+          permit(permitInput.task_id),
+      },
+      fixtureReader: { read: async () => '{}' },
+      executionTimeoutMs: 1_000,
+      expectedProfileBundleSha256: BUNDLE_SHA,
+    })
+
+    assert.deepEqual(await runner.spawn(input), {
+      status: 'unknown',
+      reason: 'critical_behavior_failed',
+    })
+    assert.equal(executorCalls, 1)
+    assert.equal(durableResults.length, 1)
+    assert.equal(durableResults[0]?.behavior_passed, false)
+    assert.equal(durableResults[0]?.actual_status, 'failed')
   })
 })

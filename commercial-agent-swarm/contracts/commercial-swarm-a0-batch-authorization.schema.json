@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://control.alam.cl/schemas/commercial-swarm-a0-batch-authorization.schema.json",
+  "title": "Commercial Swarm A0 Batch Authorization",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "run_id",
+    "plan_sha256",
+    "batch_id",
+    "batch_sha256",
+    "expires_at",
+    "authorization_granted",
+    "execution_authorized",
+    "provider_credit_spend_authorized",
+    "authority"
+  ],
+  "properties": {
+    "type": { "const": "commercial_swarm_a0_batch_authorization/v1" },
+    "run_id": { "type": "string", "format": "uuid" },
+    "plan_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^a0:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:t(?:0[1-9]|1[0-6])$"
+    },
+    "batch_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "authorization_granted": { "const": true },
+    "execution_authorized": { "const": true },
+    "provider_credit_spend_authorized": { "const": true },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issuer", "audience", "key_id", "algorithm", "signed_at", "signature"],
+      "properties": {
+        "issuer": { "type": "string", "minLength": 3, "maxLength": 128 },
+        "audience": { "type": "string", "minLength": 3, "maxLength": 128 },
+        "key_id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{8,128}$" },
+        "algorithm": { "const": "Ed25519" },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "signature": { "type": "string", "pattern": "^[a-f0-9]{128}$" }
+      }
+    }
+  }
+}

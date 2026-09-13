@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { types as nodeTypes } from 'node:util'
 import type { ProfileId } from './executor-contract.js'
+import type { A0BatchAuthorizationAuthority } from './a0-batch-authorization.js'
 
 export const A0_BEHAVIOR_PROFILES = [
   'sales-orchestrator',
@@ -138,6 +139,7 @@ export interface A0BatchAuthorization {
   authorization_granted: true
   execution_authorized: true
   provider_credit_spend_authorized: true
+  authority: A0BatchAuthorizationAuthority
 }
 
 export interface A0AuthorizationVerifierPort {
@@ -218,6 +220,8 @@ export interface A0TaskExecutionContract {
   task_id: string
   fixture_id: string
   agent_id: (typeof A0_BEHAVIOR_PROFILES)[number]
+  critical: boolean
+  expected_status: A0CompiledTask['expected_status']
   fixture_sha256: string
   maximum_tokens: 4096
   maximum_model_calls: 1
@@ -251,7 +255,10 @@ export interface A0KnownBatchOutcome {
 
 export interface A0UnknownBatchOutcome {
   status: 'unknown'
-  reason: 'process_outcome_unknown' | 'provider_usage_unknown'
+  reason:
+    | 'process_outcome_unknown'
+    | 'provider_usage_unknown'
+    | 'critical_behavior_failed'
 }
 
 export type A0BatchRunnerOutcome = A0KnownBatchOutcome | A0UnknownBatchOutcome
@@ -797,6 +804,8 @@ export function taskExecutionContract(
     task_id: task.task_id,
     fixture_id: task.fixture_id,
     agent_id: task.agent_id,
+    critical: task.critical,
+    expected_status: task.expected_status,
     fixture_sha256: task.fixture_sha256,
     maximum_tokens: 4096 as const,
     maximum_model_calls: 1 as const,
@@ -1617,6 +1626,7 @@ function validateAuthorization(
       'authorization_granted',
       'execution_authorized',
       'provider_credit_spend_authorized',
+      'authority',
     ],
     'A0_AUTHORIZATION_KEYS_INVALID',
   )
@@ -1645,6 +1655,27 @@ function validateAuthorization(
     'A0_PROVIDER_SPEND_NOT_AUTHORIZED',
   )
   iso(auth.expires_at, 'A0_AUTHORIZATION_EXPIRY_INVALID')
+  const authority = object(auth.authority, 'A0_AUTHORIZATION_AUTHORITY_INVALID')
+  exactKeys(
+    authority,
+    ['issuer', 'audience', 'key_id', 'algorithm', 'signed_at', 'signature'],
+    'A0_AUTHORIZATION_AUTHORITY_KEYS_INVALID',
+  )
+  if (
+    typeof authority.issuer !== 'string' ||
+    authority.issuer.length < 3 ||
+    authority.issuer.length > 128 ||
+    typeof authority.audience !== 'string' ||
+    authority.audience.length < 3 ||
+    authority.audience.length > 128 ||
+    typeof authority.key_id !== 'string' ||
+    !/^[A-Za-z0-9._:-]{8,128}$/.test(authority.key_id) ||
+    authority.algorithm !== 'Ed25519' ||
+    typeof authority.signature !== 'string' ||
+    !/^[a-f0-9]{128}$/.test(authority.signature)
+  )
+    fail('A0_AUTHORIZATION_AUTHORITY_INVALID')
+  iso(authority.signed_at, 'A0_AUTHORIZATION_SIGNED_AT_INVALID')
 }
 
 function validateAuthorizationFreshness(

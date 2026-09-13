@@ -22,12 +22,12 @@ integration('PostgreSQL A0 behavior authority', () => {
       const idempotency = `a0:${source}:${batch}`
       const taskContract = buildTaskContract()
       const usageRecords = [
-        { usage_record_id: 'usage-late-known-6', usage_value_micro_cents: 1 },
-        { usage_record_id: 'usage-late-known-1', usage_value_micro_cents: 4_999_995 },
-        { usage_record_id: 'usage-late-known-5', usage_value_micro_cents: 1 },
-        { usage_record_id: 'usage-late-known-2', usage_value_micro_cents: 1 },
-        { usage_record_id: 'usage-late-known-4', usage_value_micro_cents: 1 },
-        { usage_record_id: 'usage-late-known-3', usage_value_micro_cents: 1 },
+        { usage_record_id: 'usage-late-known-6', usage_value_micro_cents: 5 },
+        { usage_record_id: 'usage-late-known-1', usage_value_micro_cents: 999_999 },
+        { usage_record_id: 'usage-late-known-5', usage_value_micro_cents: 999_999 },
+        { usage_record_id: 'usage-late-known-2', usage_value_micro_cents: 999_999 },
+        { usage_record_id: 'usage-late-known-4', usage_value_micro_cents: 999_999 },
+        { usage_record_id: 'usage-late-known-3', usage_value_micro_cents: 999_999 },
       ]
       const expiresAt = new Date(Date.now() + 1_000).toISOString()
       const client = await pool.connect()
@@ -52,6 +52,13 @@ integration('PostgreSQL A0 behavior authority', () => {
           )
           assert.equal(permit.rows[0].granted, true)
         }
+        await recordTaskResults(
+          client,
+          runId,
+          batchId,
+          taskContract,
+          usageRecords,
+        )
         await client.query('SELECT pg_sleep(1.1)')
         const settled = await client.query(
           `SELECT control.settle_a0_behavior_batch(
@@ -121,7 +128,7 @@ integration('PostgreSQL A0 behavior authority', () => {
     }
   })
 
-  it('rolls back the whole six-receipt settlement when one provider receipt conflicts', async () => {
+  it('rejects a shared provider receipt before settlement while preserving prior task evidence', async () => {
     const fixture = await databaseFixture('a0_behavior_receipt_conflict')
     const { admin, pool, database } = fixture
     try {
@@ -172,6 +179,13 @@ integration('PostgreSQL A0 behavior authority', () => {
           assert.equal(permit.rows[0].granted, true)
         }
         await reserveAndPermit(firstRun, firstBatch, 'd'.repeat(64))
+        await recordTaskResults(
+          client,
+          firstRun,
+          firstBatch,
+          taskContract,
+          firstRecords,
+        )
         assert.equal(
           (
             await client.query(
@@ -184,10 +198,12 @@ integration('PostgreSQL A0 behavior authority', () => {
         )
         await reserveAndPermit(secondRun, secondBatch, 'e'.repeat(64))
         await assert.rejects(
-          client.query(
-            `SELECT control.settle_a0_behavior_batch(
-              $1::uuid,$2::text,1,6,$3::jsonb) AS applied`,
-            [secondRun, secondBatch, JSON.stringify(secondRecords)],
+          recordTaskResults(
+            client,
+            secondRun,
+            secondBatch,
+            taskContract,
+            secondRecords,
           ),
           /SHARED_USAGE_RECORD_CONFLICT/,
         )
@@ -200,12 +216,15 @@ integration('PostgreSQL A0 behavior authority', () => {
           (SELECT array_agg(version ORDER BY version)
             FROM control.a0_behavior_batch_ledger WHERE run_id=$1) AS versions,
           (SELECT count(*)::int FROM control.usage_record_registry
-            WHERE run_id=$1) AS second_registry_rows`,
+            WHERE run_id=$1) AS second_registry_rows,
+          (SELECT count(*)::int FROM control.a0_behavior_task_results
+            WHERE run_id=$1) AS durable_task_results`,
         [secondRun],
       )
       assert.deepEqual(evidence.rows[0], {
         versions: ['1'],
         second_registry_rows: 0,
+        durable_task_results: 5,
       })
     } finally {
       await destroyDatabase(admin, pool, database)
@@ -228,11 +247,49 @@ function buildTaskContract() {
     task_id: randomUUID(),
     fixture_id: randomUUID(),
     agent_id: agentId,
+    critical: false,
+    expected_status: 'completed',
     fixture_sha256: String(index + 1).repeat(64),
     maximum_tokens: 4096,
     maximum_model_calls: 1,
     reservation_micro_cents: 1_000_000,
   }))
+}
+
+async function recordTaskResults(
+  client: { query: Pool['query'] },
+  runId: string,
+  batchId: string,
+  taskContract: ReturnType<typeof buildTaskContract>,
+  usageRecords: Array<{
+    usage_record_id: string
+    usage_value_micro_cents: number
+  }>,
+) {
+  for (let index = 0; index < taskContract.length; index += 1) {
+    const task = taskContract[index]!
+    const usage = usageRecords[index]!
+    const recorded = await client.query(
+      `SELECT control.record_a0_behavior_task_result(
+        $1::uuid,$2::text,1,$3::uuid,$4::uuid,$5::text,'T01'::text,
+        $6::boolean,$7::text,'completed'::text,$8::jsonb,true,
+        $9::text,$10::text,$11::bigint,0,0) AS value`,
+      [
+        runId,
+        batchId,
+        task.task_id,
+        task.fixture_id,
+        task.agent_id,
+        task.critical,
+        task.expected_status,
+        JSON.stringify({ status: 'completed' }),
+        String(index + 1).repeat(64).slice(0, 64),
+        usage.usage_record_id,
+        usage.usage_value_micro_cents,
+      ],
+    )
+    assert.equal(recorded.rows[0].value, 'inserted')
+  }
 }
 
 async function databaseFixture(prefix: string) {

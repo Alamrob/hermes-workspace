@@ -9,6 +9,7 @@ import {
   validateExecutionPermit,
   type ExecutionPermit,
 } from './execution-lease.js'
+import type { A0TaskResultObservation } from './a0-behavior-manual-runner.js'
 
 export interface A0BehaviorLedgerDatabasePort {
   query<T extends QueryResultRow>(config: QueryConfig): Promise<QueryResult<T>>
@@ -27,6 +28,7 @@ const capabilityFunctions = [
   'control.acquire_a0_behavior_execution_permit(uuid,text,bigint)',
   'control.get_a0_behavior_task_execution_permit(uuid,text,bigint,uuid,text,text)',
   'control.get_a0_behavior_usage_budget_state(uuid,text,bigint)',
+  'control.record_a0_behavior_task_result(uuid,text,bigint,uuid,uuid,text,text,boolean,text,text,jsonb,boolean,text,text,bigint,integer,integer)',
   'control.hold_a0_behavior_batch_unknown(uuid,text,bigint,text)',
   'control.get_a0_behavior_batch_settlement(uuid,text,bigint,bigint,jsonb)',
   'control.reserve_a0_behavior_batch(text,uuid,text,text,bigint,timestamptz,jsonb)',
@@ -267,6 +269,43 @@ export class PostgresA0BehaviorLedger implements A0BehaviorLedgerPort {
     return row.granted
   }
 
+  async recordTaskResult(
+    input: A0TaskResultObservation,
+  ): Promise<'inserted' | 'existing'> {
+    validateTaskResult(input)
+    const row = await this.one<{ value: unknown }>(
+      `SELECT control.record_a0_behavior_task_result(
+        $1::uuid,$2::text,$3::bigint,$4::uuid,$5::uuid,$6::text,$7::text,
+        $8::boolean,$9::text,$10::text,$11::jsonb,$12::boolean,$13::text,
+        $14::text,$15::bigint,$16::integer,$17::integer) AS value`,
+      [
+        input.run_id,
+        input.batch_id,
+        input.reservation_version,
+        input.task_id,
+        input.fixture_id,
+        input.agent_id,
+        input.test_case,
+        input.critical,
+        input.expected_status,
+        input.actual_status,
+        JSON.stringify(input.agent_result),
+        input.behavior_passed,
+        input.result_sha256,
+        input.usage_record_id,
+        input.usage_value_micro_cents,
+        input.external_actions,
+        input.real_connector_calls,
+      ],
+      'A0_LEDGER_TASK_RESULT_UNCONFIRMED',
+    )
+    if (row.value !== 'inserted' && row.value !== 'existing')
+      throw new PostgresA0BehaviorLedgerError(
+        'A0_LEDGER_TASK_RESULT_UNCONFIRMED',
+      )
+    return row.value
+  }
+
   async settle(input: Parameters<A0BehaviorLedgerPort['settle']>[0]) {
     validateSettlement(input)
     const usageRecords = canonicalUsageRecords(input.usage_records)
@@ -377,12 +416,16 @@ function validTaskContract(value: unknown): value is A0TaskExecutionContract[] {
     const row = item as Record<string, unknown>
     if (
       Object.keys(row).sort().join(',') !==
-        'agent_id,fixture_id,fixture_sha256,maximum_model_calls,maximum_tokens,reservation_micro_cents,sequence,task_id' ||
+        'agent_id,critical,expected_status,fixture_id,fixture_sha256,maximum_model_calls,maximum_tokens,reservation_micro_cents,sequence,task_id' ||
       row.sequence !== index + 1 ||
       !UUID.test(String(row.task_id)) ||
       ids.has(String(row.task_id)) ||
       !UUID.test(String(row.fixture_id)) ||
       row.agent_id !== profiles[index] ||
+      typeof row.critical !== 'boolean' ||
+      !['completed', 'blocked_or_partial', 'approval_required'].includes(
+        String(row.expected_status),
+      ) ||
       !SHA256.test(String(row.fixture_sha256)) ||
       row.maximum_tokens !== 4096 ||
       row.maximum_model_calls !== 1 ||
@@ -417,6 +460,90 @@ function validateSettlement(
     throw new PostgresA0BehaviorLedgerError(
       'A0_LEDGER_SETTLEMENT_INPUT_INVALID',
     )
+}
+
+function validateTaskResult(input: A0TaskResultObservation): void {
+  const keys = Object.keys(input as unknown as Record<string, unknown>).sort()
+  const expectedKeys = [
+    'actual_status',
+    'agent_result',
+    'agent_id',
+    'batch_id',
+    'behavior_passed',
+    'critical',
+    'expected_status',
+    'external_actions',
+    'fixture_id',
+    'real_connector_calls',
+    'reservation_version',
+    'result_sha256',
+    'run_id',
+    'task_id',
+    'test_case',
+    'usage_record_id',
+    'usage_value_micro_cents',
+  ].sort()
+  const profiles = [
+    'sales-orchestrator',
+    'market-account-intelligence',
+    'contact-data-steward',
+    'qualification-prioritization',
+    'outreach-draft-manager',
+    'commercial-qa-compliance',
+  ]
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index]) ||
+    !UUID.test(input.run_id) ||
+    !validBatchId(input.run_id, input.batch_id) ||
+    input.reservation_version !== 1 ||
+    !UUID.test(input.task_id) ||
+    !UUID.test(input.fixture_id) ||
+    !profiles.includes(input.agent_id) ||
+    !/^T(?:0[1-9]|1[0-6])$/.test(input.test_case) ||
+    typeof input.critical !== 'boolean' ||
+    !['completed', 'blocked_or_partial', 'approval_required'].includes(
+      input.expected_status,
+    ) ||
+    !['completed', 'partial', 'blocked', 'failed', 'approval_required'].includes(
+      input.actual_status,
+    ) ||
+    !input.agent_result ||
+    typeof input.agent_result !== 'object' ||
+    Array.isArray(input.agent_result) ||
+    !validBoundedJson(input.agent_result, 262_144) ||
+    typeof input.behavior_passed !== 'boolean' ||
+    !SHA256.test(input.result_sha256) ||
+    !SAFE_ID.test(input.usage_record_id) ||
+    !Number.isSafeInteger(input.usage_value_micro_cents) ||
+    input.usage_value_micro_cents < 1 ||
+    input.usage_value_micro_cents > 1_000_000 ||
+    input.behavior_passed !==
+      (input.expected_status === 'completed'
+        ? input.actual_status === 'completed'
+        : input.expected_status === 'approval_required'
+          ? input.actual_status === 'approval_required'
+          : input.actual_status === 'blocked' ||
+            input.actual_status === 'partial') ||
+    input.external_actions !== 0 ||
+    input.real_connector_calls !== 0
+  )
+    throw new PostgresA0BehaviorLedgerError(
+      'A0_LEDGER_TASK_RESULT_INPUT_INVALID',
+    )
+}
+
+function validBoundedJson(value: unknown, maximumBytes: number): boolean {
+  try {
+    const serialized = JSON.stringify(value)
+    return (
+      typeof serialized === 'string' &&
+      Buffer.byteLength(serialized, 'utf8') >= 2 &&
+      Buffer.byteLength(serialized, 'utf8') <= maximumBytes
+    )
+  } catch {
+    return false
+  }
 }
 
 function validUsageRecords(value: unknown, expectedTotal: number): boolean {

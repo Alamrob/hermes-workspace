@@ -218,15 +218,17 @@ BEGIN
   FOR task_entry IN SELECT value FROM jsonb_array_elements($7) LOOP
     task_index:=task_index+1;
     IF jsonb_typeof(task_entry)<>'object'
-      OR (SELECT count(*) FROM jsonb_object_keys(task_entry))<>8
+      OR (SELECT count(*) FROM jsonb_object_keys(task_entry))<>10
       OR NOT task_entry ?& ARRAY[
-        'sequence','task_id','fixture_id','agent_id','fixture_sha256',
+        'sequence','task_id','fixture_id','agent_id','critical','expected_status','fixture_sha256',
         'maximum_tokens','maximum_model_calls','reservation_micro_cents'
       ]
       OR task_entry->>'sequence'<>task_index::text
       OR task_entry->>'task_id'!~*'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
       OR task_entry->>'fixture_id'!~*'^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
       OR task_entry->>'agent_id'<>expected_profiles[task_index]
+      OR jsonb_typeof(task_entry->'critical')<>'boolean'
+      OR task_entry->>'expected_status' NOT IN('completed','blocked_or_partial','approval_required')
       OR task_entry->>'fixture_sha256'!~'^[a-f0-9]{64}$'
       OR task_entry->>'maximum_tokens'<>'4096'
       OR task_entry->>'maximum_model_calls'<>'1'
