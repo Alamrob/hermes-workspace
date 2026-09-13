@@ -53,6 +53,9 @@ integration('PostgreSQL A0 principal database isolation', () => {
       authority = new Pool({ connectionString: authorityUrl.toString() })
       await runVersionedMigrations(authority, await loadMigrationSources())
 
+      const beforeRejectedProvision = await databaseAclSnapshot(admin, [
+        authorityDatabase,
+      ])
       await admin.query(
         'COMMENT ON DATABASE proptimiza_commercial_authority IS NULL',
       )
@@ -61,6 +64,10 @@ integration('PostgreSQL A0 principal database isolation', () => {
         /A0_AUTHORITY_DATABASE_NOT_DEDICATED/,
       )
       assert.equal(await roleExists(admin, ledgerLogin), false)
+      assert.deepEqual(
+        await databaseAclSnapshot(admin, [authorityDatabase]),
+        beforeRejectedProvision,
+      )
       await admin.query(
         "COMMENT ON DATABASE proptimiza_commercial_authority IS 'proptimiza:commercial-authority:v1'",
       )
@@ -99,6 +106,10 @@ integration('PostgreSQL A0 principal database isolation', () => {
       }
 
       assert.deepEqual(await databaseAclSnapshot(admin, siblings), before)
+      const beforeRejectedRollback = await principalPrivilegeSnapshot(
+        authority,
+        ledgerLogin,
+      )
       await admin.query(
         "COMMENT ON DATABASE proptimiza_commercial_authority IS 'tampered'",
       )
@@ -107,6 +118,10 @@ integration('PostgreSQL A0 principal database isolation', () => {
         /A0_AUTHORITY_DATABASE_NOT_DEDICATED/,
       )
       assert.equal(await roleExists(admin, ledgerLogin), true)
+      assert.deepEqual(
+        await principalPrivilegeSnapshot(authority, ledgerLogin),
+        beforeRejectedRollback,
+      )
       await admin.query(
         "COMMENT ON DATABASE proptimiza_commercial_authority IS 'proptimiza:commercial-authority:v1'",
       )
@@ -142,6 +157,62 @@ async function databaseAclSnapshot(admin: Pool, databases: string[]) {
     [databases],
   )
   return result.rows
+}
+
+async function principalPrivilegeSnapshot(database: Pool, role: string) {
+  const result = await database.query<{
+    login: boolean
+    inherit: boolean
+    superuser: boolean
+    create_database: boolean
+    create_role: boolean
+    replication: boolean
+    bypass_rls: boolean
+    database_owner: string
+    database_acl: string | null
+    connect: boolean
+    create: boolean
+    temporary: boolean
+    memberships: string[]
+    executable_functions: string[]
+  }>(
+    `SELECT
+       r.rolcanlogin AS login,
+       r.rolinherit AS inherit,
+       r.rolsuper AS superuser,
+       r.rolcreatedb AS create_database,
+       r.rolcreaterole AS create_role,
+       r.rolreplication AS replication,
+       r.rolbypassrls AS bypass_rls,
+       pg_get_userbyid(d.datdba)::text AS database_owner,
+       d.datacl::text AS database_acl,
+       has_database_privilege(r.oid,d.oid,'CONNECT') AS connect,
+       has_database_privilege(r.oid,d.oid,'CREATE') AS create,
+       has_database_privilege(r.oid,d.oid,'TEMP') AS temporary,
+       COALESCE((
+         SELECT array_agg(parent.rolname::text ORDER BY parent.rolname::text)
+         FROM pg_auth_members membership
+         JOIN pg_roles parent ON parent.oid=membership.roleid
+         WHERE membership.member=r.oid
+       ),ARRAY[]::text[]) AS memberships,
+       COALESCE((
+         SELECT array_agg(
+           format('%I.%I(%s)',namespace.nspname,procedure.proname,
+             pg_get_function_identity_arguments(procedure.oid))
+           ORDER BY namespace.nspname,procedure.proname,procedure.oid
+         )
+         FROM pg_proc procedure
+         JOIN pg_namespace namespace ON namespace.oid=procedure.pronamespace
+         WHERE namespace.nspname=ANY(ARRAY['public','catalog','control','mail','integration'])
+           AND has_function_privilege(r.oid,procedure.oid,'EXECUTE')
+       ),ARRAY[]::text[]) AS executable_functions
+     FROM pg_roles r
+     CROSS JOIN pg_database d
+     WHERE r.rolname=$1 AND d.datname=current_database()`,
+    [role],
+  )
+  assert.equal(result.rowCount, 1)
+  return result.rows[0]
 }
 
 async function roleExists(admin: Pool, role: string): Promise<boolean> {
