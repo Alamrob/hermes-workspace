@@ -45,6 +45,7 @@ describe('versioned migration runner', () => {
       { version: '037_a1_single_approval_parent', sql: 'SELECT 37;' },
       { version: '038_a0_behavior_authority', sql: 'SELECT 38;' },
       { version: '039_a0_behavior_task_results', sql: 'SELECT 39;' },
+      { version: '040_policy_v2_pilot_preparation_gate', sql: 'SELECT 40;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -91,6 +92,7 @@ describe('versioned migration runner', () => {
         '037_a1_single_approval_parent',
         '038_a0_behavior_authority',
         '039_a0_behavior_task_results',
+        '040_policy_v2_pilot_preparation_gate',
       ],
     )
     assert.equal(
@@ -99,10 +101,10 @@ describe('versioned migration runner', () => {
     )
   })
 
-  it('loads the complete production migration set through durable A0 results', async () => {
+  it('loads the complete production migration set through the inert policy-v2 preparation gate', async () => {
     const migrations = await loadMigrationSources()
-    assert.equal(migrations.length, 39)
-    assert.equal(migrations.at(-1)?.version, '039_a0_behavior_task_results')
+    assert.equal(migrations.length, 40)
+    assert.equal(migrations.at(-1)?.version, '040_policy_v2_pilot_preparation_gate')
     assert.match(
       migrations.find(m=>m.version==='028_ed25519_a1_work_orders')?.sql ?? '',
       /A1_ED25519_SIGNATURE_REQUIRED/,
@@ -114,12 +116,16 @@ describe('versioned migration runner', () => {
       /A0_RESERVATION_IMMUTABLE_CONFLICT/,
     )
     assert.match(
-      migrations.at(-1)?.sql ?? '',
+      migrations.find(m=>m.version==='039_a0_behavior_task_results')?.sql ?? '',
       /A0_SETTLEMENT_REQUIRES_DURABLE_TASK_RESULTS/,
     )
     assert.doesNotMatch(
       migrations.at(-1)?.sql ?? '',
       /control\.enqueue_dispatch|mail\.send|integration\.enqueue_crm_change/i,
+    )
+    assert.match(
+      migrations.at(-1)?.sql ?? '',
+      /'activationAllowed',false/,
     )
   })
 
