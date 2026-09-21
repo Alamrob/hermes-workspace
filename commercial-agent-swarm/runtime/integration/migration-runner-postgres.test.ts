@@ -60,6 +60,7 @@ integration('PostgreSQL 17 versioned migration runner', () => {
           '038_a0_behavior_authority',
           '039_a0_behavior_task_results',
           '040_policy_v2_pilot_preparation_gate',
+          '041_policy_v2_recipient_contract',
         ].map(async (version) => ({
           version,
           sql: await readFile(
@@ -76,8 +77,10 @@ integration('PostgreSQL 17 versioned migration runner', () => {
             `SELECT count(*)::int AS count FROM control.schema_migrations`,
           )
         ).rows[0].count,
-        40,
+        41,
       )
+      const rollback041 = await readFile(new URL('../migrations/041_policy_v2_recipient_contract.rollback.sql',import.meta.url),'utf8')
+      await pool.query(rollback041)
       const rollback040 = await readFile(new URL('../migrations/040_policy_v2_pilot_preparation_gate.rollback.sql',import.meta.url),'utf8')
       await pool.query(rollback040)
       const rollback039 = await readFile(new URL('../migrations/039_a0_behavior_task_results.rollback.sql',import.meta.url),'utf8')

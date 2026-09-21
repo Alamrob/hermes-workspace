@@ -46,6 +46,7 @@ describe('versioned migration runner', () => {
       { version: '038_a0_behavior_authority', sql: 'SELECT 38;' },
       { version: '039_a0_behavior_task_results', sql: 'SELECT 39;' },
       { version: '040_policy_v2_pilot_preparation_gate', sql: 'SELECT 40;' },
+      { version: '041_policy_v2_recipient_contract', sql: 'SELECT 41;' },
       { version: '003_dispatch_queue', sql: 'SELECT 3;' },
       { version: '001_runtime', sql: 'SELECT 1;' },
       { version: '002_commercial_control_plane', sql: 'SELECT 2;' },
@@ -93,6 +94,7 @@ describe('versioned migration runner', () => {
         '038_a0_behavior_authority',
         '039_a0_behavior_task_results',
         '040_policy_v2_pilot_preparation_gate',
+        '041_policy_v2_recipient_contract',
       ],
     )
     assert.equal(
@@ -101,10 +103,10 @@ describe('versioned migration runner', () => {
     )
   })
 
-  it('loads the complete production migration set through the inert policy-v2 preparation gate', async () => {
+  it('loads the complete production migration set through the inert policy-v2 recipient contract', async () => {
     const migrations = await loadMigrationSources()
-    assert.equal(migrations.length, 40)
-    assert.equal(migrations.at(-1)?.version, '040_policy_v2_pilot_preparation_gate')
+    assert.equal(migrations.length, 41)
+    assert.equal(migrations.at(-1)?.version, '041_policy_v2_recipient_contract')
     assert.match(
       migrations.find(m=>m.version==='028_ed25519_a1_work_orders')?.sql ?? '',
       /A1_ED25519_SIGNATURE_REQUIRED/,

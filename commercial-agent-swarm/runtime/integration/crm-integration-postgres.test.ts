@@ -59,6 +59,7 @@ integration('PostgreSQL 17 CRM integration control plane', () => {
         '038_a0_behavior_authority',
         '039_a0_behavior_task_results',
         '040_policy_v2_pilot_preparation_gate',
+        '041_policy_v2_recipient_contract',
       ]
       await runVersionedMigrations(
         pool,
