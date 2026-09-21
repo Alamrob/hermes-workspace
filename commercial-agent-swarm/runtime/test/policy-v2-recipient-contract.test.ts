@@ -53,6 +53,7 @@ describe('policy-v2 bounded recipient contract', () => {
     assert.match(sql, /policy_v2_external_transport_readiness/)
     assert.match(sql, /AND external_transport_ready/)
     assert.match(sql, /WHEN NOT external_transport_ready THEN 'external_transport_readiness'/)
+    assert.match(sql, /THEN 'closed_baseline_recovery'/)
   })
 
   it('rolls back only before any contract or recipient history exists', async () => {

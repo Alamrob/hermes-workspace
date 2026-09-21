@@ -34,6 +34,12 @@ import {
 } from './draft-review.js'
 import { PolicyReviewError, validatePolicyReviewState, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import { validatePolicyActivationDossierState, type PolicyActivationDossierState } from './policy-activation-dossier.js'
+import {
+  validatePolicyV2DeliveryContractState,
+  validatePolicyV2PilotPreparationState,
+  type PolicyV2DeliveryContractState,
+  type PolicyV2PilotPreparationState,
+} from './policy-v2-pilot-state.js'
 import { validateA1ResearchDossier, type A1ResearchDossier } from './a1-research-dossier.js'
 import {
   A1ResearchAuthorizationError,
@@ -541,6 +547,22 @@ export class PostgresRuntimeRepository implements RuntimeRepository {
       'SELECT control.build_policy_activation_dossier_state() AS state',
     )
     return validatePolicyActivationDossierState(result.rows[0]?.state)
+  }
+
+  async getPolicyV2PilotPreparationState(): Promise<PolicyV2PilotPreparationState> {
+    const result = await this.pool.query<{ state: unknown }>(
+      'SELECT control.build_policy_v2_pilot_preparation_state() AS state',
+    )
+    return validatePolicyV2PilotPreparationState(result.rows[0]?.state)
+  }
+
+  async getPolicyV2DeliveryContractState(contractId: string): Promise<PolicyV2DeliveryContractState | null> {
+    const result = await this.pool.query<{ state: unknown }>(
+      'SELECT control.build_policy_v2_delivery_contract_state($1::uuid) AS state',
+      [contractId],
+    )
+    const state = result.rows[0]?.state
+    return state === null || state === undefined ? null : validatePolicyV2DeliveryContractState(state)
   }
 
   async createInstructionRequest(

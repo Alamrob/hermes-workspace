@@ -743,6 +743,15 @@ export class BrokerApplication {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       return { status: 200, body: await this.options.repository.getPolicyActivationDossierState() }
     }
+    if (route.action === 'getPolicyV2PilotPreparation') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      return { status: 200, body: await this.options.repository.getPolicyV2PilotPreparationState() }
+    }
+    if (route.action === 'getPolicyV2DeliveryContract') {
+      requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
+      const state = await this.options.repository.getPolicyV2DeliveryContractState(route.id!)
+      return state ? { status: 200, body: state } : { status: 404, body: { error: 'not_found' } }
+    }
     if (route.action === 'getInternalMailTestPlan') {
       requireBearer(request.headers?.authorization, this.options.authentication.shadowReview)
       return { status: 200, body: buildInternalMailTestPlan(this.now()) }
@@ -991,6 +1000,11 @@ function matchRoute(method: string, path: string): Route | null {
     return { action: 'recordPolicyReview', auditAction: 'policy_review.record' }
   if (method === 'GET' && path === '/internal/v1/policy-activation-dossiers/proptimiza/policy-v2')
     return { action: 'getPolicyActivationDossier', auditAction: 'policy_activation_dossier.get' }
+  if (method === 'GET' && path === '/internal/v1/policy-v2/pilot-preparation')
+    return { action: 'getPolicyV2PilotPreparation', auditAction: 'policy_v2_pilot_preparation.get' }
+  const policyV2DeliveryContract = /^\/internal\/v1\/policy-v2\/delivery-contracts\/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i.exec(path)
+  if (method === 'GET' && policyV2DeliveryContract)
+    return { action: 'getPolicyV2DeliveryContract', auditAction: 'policy_v2_delivery_contract.get', id: policyV2DeliveryContract[1].toLowerCase() }
   if (method === 'GET' && path === '/internal/v1/internal-mail-test-plans/proptimiza/v1')
     return { action: 'getInternalMailTestPlan', auditAction: 'internal_mail_test_plan.get' }
   if (method === 'POST' && path === '/v1/work-orders') return { action: 'createWorkOrder', auditAction: 'work_order.create' }

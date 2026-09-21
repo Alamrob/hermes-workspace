@@ -1289,6 +1289,29 @@ describe('broker application routes', () => {
     assert.equal(state.audit.events.filter((event) => event.tool_action === 'policy_activation_dossier.get').every((event) => event.external_action === false), true)
   })
 
+  it('exposes only authenticated aggregate policy-v2 pilot state without recipient data or mutation', async () => {
+    const state = setup()
+    const preparationPath = '/internal/v1/policy-v2/pilot-preparation'
+    assert.equal((await state.app.handle({ method: 'GET', path: preparationPath })).status, 401)
+    const preparation = await state.app.handle({
+      method: 'GET', path: preparationPath, headers: headers('shadow-review-token'),
+    })
+    assert.equal(preparation.status, 200)
+    assert.equal((preparation.body as any).preparationGateRecorded, false)
+    assert.equal((preparation.body as any).activationAllowed, false)
+    assert.equal((preparation.body as any).targetCreationAllowed, false)
+    assert.equal((preparation.body as any).sendAllowed, false)
+    assert.doesNotMatch(JSON.stringify(preparation.body), /@/)
+
+    const contractPath = '/internal/v1/policy-v2/delivery-contracts/123e4567-e89b-42d3-a456-426614174000'
+    assert.equal((await state.app.handle({ method: 'GET', path: contractPath })).status, 401)
+    assert.deepEqual(
+      await state.app.handle({ method: 'GET', path: contractPath, headers: headers('shadow-review-token') }),
+      { status: 404, body: { error: 'not_found' } },
+    )
+    assert.equal((await state.app.handle({ method: 'POST', path: preparationPath, headers: headers('shadow-review-token') })).status, 404)
+  })
+
   it('exposes the dormant A1 research dossier without creating a mission or enabling Internet', async () => {
     const state = setup()
     const reviewId = 'a2500000-0000-4500-8500-000000000053'

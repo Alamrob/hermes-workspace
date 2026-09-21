@@ -41,6 +41,10 @@ import type {
 } from './a1-dispatch-execution-window.js'
 import { PolicyReviewError, type PolicyReviewState, type RecordPolicyReviewInput } from './policy-review.js'
 import type { PolicyActivationDossierState } from './policy-activation-dossier.js'
+import type {
+  PolicyV2DeliveryContractState,
+  PolicyV2PilotPreparationState,
+} from './policy-v2-pilot-state.js'
 
 interface ApprovalRecord {
   approval_id: string
@@ -91,6 +95,8 @@ export interface RuntimeRepository {
   getPolicyReviewState(): Promise<PolicyReviewState>
   recordPolicyReview(input: RecordPolicyReviewInput): Promise<PolicyReviewState>
   getPolicyActivationDossierState(): Promise<PolicyActivationDossierState>
+  getPolicyV2PilotPreparationState(): Promise<PolicyV2PilotPreparationState>
+  getPolicyV2DeliveryContractState(contractId: string): Promise<PolicyV2DeliveryContractState | null>
   saveMission(record: MissionRecord): Promise<void>
   createInstructionRequest(record: InstructionRequestRecord): Promise<InstructionRequestResult>
   listInstructionRequests(): Promise<InstructionRequestView[]>
@@ -526,6 +532,27 @@ export class InMemoryRuntimeRepository implements RuntimeRepository {
       nextRequiredGate: review.reviewCompleted ? 'internal_mail_attestation' : 'human_reviews',
       provenance: { source: 'control-broker', sourceId: 'policy-activation-dossier:proptimiza:policy-v2', observedAt: new Date().toISOString(), synthetic: false },
     }
+  }
+
+  async getPolicyV2PilotPreparationState(): Promise<PolicyV2PilotPreparationState> {
+    const globalKillSwitchActive = this.killSwitches.has('global:*')
+    const emailKillSwitchActive = this.killSwitches.has('channel:email')
+    return {
+      projectId: 'proptimiza', policyVersion: 'policy-v2',
+      policyDigest: '888988d6359694300e9d0970d7ad7166b989727b08000d5969d61a66c920ff19',
+      preparationGateRecorded: false, preparationSatisfied: false, externalTransportReady: false,
+      activationAuthorizationRecorded: false, activePolicyVersion: 'policy-v1', policyEffective: false,
+      externalContact: false, pilotCohortCount: 0, pilotTargetCount: 0, deliveryPolicyCount: 0,
+      deliveryPolicyActivationCount: 0, versionActivationCount: 0, pendingExternalActionCount: 0,
+      globalKillSwitchActive, emailKillSwitchActive, maximumCompanies: 10, channel: 'email', tracking: false,
+      automaticFollowUp: false, a3Enabled: false, targetCreationAllowed: false, sendAllowed: false,
+      activationAllowed: false, nextRequiredGate: 'explicit_preparation_gate',
+      provenance: { source: 'control-broker', sourceId: 'policy-v2-pilot-preparation:proptimiza', observedAt: new Date().toISOString(), synthetic: false },
+    }
+  }
+
+  async getPolicyV2DeliveryContractState(_contractId: string): Promise<PolicyV2DeliveryContractState | null> {
+    return null
   }
 
   async createInstructionRequest(

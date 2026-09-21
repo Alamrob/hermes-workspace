@@ -204,6 +204,10 @@ SELECT jsonb_build_object(
     WHEN recipient_count=0 THEN 'recipient_contract_population'
     WHEN recipient_count<>expected_recipient_count OR NOT suppression_clear OR NOT evidence_current
       THEN 'recipient_contract_correction'
+    WHEN NOT global_kill_switch_active OR NOT email_kill_switch_active
+      OR active_policy_version<>'policy-v1' OR policy_effective OR external_contact
+      OR delivery_policy_count<>0 OR delivery_activation_count<>0 OR version_activation_count<>0
+      THEN 'closed_baseline_recovery'
     WHEN NOT external_transport_ready THEN 'external_transport_readiness'
     ELSE 'explicit_policy_activation_authorization'
   END,
