@@ -22,6 +22,7 @@
     "start:external-action-broker": "node dist/external-action-broker-main.js",
     "start:telegram-approval-poller": "node dist/telegram-approval-poller-main.js",
     "start:workspace-instruction-gateway": "node dist/workspace-instruction-gateway-main.js",
+    "start:whatsapp-automation": "node dist/whatsapp-automation-main.js",
     "smoke:usage": "node dist/usage-smoke-main.js",
     "reconcile:crm-sync": "node dist/crm-sync-main.js reconcile",
     "sign:a1": "node dist/a1-codex-signer-main.js",

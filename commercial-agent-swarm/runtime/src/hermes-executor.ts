@@ -129,6 +129,7 @@ export interface ProcessInvocation {
   timeoutMs: number
   stdoutLimitBytes: number
   stderrLimitBytes: number
+  stdin?: string
   signal?: AbortSignal
 }
 
@@ -1298,6 +1299,9 @@ function runtimeValidationFailure(
 export class NodeProcessRunner implements ProcessRunner {
   async run(invocation: ProcessInvocation): Promise<ProcessOutput> {
     if(invocation.signal?.aborted)throw new ExecutorExecutionError('HERMES_CANCELLED','not_started')
+    const input = invocation.stdin
+    if (input !== undefined && (typeof input !== 'string' || Buffer.byteLength(input, 'utf8') > 131_072))
+      throw new ExecutorExecutionError('HERMES_STDIN_INVALID', 'not_started')
     return new Promise((resolvePromise, reject) => {
       const isolatedChild =
         process.platform !== 'win32' &&
@@ -1327,7 +1331,7 @@ export class NodeProcessRunner implements ProcessRunner {
           shell: false,
           detached: true,
           cwd: invocation.cwd,
-          stdio: ['ignore', 'pipe', 'pipe'],
+          stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
         },
       )
       const stdout: Array<Buffer> = []
@@ -1337,6 +1341,7 @@ export class NodeProcessRunner implements ProcessRunner {
       let timedOut = false
       let cancelled = false
       let overflow: Error | undefined
+      let inputFailure: Error | undefined
       let settled = false
       const terminate = () => {
         if (!child.pid) return
@@ -1347,6 +1352,7 @@ export class NodeProcessRunner implements ProcessRunner {
       }
       const terminateAndClosePipes = () => {
         terminate()
+        child.stdin?.destroy()
         // A grandchild may inherit stdout/stderr and keep Node's `close` event
         // pending even after the Hermes process group has been killed. Close
         // the supervisor-side readers after a terminal containment decision so
@@ -1354,17 +1360,17 @@ export class NodeProcessRunner implements ProcessRunner {
         // broker's IPC deadline and turning known local failure into
         // usage_unknown. Output already captured within the byte limits is
         // retained; no child-controlled stream remains authoritative.
-        child.stdout.destroy()
-        child.stderr.destroy()
+        child.stdout!.destroy()
+        child.stderr!.destroy()
       }
-      child.stdout.on('data', (chunk: Buffer) => {
+      child.stdout!.on('data', (chunk: Buffer) => {
         stdoutBytes += chunk.length
         if (stdoutBytes > invocation.stdoutLimitBytes) {
           overflow ??= new Error('HERMES_STDOUT_LIMIT')
           terminateAndClosePipes()
         } else stdout.push(chunk)
       })
-      child.stderr.on('data', (chunk: Buffer) => {
+      child.stderr!.on('data', (chunk: Buffer) => {
         stderrBytes += chunk.length
         if (stderrBytes > invocation.stderrLimitBytes) {
           overflow ??= new Error('HERMES_STDERR_LIMIT')
@@ -1378,6 +1384,14 @@ export class NodeProcessRunner implements ProcessRunner {
       const abort=()=>{if(!settled){cancelled=true;terminateAndClosePipes()}}
       invocation.signal?.addEventListener('abort',abort,{once:true})
       if(invocation.signal?.aborted)abort()
+      if (child.stdin) {
+        child.stdin.on('error', () => {
+          if (settled || timedOut || cancelled) return
+          inputFailure ??= new Error('HERMES_STDIN_FAILED')
+          terminateAndClosePipes()
+        })
+        if (!cancelled) child.stdin.end(input, 'utf8')
+      }
       child.once('error', (error) => {
         if (settled) return
         settled = true
@@ -1397,7 +1411,7 @@ export class NodeProcessRunner implements ProcessRunner {
           reject(error)
           return
         }
-        if (overflow) reject(overflow)
+        if (overflow || inputFailure) reject(overflow ?? inputFailure)
         else
           resolvePromise({
             stdout: Buffer.concat(stdout).toString('utf8'),

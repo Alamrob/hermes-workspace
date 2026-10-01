@@ -528,7 +528,7 @@ describe('isolated Hermes executor', () => {
       usage_value_usd: 0.0000045,
       cash_cost_usd: 0,
       source: 'official_docs_snapshot',
-      pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
+      pricing_snapshot_id: 'opencode-go-2026-09-28-v4',
     })
     const invocation = state.runner.invocations[0]
     assert.equal(invocation.command, '/opt/hermes/.venv/bin/hermes')
@@ -655,7 +655,7 @@ describe('isolated Hermes executor', () => {
     const expired = await setup({ productionPricing: true })
     ;(
       expired.executor as unknown as { options: { pricingClock: () => Date } }
-    ).options.pricingClock = () => new Date('2026-09-18T03:05:00.001Z')
+    ).options.pricingClock = () => new Date('2026-10-05T21:46:41.001Z')
     await assert.rejects(
       expired.executor.execute(input()),
       /OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED/,

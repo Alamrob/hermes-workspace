@@ -32,11 +32,16 @@ export function signWorkOrderEd25519(workOrder: WorkOrder, privateKeyPem: string
 }
 
 export function verifyWorkOrder(workOrder: WorkOrder, config: WorkOrderAuthConfig, now: Date): void {
+  verifyWorkOrderForProject(workOrder, config, now, 'proptimiza')
+}
+
+/** Internal primitive: callers must resolve expectedProject from trusted configuration. */
+export function verifyWorkOrderForProject(workOrder: WorkOrder, config: WorkOrderAuthConfig, now: Date, expectedProject: string): void {
   const authority = workOrder.authority
   if (!isRecord(authority)) throw new AuthenticationError('INVALID_AUTHORITY')
   const { issuer, audience, key_id: keyId, algorithm, signature } = authority
   if (issuer !== config.issuer || audience !== config.audience) throw new AuthenticationError('INVALID_AUTHORITY')
-  if (workOrder.project_id !== 'proptimiza') throw new AuthenticationError('INVALID_PROJECT')
+  if (workOrder.project_id !== expectedProject) throw new AuthenticationError('INVALID_PROJECT')
   if (typeof keyId !== 'string' || typeof signature !== 'string') throw new AuthenticationError('INVALID_AUTHORITY')
   if (Date.parse(workOrder.created_at as string) > now.getTime()) throw new AuthenticationError('AUTHORITY_NOT_YET_VALID')
   if (Date.parse(workOrder.expires_at as string) <= now.getTime()) throw new AuthenticationError('EXPIRED_AUTHORITY')

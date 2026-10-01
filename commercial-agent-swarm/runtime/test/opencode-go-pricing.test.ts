@@ -43,13 +43,13 @@ describe('versioned OpenCode Go pricing', () => {
       new Date('2026-08-16T12:00:00Z'),
     )
 
-    assert.equal(OPENCODE_GO_PRICING_SNAPSHOT.id, 'opencode-go-2026-09-11-v3')
+    assert.equal(OPENCODE_GO_PRICING_SNAPSHOT.id, 'opencode-go-2026-09-28-v4')
     assert.deepEqual(priced.cost, {
       status: 'known',
       usage_value_usd: 0.753,
       cash_cost_usd: 0,
       source: 'official_docs_snapshot',
-      pricing_snapshot_id: 'opencode-go-2026-09-11-v3',
+      pricing_snapshot_id: 'opencode-go-2026-09-28-v4',
     })
   })
 
@@ -66,7 +66,7 @@ describe('versioned OpenCode Go pricing', () => {
 
   it('requires revalidation after the dated pricing and privacy snapshot', () => {
     assert.throws(
-      () => priceOpenCodeGoUsage(usage(), new Date('2026-09-18T03:05:00.001Z')),
+      () => priceOpenCodeGoUsage(usage(), new Date('2026-10-05T21:46:41.001Z')),
       /OPENCODE_GO_SNAPSHOT_REVALIDATION_REQUIRED/,
     )
   })

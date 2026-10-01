@@ -4,10 +4,10 @@ const PICODOLLARS_PER_USD = 1_000_000_000_000n
 const PICODOLLARS_PER_MICRODOLLAR = 1_000_000n
 
 export const OPENCODE_GO_PRICING_SNAPSHOT = Object.freeze({
-  id: 'opencode-go-2026-09-11-v3',
+  id: 'opencode-go-2026-09-28-v4',
   source: 'https://opencode.ai/docs/go/',
-  captured_at: '2026-09-11T03:05:00Z',
-  revalidate_after: '2026-09-18T03:05:00Z',
+  captured_at: '2026-09-28T21:46:41Z',
+  revalidate_after: '2026-10-05T21:46:41Z',
   model: 'deepseek-v4-flash',
   provider: 'opencode-go',
   peak_hours_utc: Object.freeze([[1, 4], [6, 10]] as const),

@@ -1,0 +1,76 @@
+{
+  "schema_version": "platform-config.v1",
+  "config_revision": "synthetic-v1",
+  "bindings": [
+    {
+      "binding_id": "proptimiza-draft",
+      "tenant_id": "proptimiza",
+      "project_id": "proptimiza",
+      "project_version": "v1",
+      "policy_version": "policy-v1",
+      "deployment_id": "local-fixture",
+      "connector_id": "synthetic-proptimiza",
+      "account_id": "account-shared",
+      "inbox_id": "inbox-shared",
+      "active": true,
+      "issuer": "codex-fixture",
+      "audience": "platform-foundation",
+      "keys": [
+        {
+          "key_id": "signing-v1",
+          "algorithm": "Ed25519",
+          "key_ref": "keyref:v1:proptimiza:local-fixture:signing-v1"
+        }
+      ],
+      "principals": [
+        {
+          "principal_id": "draft-preparer",
+          "requested_by": "codex-fixture",
+          "key_ids": ["signing-v1"],
+          "grant": {
+            "actions": ["draft.prepare"],
+            "tools": ["knowledge.read"],
+            "channels": ["internal"],
+            "autonomy_levels": ["A0", "A1", "A2"],
+            "budget": { "currency": "CLP", "maximum": 0 }
+          }
+        }
+      ]
+    },
+    {
+      "binding_id": "mallaguardian-draft",
+      "tenant_id": "mallaguardian",
+      "project_id": "mallaguardian",
+      "project_version": "v1",
+      "policy_version": "policy-v1",
+      "deployment_id": "local-fixture",
+      "connector_id": "synthetic-mallaguardian",
+      "account_id": "account-shared",
+      "inbox_id": "inbox-shared",
+      "active": true,
+      "issuer": "codex-fixture",
+      "audience": "platform-foundation",
+      "keys": [
+        {
+          "key_id": "signing-v1",
+          "algorithm": "Ed25519",
+          "key_ref": "keyref:v1:mallaguardian:local-fixture:signing-v1"
+        }
+      ],
+      "principals": [
+        {
+          "principal_id": "draft-preparer",
+          "requested_by": "codex-fixture",
+          "key_ids": ["signing-v1"],
+          "grant": {
+            "actions": ["draft.prepare"],
+            "tools": ["knowledge.read"],
+            "channels": ["internal"],
+            "autonomy_levels": ["A0", "A1", "A2"],
+            "budget": { "currency": "CLP", "maximum": 0 }
+          }
+        }
+      ]
+    }
+  ]
+}

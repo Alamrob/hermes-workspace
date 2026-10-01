@@ -1,0 +1,199 @@
+import { createHash, createHmac, randomBytes } from 'node:crypto'
+import { request, type Dispatcher } from 'undici'
+
+const DECIMAL = /^[1-9][0-9]{0,18}$/
+const SESSION_GAP_SECONDS = 24 * 60 * 60
+
+export interface ChatwootTranscriptMessage {
+  message_id: string
+  sequence: number
+  kind: 'incoming' | 'assistant'
+  content: string
+}
+
+export interface ChatwootConversationSnapshot {
+  target: Readonly<ChatwootTranscriptMessage>
+  transcript: ReadonlyArray<Readonly<ChatwootTranscriptMessage>>
+  latest_message_id: string
+  current: boolean
+  human_replied: boolean
+}
+
+export class ChatwootOutboundClient {
+  constructor(private readonly options: {
+    baseUrl: string
+    accountId: string
+    inboxId: string
+    readToken: () => Promise<string>
+    sendToken: () => Promise<string>
+    machineSecret: () => Promise<string>
+    nowSeconds?: () => number
+    nonce?: () => string
+    requestTimeoutMs?: number
+    dispatcher?: Dispatcher
+  }) {
+    const url = new URL(options.baseUrl)
+    if (url.protocol !== 'http:' || url.username || url.password || url.search || url.hash
+      || url.pathname !== '/' || !/^proptimiza-chatwoot-web-1(?::3000)?$/.test(url.host)
+      || !DECIMAL.test(options.accountId) || !DECIMAL.test(options.inboxId))
+      throw new Error('CHATWOOT_OUTBOUND_CONFIG_INVALID')
+  }
+
+  async snapshot(conversationId: string, messageId: string, expectedContentSha256: string): Promise<ChatwootConversationSnapshot> {
+    decimal(conversationId); decimal(messageId)
+    if (!/^[0-9a-f]{64}$/.test(expectedContentSha256)) throw new Error('CHATWOOT_OUTBOUND_INPUT_INVALID')
+    const token = await this.options.readToken()
+    const body = await this.call('GET', `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/messages`, token)
+    const object = record(body)
+    const rawMessages = Array.isArray(object.payload) ? object.payload : Array.isArray(body) ? body : null
+    if (!rawMessages || rawMessages.length > 200) throw new Error('CHATWOOT_MESSAGES_INVALID')
+    const observed = rawMessages.map(parseObservedMessage).filter((entry): entry is ObservedMessage => entry !== null)
+      .sort((a, b) => compareDecimal(a.message_id, b.message_id))
+    const target = observed.find((entry) => entry.message_id === messageId && entry.kind === 'incoming')?.transcript
+    if (!target || digest(target.content) !== expectedContentSha256) throw new Error('CHATWOOT_TARGET_MESSAGE_INVALID')
+    const later = observed.filter((entry) => compareDecimal(entry.message_id, messageId) > 0)
+    const latest = observed.at(-1)
+    const transcriptEntries = latestConversationSegment(observed.filter((entry) => entry.transcript !== null))
+    const transcript = transcriptEntries.map((entry) => entry.transcript!)
+    return Object.freeze({
+      target: Object.freeze({ ...target }),
+      transcript: Object.freeze(transcript.slice(-20).map((entry) => Object.freeze({ ...entry }))),
+      latest_message_id: latest?.message_id ?? messageId,
+      current: later.length === 0,
+      // A new customer turn reopens automation. A human response after the
+      // target message still wins, including one that arrives during inference.
+      human_replied: later.some((entry) => entry.kind === 'assistant' && entry.sender_type === 'User'),
+    })
+  }
+
+  async send(conversationId: string, content: string): Promise<{ message_id: string }> {
+    decimal(conversationId)
+    if (typeof content !== 'string' || !content.trim() || content.includes('\0')
+      || Buffer.byteLength(content, 'utf8') > 2000) throw new Error('CHATWOOT_REPLY_INVALID')
+    const token = await this.options.sendToken()
+    const response = record(await this.call('POST',
+      `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/messages`, token, {
+        content,
+        message_type: 'outgoing',
+        private: false,
+        content_type: 'text',
+      }))
+    const id = normalizeId(response.id)
+    return Object.freeze({ message_id: id })
+  }
+
+  async assignTeam(conversationId: string, teamId: string): Promise<{ team_id: string }> {
+    decimal(conversationId); decimal(teamId)
+    const token = await this.options.readToken()
+    const path = `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/assignments`
+    const response = record(await this.call('POST', path, token, { team_id: Number(teamId) }))
+    const id = normalizeId(response.id)
+    if (id !== teamId) throw new Error('CHATWOOT_TEAM_ASSIGNMENT_INVALID')
+    return Object.freeze({ team_id: id })
+  }
+
+  private async call(method: 'GET' | 'POST', path: string, token: string, json?: Record<string, unknown>): Promise<unknown> {
+    if (!token || token.length > 8192 || token.includes('\0')) throw new Error('CHATWOOT_TOKEN_INVALID')
+    const secret = await this.options.machineSecret()
+    if (secret.length < 32 || secret.length > 4096 || secret.includes('\0'))
+      throw new Error('CHATWOOT_MACHINE_SECRET_INVALID')
+    const timestamp = Math.floor((this.options.nowSeconds ?? (() => Date.now() / 1000))())
+    const nonce = (this.options.nonce ?? (() => randomBytes(16).toString('hex')))()
+    if (!Number.isSafeInteger(timestamp) || timestamp < 1 || !/^[0-9a-f]{32}$/.test(nonce))
+      throw new Error('CHATWOOT_MACHINE_ENVELOPE_INVALID')
+    const body = json ? JSON.stringify(json) : ''
+    const bodyHash = createHash('sha256').update(body, 'utf8').digest('hex')
+    const tokenHash = createHash('sha256').update(token, 'utf8').digest('hex')
+    const signature = 'sha256=' + createHmac('sha256', secret)
+      .update(`${timestamp}.${nonce}.${method}.${path}.${bodyHash}.${tokenHash}`, 'utf8').digest('hex')
+    const response = await request(new URL(path, this.options.baseUrl), {
+      method,
+      headers: {
+        api_access_token: token,
+        accept: 'application/json',
+        'x-forwarded-proto': 'https',
+        'x-proptimiza-automation-timestamp': String(timestamp),
+        'x-proptimiza-automation-nonce': nonce,
+        'x-proptimiza-automation-signature': signature,
+        ...(json ? { 'content-type': 'application/json' } : {}),
+      },
+      body: body || undefined,
+      dispatcher: this.options.dispatcher,
+      headersTimeout: this.options.requestTimeoutMs ?? 10_000,
+      bodyTimeout: this.options.requestTimeoutMs ?? 10_000,
+    })
+    const text = await response.body.text()
+    if (Buffer.byteLength(text, 'utf8') > 1_048_576) throw new Error('CHATWOOT_RESPONSE_TOO_LARGE')
+    if (response.statusCode < 200 || response.statusCode >= 300)
+      throw new ChatwootHttpError(response.statusCode)
+    try { return JSON.parse(text) } catch { throw new Error('CHATWOOT_RESPONSE_INVALID') }
+  }
+}
+
+export class ChatwootHttpError extends Error {
+  constructor(readonly status: number) { super('CHATWOOT_HTTP_ERROR'); this.name = 'ChatwootHttpError' }
+}
+
+interface ObservedMessage {
+  message_id: string
+  kind: 'incoming' | 'assistant'
+  sender_type: string | null
+  occurred_at: number | null
+  transcript: ChatwootTranscriptMessage | null
+}
+
+function parseObservedMessage(value: unknown): ObservedMessage | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const input = value as Record<string, unknown>
+  if (input.private === true) return null
+  const id = normalizeId(input.id)
+  const rawType = input.message_type
+  const kind: 'incoming' | 'assistant' | null = rawType === 0 || rawType === 'incoming' ? 'incoming'
+    : rawType === 1 || rawType === 'outgoing' ? 'assistant' : null
+  if (!kind) return null
+  const numeric = Number(id)
+  if (!Number.isSafeInteger(numeric)) throw new Error('CHATWOOT_MESSAGE_ID_UNSAFE')
+  const senderType = typeof input.sender_type === 'string' ? input.sender_type : null
+  const trustedTranscriptSender = kind === 'incoming' ? senderType === 'Contact'
+    : senderType === 'AgentBot' || senderType === 'User'
+  const transcript = trustedTranscriptSender && typeof input.content === 'string' && input.content.trim()
+    && !input.content.includes('\0') && Buffer.byteLength(input.content, 'utf8') <= 4096
+    ? { message_id: id, sequence: numeric, kind, content: input.content }
+    : null
+  return {
+    message_id: id, kind, sender_type: senderType, occurred_at: observedTimestamp(input.created_at), transcript,
+  }
+}
+
+function latestConversationSegment(entries: ObservedMessage[]): ObservedMessage[] {
+  let start = 0
+  for (let index = 1; index < entries.length; index += 1) {
+    const previous = entries[index - 1]!.occurred_at
+    const current = entries[index]!.occurred_at
+    if (previous !== null && current !== null && current - previous > SESSION_GAP_SECONDS) start = index
+  }
+  return entries.slice(start)
+}
+
+function observedTimestamp(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value
+  if (typeof value !== 'string') return null
+  const milliseconds = Date.parse(value)
+  return Number.isFinite(milliseconds) ? Math.floor(milliseconds / 1000) : null
+}
+
+function record(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('CHATWOOT_RESPONSE_INVALID')
+  return value as Record<string, unknown>
+}
+function normalizeId(value: unknown): string {
+  const id = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value
+  if (typeof id !== 'string' || !DECIMAL.test(id)) throw new Error('CHATWOOT_ID_INVALID')
+  return id
+}
+function decimal(value: string): void { if (!DECIMAL.test(value)) throw new Error('CHATWOOT_ID_INVALID') }
+function compareDecimal(a: string, b: string): number {
+  const left = BigInt(a), right = BigInt(b)
+  return left < right ? -1 : left > right ? 1 : 0
+}
+function digest(value: string): string { return createHash('sha256').update(value, 'utf8').digest('hex') }
