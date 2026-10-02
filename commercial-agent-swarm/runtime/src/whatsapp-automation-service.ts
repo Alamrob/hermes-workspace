@@ -175,7 +175,7 @@ export class WhatsAppAutomationService {
       return
     }
     await this.store.transition(event.event_id, 'pending', 'model_running')
-    const reply = applyConversationGuardrails(first.target.content, await this.infer(event, first.transcript))
+    const reply = applyConversationGuardrails(first.target.content, await this.infer(event, first.transcript), first.transcript)
     await this.store.transition(event.event_id, 'model_running', 'ready', {
       response_sha256: digest(reply.response),
       handoff_reason: reply.handoff_reason,

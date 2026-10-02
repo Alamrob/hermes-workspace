@@ -64,6 +64,50 @@ test('starts broad commercial interest with diagnosis instead of a WhatsApp pitc
   ]) assert.deepEqual(applyConversationGuardrails(message, modelReply), modelReply)
 })
 
+test('keeps the second turn diagnostic when the contact only describes the business', () => {
+  const transcript = [
+    { kind: 'incoming' as const, content: 'Hola, estoy interesado en sus productos.' },
+    { kind: 'assistant' as const, content: 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?' },
+    { kind: 'incoming' as const, content: 'Somos una clínica dental con tres sucursales.' },
+  ]
+  const prematurePitch = {
+    response: 'Podemos implementar WhatsApp con el plan Plus. ¿Cuántos mensajes reciben y cuántas personas atienden?',
+    handoff_reason: 'none',
+  }
+  const result = applyConversationGuardrails(transcript.at(-1)!.content, prematurePitch, transcript)
+  assert.deepEqual(result, {
+    response: 'Gracias. ¿Qué proceso o problema comercial u operativo te gustaría mejorar primero?',
+    handoff_reason: 'none',
+  })
+  assert.doesNotMatch(result.response, /WhatsApp|plan|precio/i)
+  assert.equal((result.response.match(/\?/g) ?? []).length, 1)
+})
+
+test('preserves a concrete need after the initial business diagnosis', () => {
+  const transcript = [
+    { kind: 'incoming' as const, content: 'Quisiera información sobre Proptimiza.' },
+    { kind: 'assistant' as const, content: 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?' },
+    { kind: 'incoming' as const, content: 'Vendemos equipos y necesitamos ordenar el seguimiento de cotizaciones.' },
+  ]
+  const specificReply = {
+    response: 'Entiendo. ¿En qué parte del seguimiento se pierden hoy las oportunidades?',
+    handoff_reason: 'none',
+  }
+  assert.deepEqual(applyConversationGuardrails(transcript.at(-1)!.content, specificReply, transcript), specificReply)
+})
+
+test('does not repeat the deterministic problem question after it was already asked', () => {
+  const transcript = [
+    { kind: 'incoming' as const, content: 'Estoy interesado en sus productos.' },
+    { kind: 'assistant' as const, content: 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?' },
+    { kind: 'incoming' as const, content: 'Somos una clínica dental.' },
+    { kind: 'assistant' as const, content: 'Gracias. ¿Qué proceso o problema comercial u operativo te gustaría mejorar primero?' },
+    { kind: 'incoming' as const, content: 'Todavía no lo tengo claro.' },
+  ]
+  const clarifyingReply = { response: 'Podemos revisarlo juntos. ¿Dónde notas más trabajo manual hoy?', handoff_reason: 'none' }
+  assert.deepEqual(applyConversationGuardrails(transcript.at(-1)!.content, clarifyingReply, transcript), clarifyingReply)
+})
+
 test('normalizes accents and never mutates the model reply', () => {
   const mutable = { response: 'Texto original.', handoff_reason: 'none' }
   const result = applyConversationGuardrails('Necesito una cotización', mutable)

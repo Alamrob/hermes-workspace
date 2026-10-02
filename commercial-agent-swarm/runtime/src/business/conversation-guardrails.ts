@@ -3,8 +3,14 @@ export interface GuardedConversationReply {
   handoff_reason: string
 }
 
+export interface GuardedConversationMessage {
+  kind: 'incoming' | 'assistant'
+  content: string
+}
+
 const responses = Object.freeze({
   diagnosticStart: 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?',
+  diagnosticProblem: 'Gracias. ¿Qué proceso o problema comercial u operativo te gustaría mejorar primero?',
   optOut: 'Entendido. No continuaré con la calificación automática. Voy a derivar tu solicitud de baja al equipo para que aplique la supresión correspondiente.',
   emergency: 'No puedo atender emergencias médicas ni situaciones de riesgo. Si existe peligro inmediato, contacta ahora a los servicios de emergencia de tu zona. No compartas datos sensibles por este chat.',
   credential: 'No compartas contraseñas, códigos, tokens, claves API ni enlaces de acceso por este chat. Voy a derivar el caso para una revisión segura.',
@@ -27,6 +33,7 @@ const responses = Object.freeze({
 export function applyConversationGuardrails(
   latestText: string,
   reply: GuardedConversationReply,
+  transcript: ReadonlyArray<Readonly<GuardedConversationMessage>> = [],
 ): Readonly<GuardedConversationReply> {
   const text = normalize(latestText)
   if (/(?:\bno (?:me |m )?(?:escriban|escribas|contacten|contactes|llamen|llames)\b|\bdejar de recibir\b|\b(?:darme de baja|dame de baja|solicito la baja|sacame de (?:la )?lista)\b|\b(?:borren|borra|elimina|eliminen) (?:mi (?:numero|contacto)|mis datos)\b|\b(?:do not|don'?t) (?:message|contact|call) me\b|\b(?:unsubscribe|remove me from (?:the )?list)\b|^\s*(?:stop|baja)\s*$)/.test(text))
@@ -68,6 +75,14 @@ export function applyConversationGuardrails(
     return Object.freeze({ response: responses.attachment, handoff_reason: 'missing_context' })
   if (/\b(directorio\w*|buscame|buscar en internet|servicios en santiago|tip\w* para (?:ser|hacerme) millonari\w*|asesoria financiera|consejo\w* financiero\w*|donde invertir)\b/.test(text))
     return Object.freeze({ response: responses.offTopic, handoff_reason: 'none' })
+  const priorAssistantAskedBusinessType = transcript.some((message) => message.kind === 'assistant'
+    && normalize(message.content) === normalize(responses.diagnosticStart))
+  const priorAssistantAskedProblem = transcript.some((message) => message.kind === 'assistant'
+    && normalize(message.content) === normalize(responses.diagnosticProblem))
+  const latestStatesSpecificNeed = /\b(?:necesit\w*|queremos|busc\w*|problema\w*|dificult\w*|nos cuesta|nos falla|se (?:pierde|pierden|demora|demoran)|mejorar|ordenar|automatiz\w*|integr\w*)\b/.test(text)
+    || /\b(?:como|pueden|podrian) (?:ayudar|resolver|mejorar|automatizar|integrar)\b/.test(text)
+  if (priorAssistantAskedBusinessType && !priorAssistantAskedProblem && !latestStatesSpecificNeed)
+    return Object.freeze({ response: responses.diagnosticProblem, handoff_reason: 'none' })
   return Object.freeze({ response: reply.response, handoff_reason: reply.handoff_reason })
 }
 
