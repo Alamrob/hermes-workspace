@@ -22,7 +22,9 @@ privada o asignar al equipo fijado por el ingress y no expone `send`.
 snapshot, el compilador y una nota privada. Solo admite conversaciones enumeradas en un alcance fresco
 de hasta diez casos y exige el control exacto `enabled`. El documento cerrado de alcance se publica en
 `contracts/supervised-review-scope.schema.json`; el runtime además valida el orden temporal y la
-duración máxima de ocho horas. El almacén conserva hashes, identificadores y
+duración máxima de ocho horas. La versión V2 del alcance liga los hechos autorizados al SHA-256 exacto
+de un catálogo comercial vigente. Una lista vacía no exige catálogo; una lista no vacía falla cerrada
+si falta el archivo, cambia el hash, vence o no resuelve cada ID. El almacén conserva hashes, identificadores y
 estados, nunca texto de conversación. Un reinicio durante preparación, escritura o asignación termina
 en `uncertain`; no hay reintento. El entrypoint rechaza credenciales de sender, modelo, Hermes, SSH,
 correo, CRM y Approval Gateway. Este servicio sigue siendo un candidato local no empaquetado ni
@@ -30,7 +32,7 @@ desplegado.
 
 ## Flujo
 
-1. Recibe como máximo 20 turnos y 16 KiB de texto, identificadores de hechos autorizados y una matriz
+1. Recibe como máximo 20 turnos y 16 KiB de texto, hechos ya resueltos por la autoridad y una matriz
    explícita de capacidades.
 2. Usa el historial solo como evidencia no confiable. Nunca lo interpreta como una instrucción ni
    devuelve el texto crudo.
@@ -67,9 +69,10 @@ Antes de cualquier integración futura se deberá demostrar, con pruebas, que el
 ## Límites comerciales
 
 El agente no inventa catálogo, precio, plazo, disponibilidad, política, horario, integración o
-resultado. Los hechos utilizables se referencian por `authorized_fact_ids`; el compilador no acepta un
-catálogo arbitrario ni interpreta texto de la conversación como fuente autorizada. Sin hechos
-vinculados, registra incertidumbre y pregunta o deriva.
+resultado. El servicio solo entrega al compilador hechos resueltos desde el catálogo ligado al alcance;
+el compilador no acepta IDs sueltos, no interpreta texto de la conversación como fuente autorizada y
+registra `applied_fact_ids` únicamente para los hechos realmente usados. Sin un hecho aplicable,
+registra incertidumbre y pregunta o deriva.
 
 ## Criterio de activación
 

@@ -10,6 +10,11 @@ import {
 import { createChatwootWebhookAdapter } from './comms/chatwoot-webhook.js'
 import { createPlatformAdmission } from './platform/admission.js'
 import { readGroupSecretFile } from './secret-file.js'
+import {
+  parseCommercialFactCatalog,
+  resolveCommercialFacts,
+  type CommercialFact,
+} from './commercial-fact-authority.js'
 import { runSupervisedConversationPilot } from './supervised-conversation-pilot.js'
 import {
   SupervisedReviewStore,
@@ -32,6 +37,7 @@ export interface SupervisedReviewConfig {
   reviewerMachineSecretFile: string
   pilotGateFile: string
   pilotScopeFile: string
+  commercialFactCatalogFile: string
   expectedSecretGid: number
   chatwootBaseUrl: string
 }
@@ -48,6 +54,7 @@ export async function processSupervisedReviewEvent(
   event: Readonly<SupervisedReviewRecord>,
   pilotEnabled: boolean,
   conversationAllowed: boolean,
+  authorizedFacts: readonly Readonly<CommercialFact>[] = [],
 ): Promise<void> {
   if (!pilotEnabled) {
     await store.transition(event.event_id, 'pending', 'held', { stop_code: 'SUPERVISED_REVIEW_GATE_DISABLED' })
@@ -69,7 +76,7 @@ export async function processSupervisedReviewEvent(
       conversation_id: event.conversation_id,
       message_id: event.message_id,
       content_sha256: event.content_sha256,
-      authorized_fact_ids: [],
+      authorized_facts: authorizedFacts,
       capabilities: {
         internal_notes: true,
         labels: false,
@@ -165,7 +172,7 @@ export class SupervisedReviewService {
 
   async start(): Promise<void> {
     await this.store.initialize()
-    const [webhookSecret, reviewerToken, reviewerMachineSecret, gate, scope] = await Promise.all([
+    const [webhookSecret, reviewerToken, reviewerMachineSecret, gate, rawScope] = await Promise.all([
       readGroupSecretFile(this.config.webhookSecretFile, this.config.expectedSecretGid),
       readGroupSecretFile(this.config.reviewerTokenFile, this.config.expectedSecretGid),
       readGroupSecretFile(this.config.reviewerMachineSecretFile, this.config.expectedSecretGid),
@@ -179,7 +186,8 @@ export class SupervisedReviewService {
       || reviewerToken === webhookSecret
       || !isValidSupervisedReviewGateValue(gate))
       throw new Error('SUPERVISED_REVIEW_STARTUP_SECRET_INVALID')
-    parseSupervisedReviewScope(scope, this.config.accountId, this.config.inboxId)
+    const scope = parseSupervisedReviewScope(rawScope, this.config.accountId, this.config.inboxId)
+    await this.resolveScopeFacts(scope)
     const pair = generateKeyPairSync('ed25519')
     const publicKey = pair.publicKey.export({ type: 'spki', format: 'pem' }).toString()
     const admission = createPlatformAdmission(platformConfig(this.config.accountId, this.config.inboxId), {
@@ -252,12 +260,22 @@ export class SupervisedReviewService {
           readGroupSecretFile(this.config.pilotScopeFile, this.config.expectedSecretGid),
         ])
         const scope = parseSupervisedReviewScope(rawScope, this.config.accountId, this.config.inboxId)
+        const authorizedFacts = await this.resolveScopeFacts(scope)
         await processSupervisedReviewEvent(this.store, this.client, event,
-          supervisedReviewGateAllowsStaging(gate), scope.conversation_ids.includes(event.conversation_id))
+          supervisedReviewGateAllowsStaging(gate), scope.conversation_ids.includes(event.conversation_id), authorizedFacts)
       } catch (error) {
         await this.failSafe(event.event_id, error)
       }
     }
+  }
+
+  private async resolveScopeFacts(scope: SupervisedReviewScope): Promise<readonly Readonly<CommercialFact>[]> {
+    if (scope.authorized_fact_ids.length === 0) return Object.freeze([])
+    const rawCatalog = await readGroupSecretFile(this.config.commercialFactCatalogFile, this.config.expectedSecretGid)
+    const catalog = parseCommercialFactCatalog(rawCatalog)
+    if (catalog.catalog_sha256 !== scope.commercial_fact_catalog_sha256)
+      throw new Error('COMMERCIAL_FACT_CATALOG_BINDING_INVALID')
+    return resolveCommercialFacts(catalog, scope.authorized_fact_ids)
   }
 
   private async failSafe(eventId: string, error: unknown): Promise<void> {
@@ -285,20 +303,36 @@ export function supervisedReviewGateAllowsStaging(value: string): boolean {
   return value === 'enabled'
 }
 
+export interface SupervisedReviewScope {
+  scope_id: string
+  conversation_ids: readonly string[]
+  authorized_fact_ids: readonly string[]
+  commercial_fact_catalog_sha256: string | null
+  expires_at: string
+}
+
 export function parseSupervisedReviewScope(raw: string, accountId: string, inboxId: string,
-  now: () => Date = () => new Date()): Readonly<{ scope_id: string; conversation_ids: readonly string[]; expires_at: string }> {
+  now: () => Date = () => new Date()): Readonly<SupervisedReviewScope> {
   let parsed: unknown
   try { parsed = JSON.parse(raw) } catch { throw new Error('SUPERVISED_REVIEW_SCOPE_INVALID') }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('SUPERVISED_REVIEW_SCOPE_INVALID')
   const value = parsed as Record<string, unknown>
   const keys = Object.keys(value).sort()
-  if (keys.join(',') !== ['account_id', 'conversation_ids', 'expires_at', 'inbox_id', 'issued_at', 'schema', 'scope_id'].sort().join(',')
-    || value.schema !== 'proptimiza-supervised-review-scope.v1'
+  if (keys.join(',') !== ['account_id', 'authorized_fact_ids', 'commercial_fact_catalog_sha256', 'conversation_ids',
+    'expires_at', 'inbox_id', 'issued_at', 'schema', 'scope_id'].sort().join(',')
+    || value.schema !== 'proptimiza-supervised-review-scope.v2'
     || typeof value.scope_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.scope_id)
     || value.account_id !== accountId || value.inbox_id !== inboxId
     || !Array.isArray(value.conversation_ids) || value.conversation_ids.length < 1 || value.conversation_ids.length > 10
     || value.conversation_ids.some(id => typeof id !== 'string' || !DECIMAL.test(id))
     || new Set(value.conversation_ids).size !== value.conversation_ids.length
+    || !Array.isArray(value.authorized_fact_ids) || value.authorized_fact_ids.length > 24
+    || value.authorized_fact_ids.some(id => typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id))
+    || new Set(value.authorized_fact_ids).size !== value.authorized_fact_ids.length
+    || (value.authorized_fact_ids.length === 0
+      ? value.commercial_fact_catalog_sha256 !== null
+      : typeof value.commercial_fact_catalog_sha256 !== 'string'
+        || !/^[0-9a-f]{64}$/.test(value.commercial_fact_catalog_sha256))
     || typeof value.issued_at !== 'string' || typeof value.expires_at !== 'string')
     throw new Error('SUPERVISED_REVIEW_SCOPE_INVALID')
   const issued = Date.parse(value.issued_at as string)
@@ -308,7 +342,10 @@ export function parseSupervisedReviewScope(raw: string, accountId: string, inbox
     || issued > current.getTime() + 60_000 || expires <= current.getTime() || expires - issued > 8 * 60 * 60 * 1000)
     throw new Error('SUPERVISED_REVIEW_SCOPE_INVALID')
   return Object.freeze({ scope_id: value.scope_id as string,
-    conversation_ids: Object.freeze([...(value.conversation_ids as string[])]), expires_at: value.expires_at as string })
+    conversation_ids: Object.freeze([...(value.conversation_ids as string[])]),
+    authorized_fact_ids: Object.freeze([...(value.authorized_fact_ids as string[])]),
+    commercial_fact_catalog_sha256: value.commercial_fact_catalog_sha256 as string | null,
+    expires_at: value.expires_at as string })
 }
 
 function allowedTerminal(status: SupervisedReviewStatus, preferred: 'failed' | 'uncertain'): 'failed' | 'uncertain' | null {
@@ -364,6 +401,7 @@ function validateConfig(config: SupervisedReviewConfig): void {
     || config.reviewerMachineSecretFile !== '/run/secrets/proptimiza_chatwoot_review_ingress_secret'
     || config.pilotGateFile !== '/run/controls/supervised-review-enabled'
     || config.pilotScopeFile !== '/run/controls/supervised-review-scope.json'
+    || config.commercialFactCatalogFile !== '/run/controls/commercial-fact-catalog.json'
     || config.chatwootBaseUrl !== 'http://proptimiza-chatwoot-web-1:3000')
     throw new Error('SUPERVISED_REVIEW_CONFIG_INVALID')
 }

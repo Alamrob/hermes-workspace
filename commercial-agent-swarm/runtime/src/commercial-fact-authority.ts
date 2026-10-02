@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto'
 
 const FACT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const SOURCE_REF = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$/
-const MAX_CATALOG_BYTES = 65536
+// The reviewer reads this through the same hardened, group-readable control-file
+// primitive used by the deployment. Keep both limits identical.
+const MAX_CATALOG_BYTES = 16384
 
 export type CommercialFactCategory =
   | 'identity'
@@ -96,7 +98,8 @@ function parseFact(value: unknown, now: Date, ids: Set<string>): Readonly<Commer
     'id', 'category', 'statement', 'source_ref', 'approved_by_role', 'approved_at', 'expires_at',
   ]) || typeof value.id !== 'string' || !FACT_ID.test(value.id) || ids.has(value.id)
     || !['identity', 'offer', 'capability', 'integration', 'policy', 'hours', 'pricing', 'result'].includes(String(value.category))
-    || typeof value.statement !== 'string' || !value.statement.trim() || value.statement.length > 400 || value.statement.includes('\0')
+    || typeof value.statement !== 'string' || !value.statement.trim() || value.statement.length > 400
+    || /[\u0000-\u001F\u007F]/.test(value.statement)
     || typeof value.source_ref !== 'string' || !SOURCE_REF.test(value.source_ref)
     || !['commercial_owner', 'operations', 'security', 'legal'].includes(String(value.approved_by_role))
     || !isIsoInstant(value.approved_at) || !isIsoInstant(value.expires_at)

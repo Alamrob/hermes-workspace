@@ -23,7 +23,7 @@ const input = Object.freeze({
   conversation_id: '25',
   message_id: '42',
   content_sha256: digest,
-  authorized_fact_ids: [] as string[],
+  authorized_facts: [],
   capabilities,
 })
 

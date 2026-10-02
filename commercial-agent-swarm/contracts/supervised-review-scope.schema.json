@@ -10,12 +10,14 @@
     "account_id",
     "inbox_id",
     "conversation_ids",
+    "authorized_fact_ids",
+    "commercial_fact_catalog_sha256",
     "issued_at",
     "expires_at"
   ],
   "properties": {
     "schema": {
-      "const": "proptimiza-supervised-review-scope.v1"
+      "const": "proptimiza-supervised-review-scope.v2"
     },
     "scope_id": {
       "type": "string",
@@ -39,6 +41,21 @@
         "pattern": "^[1-9][0-9]{0,17}$"
       }
     },
+    "authorized_fact_ids": {
+      "type": "array",
+      "maxItems": 24,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+      }
+    },
+    "commercial_fact_catalog_sha256": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      ]
+    },
     "issued_at": {
       "type": "string",
       "format": "date-time"
@@ -47,5 +64,18 @@
       "type": "string",
       "format": "date-time"
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "authorized_fact_ids": { "maxItems": 0 } }
+      },
+      "then": {
+        "properties": { "commercial_fact_catalog_sha256": { "type": "null" } }
+      },
+      "else": {
+        "properties": { "commercial_fact_catalog_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } }
+      }
+    }
+  ]
 }

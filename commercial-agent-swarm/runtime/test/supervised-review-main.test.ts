@@ -17,6 +17,7 @@ function environment(): Record<string, string> {
     CHATWOOT_REVIEWER_MACHINE_SECRET_FILE: '/run/secrets/proptimiza_chatwoot_review_ingress_secret',
     SUPERVISED_REVIEW_GATE_FILE: '/run/controls/supervised-review-enabled',
     SUPERVISED_REVIEW_SCOPE_FILE: '/run/controls/supervised-review-scope.json',
+    COMMERCIAL_FACT_CATALOG_FILE: '/run/controls/commercial-fact-catalog.json',
     CHATWOOT_API_BASE: 'http://proptimiza-chatwoot-web-1:3000',
   }
 }
@@ -38,21 +39,31 @@ test('rejects raw credentials, sender credentials and Hermes capabilities', () =
     { CHATWOOT_HANDOFF_TEAM_ID: '2' },
     { SUPERVISED_REVIEW_GATE_FILE: '/tmp/enabled' },
     { SUPERVISED_REVIEW_SCOPE_FILE: '/tmp/scope.json' },
+    { COMMERCIAL_FACT_CATALOG_FILE: '/tmp/facts.json' },
+    { COMMERCIAL_FACT_CATALOG: '{"forbidden":true}' },
   ]) assert.throws(() => loadSupervisedReviewConfig({ ...environment(), ...patch }))
 })
 
 test('accepts only a fresh bounded scope for at most ten exact conversations', () => {
   const clock = () => new Date('2026-10-02T12:00:00.000Z')
   const scope = JSON.stringify({
-    schema: 'proptimiza-supervised-review-scope.v1', scope_id: 'pilot-1', account_id: '1', inbox_id: '1',
+    schema: 'proptimiza-supervised-review-scope.v2', scope_id: 'pilot-1', account_id: '1', inbox_id: '1',
     conversation_ids: ['25', '26'], issued_at: '2026-10-02T11:59:00.000Z', expires_at: '2026-10-02T13:00:00.000Z',
+    authorized_fact_ids: [], commercial_fact_catalog_sha256: null,
   })
   assert.deepEqual(parseSupervisedReviewScope(scope, '1', '1', clock), {
-    scope_id: 'pilot-1', conversation_ids: ['25', '26'], expires_at: '2026-10-02T13:00:00.000Z',
+    scope_id: 'pilot-1', conversation_ids: ['25', '26'], authorized_fact_ids: [],
+    commercial_fact_catalog_sha256: null, expires_at: '2026-10-02T13:00:00.000Z',
   })
   assert.throws(() => parseSupervisedReviewScope(scope.replace('13:00:00', '20:00:00'), '1', '1', clock))
   assert.throws(() => parseSupervisedReviewScope(scope.replace('"25","26"', '"25","25"'), '1', '1', clock))
   assert.throws(() => parseSupervisedReviewScope(scope, '2', '1', clock))
+  assert.throws(() => parseSupervisedReviewScope(scope.replace('"authorized_fact_ids":[]',
+    '"authorized_fact_ids":["fact:offer:1"]'), '1', '1', clock))
+  const bound = scope.replace('"authorized_fact_ids":[]', '"authorized_fact_ids":["fact:offer:1"]')
+    .replace('"commercial_fact_catalog_sha256":null', `"commercial_fact_catalog_sha256":"${'a'.repeat(64)}"`)
+  assert.deepEqual(parseSupervisedReviewScope(bound, '1', '1', clock).authorized_fact_ids, ['fact:offer:1'])
+  assert.throws(() => parseSupervisedReviewScope(scope.replace('scope.v2', 'scope.v1'), '1', '1', clock))
 })
 
 test('allows staging only for the exact enabled gate value', () => {

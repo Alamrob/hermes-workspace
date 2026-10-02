@@ -22,6 +22,7 @@
     "follow_up_or_handoff",
     "handoff_reason",
     "observable_outcome",
+    "applied_fact_ids",
     "proposed_chatwoot_actions",
     "uncertainties",
     "send_permitted",
@@ -76,6 +77,12 @@
     "follow_up_or_handoff": { "$ref": "#/$defs/shortText" },
     "handoff_reason": { "enum": ["none", "missing_context", "human_requested", "sensitive_request", "out_of_scope"] },
     "observable_outcome": { "enum": ["resolved", "sale", "follow_up", "abandoned", "referred", "pending", "unknown"] },
+    "applied_fact_ids": {
+      "type": "array",
+      "maxItems": 24,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" }
+    },
     "proposed_chatwoot_actions": {
       "type": "array",
       "minItems": 2,

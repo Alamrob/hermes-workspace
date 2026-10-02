@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { ChatwootHttpError, type ChatwootConversationSnapshot } from '../src/comms/chatwoot-outbound.js'
 import type { ChatwootIncomingEvent } from '../src/comms/chatwoot-webhook.js'
+import type { CommercialFact } from '../src/commercial-fact-authority.js'
 import {
   processSupervisedReviewEvent,
   type SupervisedReviewClientPort,
@@ -72,6 +73,29 @@ test('stages one private note for review and has no public-send dependency', asy
     assert.equal(record?.status, 'staged')
     assert.equal(record?.private_note_message_id, '91')
     assert.equal(record?.team_assigned, false)
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('uses only a resolved approved fact and records its id in the private review note', async () => {
+  const f = await fixture('¿Qué servicios ofrece Proptimiza?')
+  try {
+    const actions: string[] = []
+    let note = ''
+    const client = clientFor(f.text, actions, {
+      createPrivateNote: async (_conversation, value) => { actions.push('private-note'); note = value; return { message_id: '91' } },
+    })
+    const fact = Object.freeze({
+      id: 'fact:offer:consulting', category: 'offer',
+      statement: 'Proptimiza diagnostica y mejora procesos comerciales y operativos.',
+      source_ref: 'catalog:commercial:v1', approved_by_role: 'commercial_owner',
+      approved_at: '2026-10-02T10:00:00.000Z', expires_at: '2026-10-03T10:00:00.000Z',
+    } satisfies CommercialFact)
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true, [fact])
+    assert.deepEqual(actions, ['read', 'private-note'])
+    assert.match(note, /diagnostica y mejora procesos comerciales y operativos/i)
+    assert.match(note, /Hechos aplicados: fact:offer:consulting/)
+    assert.doesNotMatch(note, /catalog:commercial:v1/)
+    assert.equal((await f.store.get(f.record.event_id))?.status, 'staged')
   } finally { await rm(f.root, { recursive: true, force: true }) }
 })
 

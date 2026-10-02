@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { compileSupervisedMasterCase } from '../src/supervised-conversation-master.js'
+import type { CommercialFact } from '../src/commercial-fact-authority.js'
 
 const capabilities = Object.freeze({
   chatwoot_read: true,
@@ -13,8 +14,15 @@ const capabilities = Object.freeze({
 })
 
 function compile(transcript: Array<{ kind: 'incoming' | 'assistant'; content: string }>) {
-  return compileSupervisedMasterCase({ case_ref: 'case:test', transcript, authorized_fact_ids: [], capabilities })
+  return compileSupervisedMasterCase({ case_ref: 'case:test', transcript, authorized_facts: [], capabilities })
 }
+
+const approvedOffer = Object.freeze({
+  id: 'fact:offer:consulting', category: 'offer',
+  statement: 'Proptimiza diagnostica y mejora procesos comerciales y operativos.',
+  source_ref: 'catalog:commercial:v1', approved_by_role: 'commercial_owner',
+  approved_at: '2026-10-02T12:00:00.000Z', expires_at: '2026-10-03T12:00:00.000Z',
+} satisfies CommercialFact)
 
 test('general interest starts a neutral one-question diagnosis and never sends', () => {
   const result = compile([{ kind: 'incoming', content: 'Hola, estoy interesado en sus productos.' }])
@@ -41,6 +49,17 @@ test('an explicit WhatsApp request remains specific but still diagnoses one dime
   assert.match(result.contact_reason, /específica/)
   assert.match(result.suggested_response, /recomendar algo que realmente encaje/i)
   assert.equal((result.suggested_response.match(/\?/g) ?? []).length, 1)
+})
+
+test('a direct offer question uses only resolved approved facts and records their ids', () => {
+  const result = compileSupervisedMasterCase({
+    case_ref: 'case:facts', transcript: [{ kind: 'incoming', content: '¿Qué servicios ofrece Proptimiza?' }],
+    authorized_facts: [approvedOffer], capabilities,
+  })
+  assert.match(result.suggested_response, /diagnostica y mejora procesos comerciales y operativos/i)
+  assert.equal((result.suggested_response.match(/\?/g) ?? []).length, 1)
+  assert.deepEqual(result.applied_fact_ids, ['fact:offer:consulting'])
+  assert.doesNotMatch(JSON.stringify(result), /catalog:commercial:v1/)
 })
 
 test('pricing is handed to a human without inventing a price', () => {
@@ -76,7 +95,7 @@ test('observed outcomes are kept separate from interpretation', () => {
   const result = compileSupervisedMasterCase({
     case_ref: 'case:outcome',
     transcript: [{ kind: 'incoming', content: 'Quiero hablar con una persona.' }],
-    authorized_fact_ids: ['fact:handoff-policy'],
+    authorized_facts: [],
     observable_outcome: 'referred',
     capabilities,
   })
@@ -87,10 +106,10 @@ test('observed outcomes are kept separate from interpretation', () => {
 
 test('invalid transcripts and capabilities fail closed', () => {
   assert.throws(() => compileSupervisedMasterCase({
-    case_ref: 'case:bad', transcript: [{ kind: 'assistant', content: 'hola' }], authorized_fact_ids: [], capabilities,
+    case_ref: 'case:bad', transcript: [{ kind: 'assistant', content: 'hola' }], authorized_facts: [], capabilities,
   }), /SUPERVISED_TRANSCRIPT_INVALID/)
   assert.throws(() => compileSupervisedMasterCase({
-    case_ref: 'case:bad', transcript: [{ kind: 'incoming', content: 'hola' }], authorized_fact_ids: [],
+    case_ref: 'case:bad', transcript: [{ kind: 'incoming', content: 'hola' }], authorized_facts: [],
     capabilities: { ...capabilities, hermes_profiles: ['BAD PROFILE'] },
   }), /SUPERVISED_CAPABILITIES_INVALID/)
 })

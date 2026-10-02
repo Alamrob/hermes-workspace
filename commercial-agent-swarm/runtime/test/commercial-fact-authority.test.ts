@@ -56,8 +56,9 @@ test('rejects duplicate facts, unknown fields and expired facts', () => {
 })
 
 test('rejects oversized input, control bytes and unsafe source references', () => {
-  assert.throws(() => parseCommercialFactCatalog(' '.repeat(65537), now), /CATALOG_INVALID/)
+  assert.throws(() => parseCommercialFactCatalog(' '.repeat(16385), now), /CATALOG_INVALID/)
   assert.throws(() => parseCommercialFactCatalog(`${catalog()}\0`, now), /CATALOG_INVALID/)
   const baseFact = JSON.parse(catalog()).facts[0]
   assert.throws(() => parseCommercialFactCatalog(catalog({ facts: [{ ...baseFact, source_ref: 'https://source/?token=secret' }] }), now), /FACT_INVALID/)
+  assert.throws(() => parseCommercialFactCatalog(catalog({ facts: [{ ...baseFact, statement: 'Línea uno\nLínea dos' }] }), now), /FACT_INVALID/)
 })

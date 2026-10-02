@@ -28,6 +28,8 @@ export function loadSupervisedReviewConfig(
       '/run/controls/supervised-review-enabled', 'SUPERVISED_REVIEW_GATE_FILE_INVALID'),
     pilotScopeFile: exact(environment.SUPERVISED_REVIEW_SCOPE_FILE,
       '/run/controls/supervised-review-scope.json', 'SUPERVISED_REVIEW_SCOPE_FILE_INVALID'),
+    commercialFactCatalogFile: exact(environment.COMMERCIAL_FACT_CATALOG_FILE,
+      '/run/controls/commercial-fact-catalog.json', 'COMMERCIAL_FACT_CATALOG_FILE_INVALID'),
     expectedSecretGid: SERVICE_GID,
     chatwootBaseUrl: exact(environment.CHATWOOT_API_BASE,
       'http://proptimiza-chatwoot-web-1:3000', 'CHATWOOT_API_BASE_INVALID'),
@@ -55,6 +57,7 @@ function forbidUnsafeCapabilities(environment: Record<string, string | undefined
     'CHATWOOT_AGENT_BOT_TOKEN', 'CHATWOOT_AGENT_BOT_TOKEN_FILE', 'OPENCODE_GO_API_KEY',
     'OPENCODE_GO_API_KEY_FILE', 'HERMES_CONVERSATION_PYTHON', 'HERMES_CONVERSATION_SCRIPT',
     'SSH_AUTH_SOCK', 'CRM_API_TOKEN', 'HOSTINGER_MAIL_PASSWORD', 'APPROVAL_GATEWAY_SECRET',
+    'COMMERCIAL_FACT_CATALOG',
   ]
   for (const key of forbidden) if (environment[key] !== undefined)
     throw new Error(`SUPERVISED_REVIEW_CAPABILITY_FORBIDDEN:${key}`)

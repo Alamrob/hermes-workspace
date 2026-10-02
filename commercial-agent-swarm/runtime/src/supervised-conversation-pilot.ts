@@ -1,4 +1,5 @@
 import type { ChatwootConversationSnapshot } from './comms/chatwoot-outbound.js'
+import type { CommercialFact } from './commercial-fact-authority.js'
 import {
   compileSupervisedMasterCase,
   type ObservableOutcome,
@@ -23,7 +24,7 @@ export interface SupervisedConversationPilotInput {
   conversation_id: string
   message_id: string
   content_sha256: string
-  authorized_fact_ids: readonly string[]
+  authorized_facts: readonly Readonly<CommercialFact>[]
   observable_outcome?: ObservableOutcome
   capabilities: Omit<SupervisedMasterInput['capabilities'], 'chatwoot_read'>
 }
@@ -51,7 +52,7 @@ export async function runSupervisedConversationPilot(
   const caseFile = compileSupervisedMasterCase({
     case_ref: caseRef,
     transcript: snapshot.transcript.map(message => ({ kind: message.kind, content: message.content })),
-    authorized_fact_ids: input.authorized_fact_ids,
+    authorized_facts: input.authorized_facts,
     observable_outcome: input.observable_outcome,
     capabilities: { ...input.capabilities, chatwoot_read: true },
   })
@@ -70,6 +71,7 @@ export function formatSupervisedReviewNote(caseFile: Readonly<SupervisedMasterCa
     `Borrador no enviado: ${caseFile.suggested_response}`,
     `Siguiente acción: ${caseFile.next_action}`,
     `Derivación: ${caseFile.handoff_reason}`,
+    `Hechos aplicados: ${caseFile.applied_fact_ids.length > 0 ? caseFile.applied_fact_ids.join(',') : 'ninguno'}`,
     'Envío automático: BLOQUEADO',
   ]
   const note = values.join('\n')

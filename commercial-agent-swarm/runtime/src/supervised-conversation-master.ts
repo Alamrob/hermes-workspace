@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import type { CommercialFact, CommercialFactCategory } from './commercial-fact-authority.js'
 
 export const SUPERVISED_MASTER_AGENT_SYSTEM_PROMPT = `Eres el agente maestro supervisado de Proptimiza.
 Tu función es comprender el motivo y el objetivo del contacto, conservar el contexto ya entregado,
@@ -31,7 +32,7 @@ export interface SupervisedTranscriptMessage {
 export interface SupervisedMasterInput {
   case_ref: string
   transcript: readonly SupervisedTranscriptMessage[]
-  authorized_fact_ids: readonly string[]
+  authorized_facts: readonly Readonly<CommercialFact>[]
   observable_outcome?: ObservableOutcome
   capabilities: {
     chatwoot_read: boolean
@@ -66,6 +67,7 @@ export interface SupervisedMasterCase {
   follow_up_or_handoff: string
   handoff_reason: 'none' | 'missing_context' | 'human_requested' | 'sensitive_request' | 'out_of_scope'
   observable_outcome: ObservableOutcome
+  applied_fact_ids: readonly string[]
   proposed_chatwoot_actions: readonly {
     action: 'internal_note' | 'label' | 'team_assignment'
     status: 'available_after_review' | 'unsupported'
@@ -101,7 +103,7 @@ export function compileSupervisedMasterCase(input: SupervisedMasterInput): Reado
   validateInput(input)
   const normalized = input.transcript.map(message => ({ kind: message.kind, text: normalize(message.content) }))
   const latest = [...normalized].reverse().find(message => message.kind === 'incoming')!.text
-  const state = diagnose(latest, normalized)
+  const state = diagnose(latest, normalized, input.authorized_facts)
   const selectedProfiles = selectProfiles(state)
   const availableProfiles = new Set(input.capabilities.hermes_profiles)
   const profiles = selectedProfiles.map(profile => {
@@ -113,7 +115,7 @@ export function compileSupervisedMasterCase(input: SupervisedMasterInput): Reado
   const proposed = proposeChatwootActions(input, state)
   const outcome = input.observable_outcome ?? 'unknown'
   const uncertainties = [
-    ...(input.authorized_fact_ids.length === 0 ? ['No hay hechos comerciales autorizados vinculados al caso.'] : []),
+    ...(state.appliedFactIds.length === 0 ? ['No hay hechos comerciales autorizados aplicables al caso.'] : []),
     ...(outcome === 'unknown' ? ['El resultado observable de la conversación no está etiquetado.'] : []),
     ...(!input.capabilities.hermes_dispatch ? ['Los perfiles Hermes especializados no están cableados al flujo conversacional supervisado.'] : []),
     ...(!input.capabilities.saved_drafts ? ['Chatwoot no expone una capacidad verificada de borrador persistente para esta integración.'] : []),
@@ -136,6 +138,7 @@ export function compileSupervisedMasterCase(input: SupervisedMasterInput): Reado
     follow_up_or_handoff: state.followUp,
     handoff_reason: state.handoffReason,
     observable_outcome: outcome,
+    applied_fact_ids: Object.freeze([...state.appliedFactIds]),
     proposed_chatwoot_actions: Object.freeze(proposed),
     uncertainties: Object.freeze(uncertainties),
     send_permitted: false,
@@ -157,9 +160,11 @@ interface Diagnosis {
   response: string
   followUp: string
   handoffReason: SupervisedMasterCase['handoff_reason']
+  appliedFactIds: string[]
 }
 
-function diagnose(latest: string, transcript: readonly { kind: 'incoming' | 'assistant'; text: string }[]): Diagnosis {
+function diagnose(latest: string, transcript: readonly { kind: 'incoming' | 'assistant'; text: string }[],
+  authorizedFacts: readonly Readonly<CommercialFact>[]): Diagnosis {
   const askedBusiness = transcript.some(message => message.kind === 'assistant' && message.text === normalize(questions.business))
   const askedProblem = transcript.some(message => message.kind === 'assistant' && message.text === normalize(questions.problem))
   const specificSolution = /\b(?:whatsapp|mensajeria|automatiz\w*|cotiz\w*|seguimiento|crm|chatbot|correo|email|formular\w*|integraci\w*|agenda|atencion|ventas)\b/.test(latest)
@@ -192,6 +197,21 @@ function diagnose(latest: string, transcript: readonly { kind: 'incoming' | 'ass
   if (human) return sensitive('solicitud explícita de atención humana', 'continuar con una persona',
     'Claro. Voy a derivar la conversación al equipo de Proptimiza para que continúe una persona.', 'human_requested')
 
+  const directFact = selectDirectFact(latest, authorizedFacts)
+  if (directFact) return diagnostic('consulta factual sobre Proptimiza', 'obtener información comercial verificada',
+    directFact.statement, ['la consulta coincide con un hecho comercial aprobado'], [],
+    [`La respuesta se limita al hecho aprobado ${directFact.id}.`], [directFact.id])
+
+  const asksWhatWeOffer = /\b(?:que|cuales)\b.{0,40}\b(?:ofrece|ofrecen|servicios|productos|soluciones)\b/.test(latest)
+  const offerFacts = authorizedFacts.filter(fact => fact.category === 'identity' || fact.category === 'offer').slice(0, 2)
+  if (asksWhatWeOffer && offerFacts.length > 0 && !askedBusiness) {
+    const response = `${offerFacts.map(fact => fact.statement).join(' ')} Para orientarte bien, ¿a qué se dedica tu negocio?`
+    return diagnostic('consulta directa sobre la oferta de Proptimiza', 'conocer la oferta y evaluar encaje', response,
+      ['la consulta pide información general sobre Proptimiza'], ['actividad del negocio'],
+      ['La respuesta usa únicamente hechos comerciales aprobados y continúa con una pregunta de diagnóstico.'],
+      offerFacts.map(fact => fact.id))
+  }
+
   if (generalInterest && !askedBusiness) return diagnostic('interés general en Proptimiza', 'entender qué solución podría encajar', questions.business,
     [], ['actividad del negocio', 'proceso o problema prioritario'], ['No hay contexto suficiente para recomendar una solución.'])
   if (askedBusiness && !askedProblem) return diagnostic('descripción inicial del negocio', 'identificar el problema prioritario', questions.problem,
@@ -210,10 +230,12 @@ function diagnose(latest: string, transcript: readonly { kind: 'incoming' | 'ass
     ['No hay suficientes hechos autorizados para resolver o recomendar.'])
 }
 
-function diagnostic(reason: string, objective: string, response: string, known: string[], missing: string[], rationale: string[]): Diagnosis {
+function diagnostic(reason: string, objective: string, response: string, known: string[], missing: string[], rationale: string[],
+  appliedFactIds: string[] = []): Diagnosis {
   return { reason, objective, known, missing, urgency: 'normal', objections: [],
     recommendation: 'Continuar con un diagnóstico breve de una pregunta y someter la respuesta a revisión humana.',
-    rationale, response, followUp: 'Revisar el borrador, responder manualmente y conservar el contexto para el siguiente turno.', handoffReason: 'none' }
+    rationale, response, followUp: 'Revisar el borrador, responder manualmente y conservar el contexto para el siguiente turno.',
+    handoffReason: 'none', appliedFactIds }
 }
 
 function sensitive(reason: string, objective: string, response: string,
@@ -222,7 +244,18 @@ function sensitive(reason: string, objective: string, response: string,
     urgency: handoffReason === 'sensitive_request' ? 'sensitive' : 'elevated', objections: [reason],
     recommendation: 'Detener la automatización del caso y entregar un resumen mínimo a una persona.',
     rationale: ['La categoría requiere criterio humano o evidencia fuera del alcance del agente.'], response,
-    followUp: 'Asignar al equipo humano y confirmar que no se envió ninguna respuesta automática.', handoffReason }
+    followUp: 'Asignar al equipo humano y confirmar que no se envió ninguna respuesta automática.', handoffReason,
+    appliedFactIds: [] }
+}
+
+function selectDirectFact(latest: string, facts: readonly Readonly<CommercialFact>[]): Readonly<CommercialFact> | undefined {
+  const category: CommercialFactCategory | undefined =
+    /\b(?:horario|horarios|atienden|abierto|abren|cierran)\b/.test(latest) ? 'hours'
+      : /\b(?:integracion|integraciones|integrar|conecta|conectar|compatible)\b/.test(latest) ? 'integration'
+        : /\b(?:politica|privacidad|datos personales|terminos|condiciones)\b/.test(latest) ? 'policy'
+          : /\b(?:pueden|puede|capacidad|funciona|hace)\b/.test(latest) ? 'capability'
+            : undefined
+  return category ? facts.find(fact => fact.category === category) : undefined
 }
 
 function selectProfiles(state: Diagnosis): MasterProfile[] {
@@ -254,15 +287,25 @@ function validateInput(input: SupervisedMasterInput): void {
       throw Error('SUPERVISED_TRANSCRIPT_INVALID')
     bytes += Buffer.byteLength(message.content, 'utf8')
   }
-  if (bytes > 16384 || !Array.isArray(input.authorized_fact_ids) || input.authorized_fact_ids.length > 24
-    || new Set(input.authorized_fact_ids).size !== input.authorized_fact_ids.length
-    || input.authorized_fact_ids.some(id => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id))) throw Error('SUPERVISED_FACTS_INVALID')
+  if (bytes > 16384 || !Array.isArray(input.authorized_facts) || input.authorized_facts.length > 24
+    || new Set(input.authorized_facts.map(fact => fact.id)).size !== input.authorized_facts.length
+    || input.authorized_facts.some(fact => !isAuthorizedFact(fact))) throw Error('SUPERVISED_FACTS_INVALID')
   const capabilities = input.capabilities
   if (!capabilities || typeof capabilities !== 'object' || !Array.isArray(capabilities.hermes_profiles)
     || capabilities.hermes_profiles.some(profile => typeof profile !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(profile)))
     throw Error('SUPERVISED_CAPABILITIES_INVALID')
   for (const key of ['chatwoot_read', 'internal_notes', 'labels', 'assignments', 'saved_drafts', 'hermes_dispatch'] as const)
     if (typeof capabilities[key] !== 'boolean') throw Error('SUPERVISED_CAPABILITIES_INVALID')
+}
+
+function isAuthorizedFact(fact: Readonly<CommercialFact>): boolean {
+  return Boolean(fact && typeof fact === 'object' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(fact.id)
+    && ['identity', 'offer', 'capability', 'integration', 'policy', 'hours', 'pricing', 'result'].includes(fact.category)
+    && typeof fact.statement === 'string' && fact.statement.trim().length > 0 && fact.statement.length <= 400
+    && !/[\u0000-\u001F\u007F]/.test(fact.statement)
+    && typeof fact.source_ref === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$/.test(fact.source_ref)
+    && ['commercial_owner', 'operations', 'security', 'legal'].includes(fact.approved_by_role)
+    && typeof fact.approved_at === 'string' && typeof fact.expires_at === 'string')
 }
 
 function fingerprint(messages: readonly SupervisedTranscriptMessage[]): string {

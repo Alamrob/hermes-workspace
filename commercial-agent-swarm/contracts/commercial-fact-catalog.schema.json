@@ -22,7 +22,7 @@
         "properties": {
           "id": { "$ref": "#/$defs/id" },
           "category": { "enum": ["identity", "offer", "capability", "integration", "policy", "hours", "pricing", "result"] },
-          "statement": { "type": "string", "minLength": 1, "maxLength": 400 },
+          "statement": { "type": "string", "minLength": 1, "maxLength": 400, "pattern": "^[^\\u0000-\\u001F\\u007F]+$" },
           "source_ref": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$" },
           "approved_by_role": { "enum": ["commercial_owner", "operations", "security", "legal"] },
           "approved_at": { "type": "string", "format": "date-time" },
