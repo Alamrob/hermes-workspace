@@ -95,9 +95,13 @@ test('recognizes common mixed-language and misspelled commercial safeguards', ()
   const cases = [
     ['Please unsubscribe me from the list', 'human_requested', /calificación automática/],
     ["Don't contact me again", 'human_requested', /calificación automática/],
+    ['No m contacten por favor', 'human_requested', /calificación automática/],
     ['Necesito una cotisacion para mi negocio', 'human_requested', /cotización real/],
+    ['Cotización', 'human_requested', /cotización real/],
+    ['¿Cuánto sale?', 'human_requested', /cotización real/],
     ['How much is the service?', 'human_requested', /cotización real/],
     ['I need to talk to a human agent', 'human_requested', /equipo de Proptimiza/],
+    ['Un asesor por favor', 'human_requested', /equipo de Proptimiza/],
     ['My verification code is 123456', 'sensitive_request', /No compartas contraseñas/],
     ['I sent a voice note, please listen to it', 'missing_context', /No puedo validar/],
   ] as const
@@ -116,4 +120,14 @@ test('evaluates each chained turn from the latest text without inheriting an unr
 
   const latest = applyConversationGuardrails('En realidad necesito ordenar mis cotizaciones por WhatsApp', modelReply)
   assert.deepEqual(latest, modelReply)
+})
+
+test('does not over-trigger common commercial or technical language', () => {
+  for (const message of [
+    'Necesito automatizar facturación y seguimiento',
+    'Quiero un agente virtual para responder consultas',
+    'Tenemos una emergencia comercial porque se pierden leads',
+    'Busco un sistema cotizador automático para técnicos',
+    'La palabra adjunto debe aparecer en una plantilla',
+  ]) assert.deepEqual(applyConversationGuardrails(message, modelReply), modelReply)
 })

@@ -27,7 +27,7 @@ export function applyConversationGuardrails(
   reply: GuardedConversationReply,
 ): Readonly<GuardedConversationReply> {
   const text = normalize(latestText)
-  if (/(?:\bno (?:me )?(?:escriban|escribas|contacten|contactes|llamen|llames)\b|\bdejar de recibir\b|\b(?:darme de baja|dame de baja|solicito la baja|sacame de (?:la )?lista)\b|\b(?:borren|borra|elimina|eliminen) (?:mi (?:numero|contacto)|mis datos)\b|\b(?:do not|don'?t) (?:message|contact|call) me\b|\b(?:unsubscribe|remove me from (?:the )?list)\b|^\s*(?:stop|baja)\s*$)/.test(text))
+  if (/(?:\bno (?:me |m )?(?:escriban|escribas|contacten|contactes|llamen|llames)\b|\bdejar de recibir\b|\b(?:darme de baja|dame de baja|solicito la baja|sacame de (?:la )?lista)\b|\b(?:borren|borra|elimina|eliminen) (?:mi (?:numero|contacto)|mis datos)\b|\b(?:do not|don'?t) (?:message|contact|call) me\b|\b(?:unsubscribe|remove me from (?:the )?list)\b|^\s*(?:stop|baja)\s*$)/.test(text))
     return Object.freeze({ response: responses.optOut, handoff_reason: 'human_requested' })
   if (/\b(?:emergencia medica|medical emergency|riesgo vital|ambulancia|me quiero matar|quiero suicidarme|suicid\w*|dolor (?:en el )?pecho|no puedo respirar|cant breathe|cannot breathe)\b/.test(text))
     return Object.freeze({ response: responses.emergency, handoff_reason: 'sensitive_request' })
@@ -45,11 +45,11 @@ export function applyConversationGuardrails(
   if (/\b(venden|tienen|ofrecen|instalan)\b/.test(text)
     && !/\b(automatizacion|whatsapp|cotizacion|seguimiento|chat|ventas|proptimiza|plan|servicio)\b/.test(text))
     return Object.freeze({ response: responses.identityScope, handoff_reason: 'none' })
-  if (/\b(precio|precios|price|pricing|how much|cuanto cuesta|cuanto cobran|costo|costos|valor|valores|tarifa\w*|descuento\w*|presupuesto)\b/.test(text)
+  if (/\b(precio|precios|price|pricing|how much|cuanto cuesta|cuanto cobran|cuanto sale|costo|costos|valor|valores|tarifa\w*|descuento\w*|presupuesto|coti[sz]acion)\b/.test(text)
     || /\b(?:quiero|necesito|solicito|envienme|pueden darme|send me) (?:una |a )?(?:coti[sz]acion|quote)\b/.test(text))
     return Object.freeze({ response: responses.pricing, handoff_reason: 'human_requested' })
   if (/\b(?:quiero|necesito|prefiero|puedo|podria) (?:hablar|conversar|comunicarme|ser atendid\w*) (?:con )?(?:una? )?(?:persona|humano|agente|ejecutiv\w*|asesor\w*)\b/.test(text)
-    || /\b(?:agente humano|atencion humana|hablar con alguien|persona real|human agent|talk to (?:a )?(?:person|human|agent))\b/.test(text))
+    || /\b(?:agente humano|atencion humana|hablar con alguien|hablar con (?:ventas|soporte)|persona real|(?:asesor|ejecutivo|persona) por favor|human agent|talk to (?:a )?(?:person|human|agent))\b/.test(text))
     return Object.freeze({ response: responses.human, handoff_reason: 'human_requested' })
   if (/\b(?:adjunt\w*|attachment|file|archivo|documento|pdf|audio|voice note|nota de voz|image|imagen|photo|foto|screenshot|captura)\b/.test(text)
     && /\b(?:envie|envio|mande|mando|subi|adjunte|revisa|revisar|lee|leer|escucha|escuchar|mira|mirar|sent|uploaded|review|read|listen|look)\b/.test(text))
