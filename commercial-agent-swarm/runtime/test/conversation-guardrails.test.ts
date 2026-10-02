@@ -51,3 +51,42 @@ test('normalizes accents and never mutates the model reply', () => {
   assert.deepEqual(mutable, { response: 'Texto original.', handoff_reason: 'none' })
   assert.equal(Object.isFrozen(result), true)
 })
+
+test('stops automated qualification for opt-out requests', () => {
+  for (const message of ['No me escribas más', 'Quiero dejar de recibir mensajes', 'Dame de baja', 'STOP']) {
+    const result = applyConversationGuardrails(message, modelReply)
+    assert.equal(result.handoff_reason, 'human_requested')
+    assert.match(result.response, /No continuaré con la calificación automática/)
+    assert.doesNotMatch(result.response, /registrad[oa]|eliminad[oa]|confirmad[oa]/i)
+  }
+})
+
+test('never handles payment evidence or credential material autonomously', () => {
+  for (const message of ['Adjunto mi comprobante de pago', '¿Dónde pido un reembolso?', 'Tengo una factura con un cobro duplicado']) {
+    const result = applyConversationGuardrails(message, modelReply)
+    assert.equal(result.handoff_reason, 'sensitive_request')
+    assert.match(result.response, /No puedo confirmar pagos/)
+  }
+
+  for (const message of ['Te envío mi contraseña', 'Mi código de verificación es 123456', 'Aquí está la clave API']) {
+    const result = applyConversationGuardrails(message, modelReply)
+    assert.equal(result.handoff_reason, 'sensitive_request')
+    assert.match(result.response, /No compartas contraseñas/)
+    assert.doesNotMatch(result.response, /123456/)
+  }
+})
+
+test('contains emergencies and unsupported attachments without inventing inspection', () => {
+  const emergency = applyConversationGuardrails('No puedo respirar, necesito una ambulancia', modelReply)
+  assert.equal(emergency.handoff_reason, 'sensitive_request')
+  assert.match(emergency.response, /servicios de emergencia/)
+  assert.doesNotMatch(emergency.response, /diagnóstico|medicamento|tratamiento/i)
+
+  const attachment = applyConversationGuardrails('Te envié un audio, escúchalo y dime qué hacer', modelReply)
+  assert.equal(attachment.handoff_reason, 'missing_context')
+  assert.match(attachment.response, /No puedo validar el contenido/)
+})
+
+test('does not over-trigger the emergency guard on ordinary commercial urgency', () => {
+  assert.deepEqual(applyConversationGuardrails('Necesito automatizar esto con urgencia', modelReply), modelReply)
+})
