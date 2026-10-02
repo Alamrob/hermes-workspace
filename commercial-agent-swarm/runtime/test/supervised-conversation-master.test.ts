@@ -24,6 +24,13 @@ const approvedOffer = Object.freeze({
   approved_at: '2026-10-02T12:00:00.000Z', expires_at: '2026-10-03T12:00:00.000Z',
 } satisfies CommercialFact)
 
+const approvedIntegration = Object.freeze({
+  id: 'fact:integration:chatwoot', category: 'integration',
+  statement: 'La integración aprobada conecta Chatwoot con el flujo supervisado de atención.',
+  source_ref: 'catalog:commercial:v1', approved_by_role: 'operations',
+  approved_at: '2026-10-02T12:00:00.000Z', expires_at: '2026-10-03T12:00:00.000Z',
+} satisfies CommercialFact)
+
 test('general interest starts a neutral one-question diagnosis and never sends', () => {
   const result = compile([{ kind: 'incoming', content: 'Hola, estoy interesado en sus productos.' }])
   assert.equal(result.suggested_response, 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?')
@@ -60,6 +67,27 @@ test('a direct offer question uses only resolved approved facts and records thei
   assert.equal((result.suggested_response.match(/\?/g) ?? []).length, 1)
   assert.deepEqual(result.applied_fact_ids, ['fact:offer:consulting'])
   assert.doesNotMatch(JSON.stringify(result), /catalog:commercial:v1/)
+})
+
+test('a specific integration question cannot consume an unrelated fact from the same category', () => {
+  const result = compileSupervisedMasterCase({
+    case_ref: 'case:integration-mismatch',
+    transcript: [{ kind: 'incoming', content: '¿Se integra con Salesforce?' }],
+    authorized_facts: [approvedIntegration], capabilities,
+  })
+  assert.deepEqual(result.applied_fact_ids, [])
+  assert.doesNotMatch(result.suggested_response, /chatwoot/i)
+  assert.ok(result.uncertainties.some(item => /no hay hechos comerciales autorizados aplicables/i.test(item)))
+})
+
+test('a generic integration question may use the sole approved integration fact', () => {
+  const result = compileSupervisedMasterCase({
+    case_ref: 'case:integration-generic',
+    transcript: [{ kind: 'incoming', content: '¿Qué integraciones tienen?' }],
+    authorized_facts: [approvedIntegration], capabilities,
+  })
+  assert.deepEqual(result.applied_fact_ids, ['fact:integration:chatwoot'])
+  assert.match(result.suggested_response, /chatwoot/i)
 })
 
 test('pricing is handed to a human without inventing a price', () => {

@@ -255,7 +255,33 @@ function selectDirectFact(latest: string, facts: readonly Readonly<CommercialFac
         : /\b(?:politica|privacidad|datos personales|terminos|condiciones)\b/.test(latest) ? 'policy'
           : /\b(?:pueden|puede|capacidad|funciona|hace)\b/.test(latest) ? 'capability'
             : undefined
-  return category ? facts.find(fact => fact.category === category) : undefined
+  if (!category) return undefined
+  const candidates = facts.filter(fact => fact.category === category)
+  if (candidates.length !== 1) return undefined
+  const candidate = candidates[0]!
+  if (isGenericFactQuestion(latest, category)) return candidate
+  const queryTerms = materialTerms(latest, category)
+  const factTerms = materialTerms(normalize(candidate.statement), category)
+  return [...queryTerms].some(term => factTerms.has(term)) ? candidate : undefined
+}
+
+function isGenericFactQuestion(latest: string, category: CommercialFactCategory): boolean {
+  const patterns: Partial<Record<CommercialFactCategory, RegExp>> = {
+    hours: /\b(?:cual|que) (?:es )?(?:su |el )?horario\b|\bque horarios? (?:tienen|manejan)\b/,
+    integration: /\b(?:que|cuales) integraciones? (?:tienen|ofrecen|soportan|manejan)\b|\bcon que (?:se )?integran\b/,
+    policy: /\b(?:cual|que) (?:es )?(?:su |la )?politica\b|\bcomo (?:tratan|manejan) (?:mis |los )?datos\b/,
+    capability: /\b(?:que|cuales) (?:pueden hacer|capacidades? (?:tienen|ofrecen))\b|\bcomo funciona\b/,
+  }
+  return patterns[category]?.test(latest) ?? false
+}
+
+function materialTerms(value: string, category: CommercialFactCategory): Set<string> {
+  const ignored = new Set([
+    'con', 'cual', 'cuales', 'como', 'de', 'del', 'el', 'en', 'es', 'esta', 'integracion', 'integraciones',
+    'integrar', 'la', 'las', 'lo', 'los', 'me', 'mi', 'mis', 'para', 'politica', 'por', 'puede', 'pueden',
+    'que', 'se', 'su', 'sus', 'tiene', 'tienen', 'un', 'una', 'y', category,
+  ])
+  return new Set(value.split(/[^a-z0-9]+/).filter(term => term.length >= 4 && !ignored.has(term)))
 }
 
 function selectProfiles(state: Diagnosis): MasterProfile[] {
