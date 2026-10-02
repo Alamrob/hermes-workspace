@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proptimiza.local/contracts/supervised-conversation-master.schema.json",
+  "title": "Proptimiza supervised conversation master case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "case_ref",
+    "evidence_fingerprint",
+    "contact_reason",
+    "customer_objective",
+    "known_context",
+    "missing_information",
+    "urgency",
+    "relevant_questions_or_objections",
+    "profiles",
+    "recommendation",
+    "rationale",
+    "suggested_response",
+    "next_action",
+    "follow_up_or_handoff",
+    "handoff_reason",
+    "observable_outcome",
+    "proposed_chatwoot_actions",
+    "uncertainties",
+    "send_permitted",
+    "automatic_reply_permitted",
+    "human_review_required"
+  ],
+  "properties": {
+    "schema": { "const": "proptimiza-supervised-conversation-master.v1" },
+    "case_ref": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "evidence_fingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "contact_reason": { "$ref": "#/$defs/shortText" },
+    "customer_objective": { "$ref": "#/$defs/shortText" },
+    "known_context": { "$ref": "#/$defs/textList" },
+    "missing_information": { "$ref": "#/$defs/textList" },
+    "urgency": { "enum": ["normal", "elevated", "sensitive"] },
+    "relevant_questions_or_objections": { "$ref": "#/$defs/textList" },
+    "profiles": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["profile", "execution", "hermes_profile_id"],
+        "properties": {
+          "profile": {
+            "enum": [
+              "diagnosis_intent",
+              "care_resolution",
+              "consultative_sales",
+              "brand_communication",
+              "conversation_analysis",
+              "quality_control",
+              "human_escalation"
+            ]
+          },
+          "execution": { "enum": ["internal_stage", "hermes_profile"] },
+          "hermes_profile_id": {
+            "oneOf": [
+              { "type": "null" },
+              { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$" }
+            ]
+          }
+        }
+      }
+    },
+    "recommendation": { "$ref": "#/$defs/shortText" },
+    "rationale": { "$ref": "#/$defs/textList" },
+    "suggested_response": { "type": "string", "minLength": 1, "maxLength": 1200 },
+    "next_action": { "enum": ["human_review", "human_handoff"] },
+    "follow_up_or_handoff": { "$ref": "#/$defs/shortText" },
+    "handoff_reason": { "enum": ["none", "missing_context", "human_requested", "sensitive_request", "out_of_scope"] },
+    "observable_outcome": { "enum": ["resolved", "sale", "follow_up", "abandoned", "referred", "pending", "unknown"] },
+    "proposed_chatwoot_actions": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action", "status", "value"],
+        "properties": {
+          "action": { "enum": ["internal_note", "label", "team_assignment"] },
+          "status": { "enum": ["available_after_review", "unsupported"] },
+          "value": { "type": "string", "minLength": 1, "maxLength": 128 }
+        }
+      }
+    },
+    "uncertainties": { "$ref": "#/$defs/textList" },
+    "send_permitted": { "const": false },
+    "automatic_reply_permitted": { "const": false },
+    "human_review_required": { "const": true }
+  },
+  "$defs": {
+    "shortText": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "textList": {
+      "type": "array",
+      "maxItems": 24,
+      "items": { "type": "string", "minLength": 1, "maxLength": 512 }
+    }
+  }
+}

@@ -19,23 +19,26 @@ export interface ChatwootConversationSnapshot {
   human_replied: boolean
 }
 
-export class ChatwootOutboundClient {
-  constructor(private readonly options: {
+interface ChatwootReadClientOptions {
     baseUrl: string
     accountId: string
     inboxId: string
     readToken: () => Promise<string>
-    sendToken: () => Promise<string>
     machineSecret: () => Promise<string>
     nowSeconds?: () => number
     nonce?: () => string
     requestTimeoutMs?: number
     dispatcher?: Dispatcher
-  }) {
+    automationRole?: 'responder' | 'reviewer'
+}
+
+export class ChatwootReadClient {
+  constructor(protected readonly options: ChatwootReadClientOptions) {
     const url = new URL(options.baseUrl)
     if (url.protocol !== 'http:' || url.username || url.password || url.search || url.hash
       || url.pathname !== '/' || !/^proptimiza-chatwoot-web-1(?::3000)?$/.test(url.host)
-      || !DECIMAL.test(options.accountId) || !DECIMAL.test(options.inboxId))
+      || !DECIMAL.test(options.accountId) || !DECIMAL.test(options.inboxId)
+      || !['responder', 'reviewer'].includes(options.automationRole ?? 'responder'))
       throw new Error('CHATWOOT_OUTBOUND_CONFIG_INVALID')
   }
 
@@ -66,33 +69,7 @@ export class ChatwootOutboundClient {
     })
   }
 
-  async send(conversationId: string, content: string): Promise<{ message_id: string }> {
-    decimal(conversationId)
-    if (typeof content !== 'string' || !content.trim() || content.includes('\0')
-      || Buffer.byteLength(content, 'utf8') > 2000) throw new Error('CHATWOOT_REPLY_INVALID')
-    const token = await this.options.sendToken()
-    const response = record(await this.call('POST',
-      `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/messages`, token, {
-        content,
-        message_type: 'outgoing',
-        private: false,
-        content_type: 'text',
-      }))
-    const id = normalizeId(response.id)
-    return Object.freeze({ message_id: id })
-  }
-
-  async assignTeam(conversationId: string, teamId: string): Promise<{ team_id: string }> {
-    decimal(conversationId); decimal(teamId)
-    const token = await this.options.readToken()
-    const path = `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/assignments`
-    const response = record(await this.call('POST', path, token, { team_id: Number(teamId) }))
-    const id = normalizeId(response.id)
-    if (id !== teamId) throw new Error('CHATWOOT_TEAM_ASSIGNMENT_INVALID')
-    return Object.freeze({ team_id: id })
-  }
-
-  private async call(method: 'GET' | 'POST', path: string, token: string, json?: Record<string, unknown>): Promise<unknown> {
+  protected async call(method: 'GET' | 'POST', path: string, token: string, json?: Record<string, unknown>): Promise<unknown> {
     if (!token || token.length > 8192 || token.includes('\0')) throw new Error('CHATWOOT_TOKEN_INVALID')
     const secret = await this.options.machineSecret()
     if (secret.length < 32 || secret.length > 4096 || secret.includes('\0'))
@@ -115,6 +92,7 @@ export class ChatwootOutboundClient {
         'x-proptimiza-automation-timestamp': String(timestamp),
         'x-proptimiza-automation-nonce': nonce,
         'x-proptimiza-automation-signature': signature,
+        ...(this.options.automationRole === 'reviewer' ? { 'x-proptimiza-automation-role': 'reviewer' } : {}),
         ...(json ? { 'content-type': 'application/json' } : {}),
       },
       body: body || undefined,
@@ -127,6 +105,73 @@ export class ChatwootOutboundClient {
     if (response.statusCode < 200 || response.statusCode >= 300)
       throw new ChatwootHttpError(response.statusCode)
     try { return JSON.parse(text) } catch { throw new Error('CHATWOOT_RESPONSE_INVALID') }
+  }
+}
+
+export class ChatwootOutboundClient extends ChatwootReadClient {
+  private readonly sendToken: () => Promise<string>
+
+  constructor(options: ChatwootReadClientOptions & { sendToken: () => Promise<string> }) {
+    super(options)
+    this.sendToken = options.sendToken
+  }
+
+  async send(conversationId: string, content: string): Promise<{ message_id: string }> {
+    decimal(conversationId)
+    if (typeof content !== 'string' || !content.trim() || content.includes('\0')
+      || Buffer.byteLength(content, 'utf8') > 2000) throw new Error('CHATWOOT_REPLY_INVALID')
+    const token = await this.sendToken()
+    const response = record(await this.call('POST',
+      `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/messages`, token, {
+        content,
+        message_type: 'outgoing',
+        private: false,
+        content_type: 'text',
+      }))
+    const id = normalizeId(response.id)
+    return Object.freeze({ message_id: id })
+  }
+
+  async assignTeam(conversationId: string, teamId: string): Promise<{ team_id: string }> {
+    decimal(conversationId); decimal(teamId)
+    const token = await this.options.readToken()
+    const path = `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/assignments`
+    const response = record(await this.call('POST', path, token, { team_id: Number(teamId) }))
+    const id = normalizeId(response.id)
+    if (id !== teamId) throw new Error('CHATWOOT_TEAM_ASSIGNMENT_INVALID')
+    return Object.freeze({ team_id: id })
+  }
+
+}
+
+export class ChatwootReviewClient extends ChatwootReadClient {
+  constructor(options: Omit<ChatwootReadClientOptions, 'automationRole'>) {
+    super({ ...options, automationRole: 'reviewer' })
+  }
+
+  async createPrivateNote(conversationId: string, content: string): Promise<{ message_id: string }> {
+    decimal(conversationId)
+    if (typeof content !== 'string' || !content.trim() || content.includes('\0')
+      || Buffer.byteLength(content, 'utf8') > 2000) throw new Error('CHATWOOT_REVIEW_NOTE_INVALID')
+    const response = record(await this.call('POST',
+      `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/messages`,
+      await this.options.readToken(), {
+        content,
+        message_type: 'outgoing',
+        private: true,
+        content_type: 'text',
+      }))
+    return Object.freeze({ message_id: normalizeId(response.id) })
+  }
+
+  async assignTeam(conversationId: string, teamId: string): Promise<{ team_id: string }> {
+    decimal(conversationId); decimal(teamId)
+    const response = record(await this.call('POST',
+      `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/assignments`,
+      await this.options.readToken(), { team_id: Number(teamId) }))
+    const id = normalizeId(response.id)
+    if (id !== teamId) throw new Error('CHATWOOT_TEAM_ASSIGNMENT_INVALID')
+    return Object.freeze({ team_id: id })
   }
 }
 

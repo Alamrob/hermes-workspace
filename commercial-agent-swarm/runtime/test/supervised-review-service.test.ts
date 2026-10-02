@@ -1,0 +1,181 @@
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import { ChatwootHttpError, type ChatwootConversationSnapshot } from '../src/comms/chatwoot-outbound.js'
+import type { ChatwootIncomingEvent } from '../src/comms/chatwoot-webhook.js'
+import {
+  processSupervisedReviewEvent,
+  type SupervisedReviewClientPort,
+} from '../src/supervised-review-service.js'
+import { SupervisedReviewStore } from '../src/supervised-review-store.js'
+
+function inbound(text = 'Hola, estoy interesado en sus productos.'): ChatwootIncomingEvent {
+  return {
+    schema_version: 'platform-chatwoot-incoming.v1', event_id: `cw1_${'41'.padStart(64, '0')}`,
+    tenant_id: 'proptimiza', deployment_id: 'chatwoot-production', connector_id: 'whatsapp-supervised-review',
+    account_id: '1', inbox_id: '1', conversation_id: '25', message_id: '41',
+    correlation_id: 'correlation', causation_id: 'causation', trace_id: '11111111-1111-5111-8111-111111111111',
+    occurred_at: '2026-10-02T12:00:00.000Z', received_at: '2026-10-02T12:00:01.000Z',
+    data_classification: 'restricted_external', instruction_eligible: false,
+    content: { trust: 'untrusted_data', text }, semantic_sha256: 'a'.repeat(64), raw_sha256: 'b'.repeat(64),
+  }
+}
+
+function snapshot(text: string, overrides: Partial<ChatwootConversationSnapshot> = {}): ChatwootConversationSnapshot {
+  return {
+    target: { message_id: '41', sequence: 41, kind: 'incoming', content: text },
+    transcript: [{ message_id: '41', sequence: 41, kind: 'incoming', content: text }],
+    latest_message_id: '41', current: true, human_replied: false, ...overrides,
+  }
+}
+
+async function fixture(text = 'Hola, estoy interesado en sus productos.') {
+  const root = await mkdtemp(join(tmpdir(), 'proptimiza-review-service-'))
+  const path = join(root, 'state', 'state.json')
+  const store = new SupervisedReviewStore(path, () => new Date('2026-10-02T12:00:01Z'))
+  await store.initialize()
+  const event = inbound(text)
+  await store.commit(event)
+  const record = await store.get(event.event_id)
+  assert.ok(record)
+  return { root, store, record, text }
+}
+
+function clientFor(text: string, actions: string[], overrides: Partial<SupervisedReviewClientPort> = {}): SupervisedReviewClientPort {
+  return {
+    snapshot: async (_conversation, _message, hash) => {
+      actions.push('read')
+      assert.equal(hash, createHash('sha256').update(text, 'utf8').digest('hex'))
+      return snapshot(text)
+    },
+    createPrivateNote: async (_conversation, note) => {
+      actions.push('private-note')
+      assert.match(note, /REVISIÓN HUMANA OBLIGATORIA/)
+      assert.doesNotMatch(note, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))
+      return { message_id: '91' }
+    },
+    assignTeam: async (_conversation, team) => { actions.push(`assign:${team}`); return { team_id: team } },
+    ...overrides,
+  }
+}
+
+test('stages one private note for review and has no public-send dependency', async () => {
+  const f = await fixture()
+  try {
+    const actions: string[] = []
+    await processSupervisedReviewEvent(f.store, clientFor(f.text, actions), f.record, true, true)
+    const record = await f.store.get(f.record.event_id)
+    assert.deepEqual(actions, ['read', 'private-note'])
+    assert.equal(record?.status, 'staged')
+    assert.equal(record?.private_note_message_id, '91')
+    assert.equal(record?.team_assigned, false)
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('stages a note before assigning an explicit human handoff to team 1', async () => {
+  const f = await fixture('Quiero hablar con una persona.')
+  try {
+    const actions: string[] = []
+    await processSupervisedReviewEvent(f.store, clientFor(f.text, actions), f.record, true, true)
+    const record = await f.store.get(f.record.event_id)
+    assert.deepEqual(actions, ['read', 'private-note', 'assign:1'])
+    assert.equal(record?.status, 'staged')
+    assert.equal(record?.handoff_reason, 'human_requested')
+    assert.equal(record?.team_assigned, true)
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('holds without mutation when the gate is disabled', async () => {
+  const f = await fixture()
+  try {
+    const actions: string[] = []
+    await processSupervisedReviewEvent(f.store, clientFor(f.text, actions), f.record, false, true)
+    assert.deepEqual(actions, [])
+    assert.equal((await f.store.get(f.record.event_id))?.stop_code, 'SUPERVISED_REVIEW_GATE_DISABLED')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('holds an out-of-scope conversation before reading Chatwoot', async () => {
+  const f = await fixture()
+  try {
+    const actions: string[] = []
+    await processSupervisedReviewEvent(f.store, clientFor(f.text, actions), f.record, true, false)
+    assert.deepEqual(actions, [])
+    assert.equal((await f.store.get(f.record.event_id))?.stop_code, 'SUPERVISED_REVIEW_OUT_OF_SCOPE')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('holds when a human has replied before preparation', async () => {
+  const f = await fixture()
+  try {
+    const actions: string[] = []
+    const client = clientFor(f.text, actions, {
+      snapshot: async () => { actions.push('read'); return snapshot(f.text, { current: false, human_replied: true }) },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true)
+    assert.deepEqual(actions, ['read'])
+    assert.equal((await f.store.get(f.record.event_id))?.stop_code, 'HUMAN_REPLY_OBSERVED')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('quarantines an uncertain note result without retrying', async () => {
+  const f = await fixture()
+  try {
+    const actions: string[] = []
+    const client = clientFor(f.text, actions, {
+      createPrivateNote: async () => { actions.push('private-note'); throw new Error('NETWORK_TIMEOUT') },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true)
+    assert.deepEqual(actions, ['read', 'private-note'])
+    const record = await f.store.get(f.record.event_id)
+    assert.equal(record?.status, 'uncertain')
+    assert.equal(record?.stop_code, 'REVIEW_NOTE_RESULT_UNCERTAIN')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('keeps the private note and holds a rejected human assignment', async () => {
+  const f = await fixture('Quiero hablar con una persona.')
+  try {
+    const actions: string[] = []
+    const client = clientFor(f.text, actions, {
+      assignTeam: async () => { actions.push('assign:1'); throw new ChatwootHttpError(403) },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true)
+    assert.deepEqual(actions, ['read', 'private-note', 'assign:1'])
+    const record = await f.store.get(f.record.event_id)
+    assert.equal(record?.status, 'held')
+    assert.equal(record?.private_note_message_id, '91')
+    assert.equal(record?.stop_code, 'HUMAN_HANDOFF_ASSIGNMENT_REJECTED_403')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('quarantines a malformed note receipt because the remote effect may exist', async () => {
+  const f = await fixture()
+  try {
+    const actions: string[] = []
+    const client = clientFor(f.text, actions, {
+      createPrivateNote: async () => { actions.push('private-note'); return { message_id: 'invalid' } },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true)
+    assert.deepEqual(actions, ['read', 'private-note'])
+    assert.equal((await f.store.get(f.record.event_id))?.status, 'uncertain')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('quarantines a mismatched assignment receipt after preserving the private note id', async () => {
+  const f = await fixture('Quiero hablar con una persona.')
+  try {
+    const actions: string[] = []
+    const client = clientFor(f.text, actions, {
+      assignTeam: async () => { actions.push('assign:1'); return { team_id: '2' } },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true)
+    const record = await f.store.get(f.record.event_id)
+    assert.deepEqual(actions, ['read', 'private-note', 'assign:1'])
+    assert.equal(record?.status, 'uncertain')
+    assert.equal(record?.private_note_message_id, '91')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
