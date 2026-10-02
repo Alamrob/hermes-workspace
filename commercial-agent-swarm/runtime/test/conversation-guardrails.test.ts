@@ -57,7 +57,11 @@ test('starts broad commercial interest with diagnosis instead of a WhatsApp pitc
     assert.equal((result.response.match(/\?/g) ?? []).length, 1)
   }
 
-  assert.deepEqual(applyConversationGuardrails('Quiero ordenar mis cotizaciones por WhatsApp', modelReply), modelReply)
+  for (const message of [
+    'Quiero ordenar mis cotizaciones por WhatsApp',
+    'Estoy interesado en sus servicios de WhatsApp',
+    'Quisiera información sobre sus soluciones de automatización',
+  ]) assert.deepEqual(applyConversationGuardrails(message, modelReply), modelReply)
 })
 
 test('normalizes accents and never mutates the model reply', () => {
