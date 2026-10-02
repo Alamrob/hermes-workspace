@@ -90,3 +90,30 @@ test('contains emergencies and unsupported attachments without inventing inspect
 test('does not over-trigger the emergency guard on ordinary commercial urgency', () => {
   assert.deepEqual(applyConversationGuardrails('Necesito automatizar esto con urgencia', modelReply), modelReply)
 })
+
+test('recognizes common mixed-language and misspelled commercial safeguards', () => {
+  const cases = [
+    ['Please unsubscribe me from the list', 'human_requested', /calificación automática/],
+    ["Don't contact me again", 'human_requested', /calificación automática/],
+    ['Necesito una cotisacion para mi negocio', 'human_requested', /cotización real/],
+    ['How much is the service?', 'human_requested', /cotización real/],
+    ['I need to talk to a human agent', 'human_requested', /equipo de Proptimiza/],
+    ['My verification code is 123456', 'sensitive_request', /No compartas contraseñas/],
+    ['I sent a voice note, please listen to it', 'missing_context', /No puedo validar/],
+  ] as const
+  for (const [message, reason, response] of cases) {
+    const result = applyConversationGuardrails(message, modelReply)
+    assert.equal(result.handoff_reason, reason)
+    assert.match(result.response, response)
+    assert.doesNotMatch(result.response, /123456/)
+  }
+})
+
+test('evaluates each chained turn from the latest text without inheriting an unrelated guard', () => {
+  const first = applyConversationGuardrails('¿Dónde invertir mi dinero?', modelReply)
+  assert.equal(first.handoff_reason, 'none')
+  assert.match(first.response, /No realizo búsquedas externas/)
+
+  const latest = applyConversationGuardrails('En realidad necesito ordenar mis cotizaciones por WhatsApp', modelReply)
+  assert.deepEqual(latest, modelReply)
+})
