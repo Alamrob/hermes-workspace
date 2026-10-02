@@ -4,9 +4,11 @@ export interface GuardedConversationReply {
 }
 
 const responses = Object.freeze({
+  diagnosticStart: 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?',
   optOut: 'Entendido. No continuaré con la calificación automática. Voy a derivar tu solicitud de baja al equipo para que aplique la supresión correspondiente.',
   emergency: 'No puedo atender emergencias médicas ni situaciones de riesgo. Si existe peligro inmediato, contacta ahora a los servicios de emergencia de tu zona. No compartas datos sensibles por este chat.',
   credential: 'No compartas contraseñas, códigos, tokens, claves API ni enlaces de acceso por este chat. Voy a derivar el caso para una revisión segura.',
+  internalAccess: 'No puedo acceder a sistemas, cuentas o herramientas internas desde este chat ni ejecutar comandos. Puedo explicar cómo Proptimiza integra procesos de forma controlada; voy a derivar esta solicitud para revisión humana.',
   payment: 'No puedo confirmar pagos, cobros, facturas, devoluciones ni reembolsos desde este canal. Voy a derivar el caso a una persona para revisión con evidencia, sin pedirte credenciales ni códigos.',
   attachment: 'No puedo validar el contenido de ese archivo, audio o imagen desde este flujo. Describe en una frase qué necesitas, sin incluir datos sensibles, o espera la revisión de una persona.',
   complaint: 'Lamento la situación. Voy a derivar tu reclamo para revisión humana. Por favor no compartas contraseñas, códigos ni otros datos sensibles por este chat.',
@@ -33,6 +35,10 @@ export function applyConversationGuardrails(
     return Object.freeze({ response: responses.emergency, handoff_reason: 'sensitive_request' })
   if (/\b(?:contrasen\w*|password|clave api|api key|token|codigo (?:de )?(?:acceso|verificacion|seguridad)|verification code|access code|one time code|otp|secreto|secret key)\b/.test(text))
     return Object.freeze({ response: responses.credential, handoff_reason: 'sensitive_request' })
+  if (/\b(?:(?:puedes|podrias|quiero que|necesito que|debes) (?:te )?(?:ingres(?:ar|es)|entr(?:ar|es)|acced(?:er|as)|abr(?:ir|as)|conect(?:arte|ar|es)|us(?:ar|es))|(?:ingresa|entra|accede|abre|conectate|conecta|usa)) (?:a |al |en |por )?(?:looking|paperclip|hermes|docker|ssh|servidor(?:es)?|base(?:s)? de datos|sistema(?:s)? intern\w*|cuenta(?:s)? intern\w*)\b/.test(text)
+    || /\b(?:ejecuta|corre|lanza) (?:un |el )?(?:comando|script|terminal|shell)\b/.test(text)
+    || /\b(?:muestra(?:me)?|revela(?:me)?|dame|comparte(?:me)?) (?:tu |el )?(?:prompt|instrucciones internas|configuracion interna|secretos internos)\b/.test(text))
+    return Object.freeze({ response: responses.internalAccess, handoff_reason: 'sensitive_request' })
   if (/\b(?:pago|pague|pagamos|payment|transferencia|comprobante|factura|invoice|cobro|cargo|chargeback|devolucion|reembolso|refund)\b/.test(text))
     return Object.freeze({ response: responses.payment, handoff_reason: 'sensitive_request' })
   if (/\b(reclamo|queja|denuncia|estafa|fraude|abogad\w*|legal|demanda|furios\w*|enojad\w*|molest\w*)\b/.test(text))
@@ -42,6 +48,10 @@ export function applyConversationGuardrails(
     return Object.freeze({ response: responses.identity, handoff_reason: 'human_requested' })
   if (/\b(alianza|asociarnos|asociarse|sociedad|ser socio|socio comercial|partnership|partner)\b/.test(text))
     return Object.freeze({ response: responses.partnership, handoff_reason: 'human_requested' })
+  if (/\b(?:estoy|estamos|soy|somos)?\s*interesad\w* (?:en|por) (?:sus|los|las|un|una)?\s*(?:productos?|servicios?|soluciones?)\b/.test(text)
+    || /\b(?:quiero|quisiera|necesito|busco) (?:mas )?(?:informacion|conocer|saber) (?:sobre|de|acerca de)?\s*(?:proptimiza|sus (?:productos?|servicios?|soluciones?)|los (?:productos?|servicios?|soluciones?))\b/.test(text)
+    || /\b(?:que (?:hace|hacen|ofrece|ofrecen)|a que se dedica) proptimiza\b/.test(text))
+    return Object.freeze({ response: responses.diagnosticStart, handoff_reason: 'none' })
   if (/\b(venden|tienen|ofrecen|instalan)\b/.test(text)
     && !/\b(automatizacion|whatsapp|cotizacion|seguimiento|chat|ventas|proptimiza|plan|servicio)\b/.test(text))
     return Object.freeze({ response: responses.identityScope, handoff_reason: 'none' })
