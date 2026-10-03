@@ -1,6 +1,7 @@
 import { createHash, generateKeyPairSync } from 'node:crypto'
 import type { Server } from 'node:http'
 import { createServer } from 'node:http'
+import { canonicalJson } from './canonical.js'
 import { createChatwootIngressHandler } from './comms/chatwoot-http.js'
 import {
   CHATWOOT_OWNED_OPERATIONAL_LABELS,
@@ -9,10 +10,12 @@ import {
   chatwootOwnedLabelsForSha256,
   chatwootOwnedLabelsSha256,
   type ChatwootConversationSnapshot,
+  type ChatwootObservedIncoming,
   type ChatwootOwnedOperationalLabel,
 } from './comms/chatwoot-outbound.js'
-import { createChatwootWebhookAdapter } from './comms/chatwoot-webhook.js'
+import { createChatwootWebhookAdapter, type ChatwootIncomingEvent } from './comms/chatwoot-webhook.js'
 import { createPlatformAdmission } from './platform/admission.js'
+import type { DeepReadonly, PlatformAdmission, PlatformContext } from './platform/types.js'
 import { readGroupSecretFile } from './secret-file.js'
 import {
   parseCommercialFactCatalog,
@@ -28,6 +31,7 @@ import {
 
 const ROUTE = '/webhooks/chatwoot/proptimiza-review'
 const DECIMAL = /^[1-9][0-9]{0,18}$/
+const POLL_INTERVAL_MS = 15_000
 
 export interface SupervisedReviewConfig {
   bindHost: string
@@ -47,6 +51,7 @@ export interface SupervisedReviewConfig {
 }
 
 export interface SupervisedReviewClientPort {
+  latestIncoming(conversationId: string): Promise<Readonly<ChatwootObservedIncoming> | null>
   snapshot(conversationId: string, messageId: string, expectedContentSha256: string): Promise<ChatwootConversationSnapshot>
   createPrivateNote(conversationId: string, content: string): Promise<{ message_id: string }>
   ownedLabelState(conversationId: string): Promise<{ owned_labels_sha256: string }>
@@ -54,6 +59,82 @@ export interface SupervisedReviewClientPort {
     remove: readonly ChatwootOwnedOperationalLabel[], expectedOwnedLabelsSha256: string):
     Promise<{ owned_labels_sha256: string }>
   assignTeam(conversationId: string, teamId: string): Promise<{ team_id: string }>
+}
+
+export interface SupervisedReviewPollReceipt {
+  scoped_conversations: number
+  observed_incoming: number
+  inserted: number
+  duplicates: number
+}
+
+/**
+ * Polls only the exact IDs in a fresh signed scope. A disabled pilot performs
+ * no Chatwoot read. Calls are serialized by the service loop and never retried.
+ */
+export async function pollSupervisedReviewScopeOnce(
+  store: SupervisedReviewStore,
+  client: Pick<SupervisedReviewClientPort, 'latestIncoming'>,
+  admission: PlatformAdmission,
+  context: DeepReadonly<PlatformContext>,
+  scope: Readonly<SupervisedReviewScope>,
+  pilotEnabled: boolean,
+  now: () => Date = () => new Date(),
+): Promise<Readonly<SupervisedReviewPollReceipt>> {
+  if (!pilotEnabled) return Object.freeze({ scoped_conversations: scope.conversation_ids.length,
+    observed_incoming: 0, inserted: 0, duplicates: 0 })
+  let observed = 0
+  let inserted = 0
+  let duplicates = 0
+  for (const conversationId of scope.conversation_ids) {
+    const incoming = await client.latestIncoming(conversationId)
+    if (!incoming) continue
+    observed++
+    const event = createPolledSupervisedReviewEvent(admission, context, incoming, now)
+    const receipt = await store.commit(event)
+    if (receipt.outcome === 'inserted') inserted++
+    else duplicates++
+  }
+  return Object.freeze({ scoped_conversations: scope.conversation_ids.length,
+    observed_incoming: observed, inserted, duplicates })
+}
+
+export function createPolledSupervisedReviewEvent(
+  admission: PlatformAdmission,
+  context: DeepReadonly<PlatformContext>,
+  incoming: Readonly<ChatwootObservedIncoming>,
+  now: () => Date = () => new Date(),
+): DeepReadonly<ChatwootIncomingEvent> {
+  if (incoming.conversation_id.length > 19 || incoming.message_id.length > 19
+    || !DECIMAL.test(incoming.conversation_id) || !DECIMAL.test(incoming.message_id)
+    || typeof incoming.content !== 'string' || !incoming.content.trim() || incoming.content.includes('\0')
+    || Buffer.byteLength(incoming.content, 'utf8') > 4096 || !Number.isFinite(Date.parse(incoming.occurred_at)))
+    throw new Error('SUPERVISED_REVIEW_POLL_INPUT_INVALID')
+  const receivedAt = now()
+  if (!(receivedAt instanceof Date) || !Number.isFinite(receivedAt.getTime()))
+    throw new Error('SUPERVISED_REVIEW_POLL_CLOCK_INVALID')
+  const semantic = { event: 'message_created', conversation_id: incoming.conversation_id,
+    message_id: incoming.message_id, content: incoming.content, occurred_at: new Date(incoming.occurred_at).toISOString(),
+    message_type: 'incoming', private: false, content_type: 'text' }
+  const semanticHash = digest(canonicalJson(semantic))
+  const key = admission.namespaceExternalId(context, 'event', `message_created:${incoming.message_id}`)
+  const traceHash = createHash('sha1').update(Buffer.from('6ba7b8119dad11d180b400c04fd430c8', 'hex')).update(key).digest('hex')
+  const traceHex = traceHash.slice(0, 12) + '5' + traceHash.slice(13, 16)
+    + ((parseInt(traceHash[16]!, 16) & 3) | 8).toString(16) + traceHash.slice(17, 32)
+  return Object.freeze({
+    schema_version: 'platform-chatwoot-incoming.v1', event_id: `cw1_${digest(key)}`,
+    tenant_id: context.tenant_id, deployment_id: context.deployment_id, connector_id: context.connector_id,
+    account_id: context.account_id, inbox_id: context.inbox_id, conversation_id: incoming.conversation_id,
+    message_id: incoming.message_id,
+    correlation_id: admission.namespaceExternalId(context, 'conversation', incoming.conversation_id),
+    causation_id: admission.namespaceExternalId(context, 'message', incoming.message_id),
+    trace_id: `${traceHex.slice(0, 8)}-${traceHex.slice(8, 12)}-${traceHex.slice(12, 16)}-${traceHex.slice(16, 20)}-${traceHex.slice(20)}`,
+    occurred_at: semantic.occurred_at, received_at: receivedAt.toISOString(),
+    data_classification: 'restricted_external', instruction_eligible: false,
+    content: Object.freeze({ trust: 'untrusted_data', text: incoming.content }),
+    semantic_sha256: semanticHash,
+    raw_sha256: digest(canonicalJson({ source: 'chatwoot_scoped_poll.v1', ...semantic })),
+  })
 }
 
 export async function processSupervisedReviewEvent(
@@ -208,6 +289,8 @@ export class SupervisedReviewService {
   private working = false
   private stopping = false
   private fatal = false
+  private pollTimer: NodeJS.Timeout | undefined
+  private pollRun: Promise<void> | undefined
 
   constructor(private readonly config: SupervisedReviewConfig) {
     validateConfig(config)
@@ -244,15 +327,17 @@ export class SupervisedReviewService {
     const admission = createPlatformAdmission(platformConfig(this.config.accountId, this.config.inboxId), {
       resolveKey: request => ({ ...request, public_key_pem: publicKey }),
     })
+    const source = {
+      deployment_id: 'chatwoot-production',
+      connector_id: 'whatsapp-supervised-review',
+      account_id: this.config.accountId,
+      inbox_id: this.config.inboxId,
+      principal_id: 'supervised-review',
+    }
+    const context = admission.resolveAuthenticatedContext(source)
     const adapter = createChatwootWebhookAdapter({
       admission,
-      source: {
-        deployment_id: 'chatwoot-production',
-        connector_id: 'whatsapp-supervised-review',
-        account_id: this.config.accountId,
-        inbox_id: this.config.inboxId,
-        principal_id: 'supervised-review',
-      },
+      source,
       webhookSecret: Buffer.from(webhookSecret, 'utf8'),
     })
     const ingress = createChatwootIngressHandler([{
@@ -287,12 +372,40 @@ export class SupervisedReviewService {
       })
     })
     this.kick()
+    this.schedulePoll(admission, context, 0)
   }
 
   async stop(): Promise<void> {
     this.stopping = true
+    if (this.pollTimer) clearTimeout(this.pollTimer)
+    this.pollTimer = undefined
+    if (this.pollRun) await this.pollRun
     if (!this.server) return
     await new Promise<void>((resolve, reject) => this.server!.close(error => error ? reject(error) : resolve()))
+  }
+
+  private schedulePoll(admission: PlatformAdmission, context: DeepReadonly<PlatformContext>, delayMs: number): void {
+    if (this.stopping || this.fatal || this.pollTimer || this.pollRun) return
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = undefined
+      const run = this.pollScope(admission, context)
+      this.pollRun = run
+      void run.catch(() => { this.fatal = true }).finally(() => {
+        if (this.pollRun === run) this.pollRun = undefined
+        if (!this.stopping && !this.fatal) this.schedulePoll(admission, context, POLL_INTERVAL_MS)
+      })
+    }, delayMs)
+    this.pollTimer.unref()
+  }
+
+  private async pollScope(admission: PlatformAdmission, context: DeepReadonly<PlatformContext>): Promise<void> {
+    const gate = await readGroupSecretFile(this.config.pilotGateFile, this.config.expectedSecretGid)
+    if (!isValidSupervisedReviewGateValue(gate)) throw new Error('SUPERVISED_REVIEW_GATE_INVALID')
+    if (!supervisedReviewGateAllowsStaging(gate)) return
+    const rawScope = await readGroupSecretFile(this.config.pilotScopeFile, this.config.expectedSecretGid)
+    const scope = parseSupervisedReviewScope(rawScope, this.config.accountId, this.config.inboxId)
+    const receipt = await pollSupervisedReviewScopeOnce(this.store, this.client, admission, context, scope, true)
+    if (receipt.inserted > 0) this.kick()
   }
 
   private kick(): void {

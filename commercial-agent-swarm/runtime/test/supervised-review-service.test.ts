@@ -51,6 +51,7 @@ async function fixture(text = 'Hola, estoy interesado en sus productos.') {
 
 function clientFor(text: string, actions: string[], overrides: Partial<SupervisedReviewClientPort> = {}): SupervisedReviewClientPort {
   return {
+    latestIncoming: async () => null,
     snapshot: async (_conversation, _message, hash) => {
       actions.push('read')
       assert.equal(hash, createHash('sha256').update(text, 'utf8').digest('hex'))

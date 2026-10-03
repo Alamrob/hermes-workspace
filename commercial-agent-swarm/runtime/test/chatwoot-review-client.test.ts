@@ -59,6 +59,37 @@ test('review client reads with the isolated reviewer role', async () => {
   await agent.close()
 })
 
+test('poll observation returns only the current public Contact turn from one exact conversation', async () => {
+  const agent = new MockAgent(); agent.disableNetConnect()
+  const path = '/api/v1/accounts/1/conversations/25/messages'
+  agent.get(origin).intercept({ path, method: 'GET', headers: headers('GET', path) }).reply(200, { payload: [
+    { id: 40, message_type: 'outgoing', private: false, content: '¿Cómo te ayudamos?', sender_type: 'AgentBot',
+      created_at: 1_700_000_000 },
+    { id: 41, message_type: 'incoming', private: false, content: 'Necesito orientación.', sender_type: 'Contact',
+      created_at: 1_700_000_001 },
+    { id: 42, message_type: 'outgoing', private: true, content: 'Nota privada', sender_type: 'User',
+      created_at: 1_700_000_002 },
+  ] })
+  assert.deepEqual(await new ChatwootReviewClient(options(agent)).latestIncoming('25'), {
+    conversation_id: '25', message_id: '41', content: 'Necesito orientación.',
+    occurred_at: '2023-11-14T22:13:21.000Z',
+  })
+  await agent.close()
+})
+
+test('poll observation does not treat an outgoing or unsupported latest event as new incoming work', async () => {
+  const agent = new MockAgent(); agent.disableNetConnect()
+  const path = '/api/v1/accounts/1/conversations/25/messages'
+  agent.get(origin).intercept({ path, method: 'GET', headers: headers('GET', path) }).reply(200, { payload: [
+    { id: 41, message_type: 'incoming', private: false, content: 'Necesito orientación.', sender_type: 'Contact',
+      created_at: 1_700_000_001 },
+    { id: 42, message_type: 'outgoing', private: false, content: 'Te ayudo.', sender_type: 'User',
+      created_at: 1_700_000_002 },
+  ] })
+  assert.equal(await new ChatwootReviewClient(options(agent)).latestIncoming('25'), null)
+  await agent.close()
+})
+
 test('review client can create only a private note, not a public send', async () => {
   const agent = new MockAgent(); agent.disableNetConnect()
   const path = '/api/v1/accounts/1/conversations/25/messages'

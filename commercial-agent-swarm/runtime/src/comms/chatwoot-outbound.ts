@@ -25,6 +25,13 @@ export interface ChatwootConversationSnapshot {
   human_replied: boolean
 }
 
+export interface ChatwootObservedIncoming {
+  conversation_id: string
+  message_id: string
+  content: string
+  occurred_at: string
+}
+
 interface ChatwootReadClientOptions {
     baseUrl: string
     accountId: string
@@ -72,6 +79,31 @@ export class ChatwootReadClient {
       // A new customer turn reopens automation. A human response after the
       // target message still wins, including one that arrives during inference.
       human_replied: later.some((entry) => entry.kind === 'assistant' && entry.sender_type === 'User'),
+    })
+  }
+
+  /**
+   * Reads one explicitly scoped conversation and returns only its current
+   * public Contact turn. It never lists conversations or discovers IDs.
+   */
+  async latestIncoming(conversationId: string): Promise<Readonly<ChatwootObservedIncoming> | null> {
+    decimal(conversationId)
+    const token = await this.options.readToken()
+    const body = await this.call('GET',
+      `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/messages`, token)
+    const object = record(body)
+    const rawMessages = Array.isArray(object.payload) ? object.payload : Array.isArray(body) ? body : null
+    if (!rawMessages || rawMessages.length > 200) throw new Error('CHATWOOT_MESSAGES_INVALID')
+    const observed = rawMessages.map(parseObservedMessage).filter((entry): entry is ObservedMessage => entry !== null)
+      .sort((a, b) => compareDecimal(a.message_id, b.message_id))
+    const latest = observed.at(-1)
+    if (!latest || latest.kind !== 'incoming' || latest.sender_type !== 'Contact' || !latest.transcript) return null
+    if (latest.occurred_at === null) throw new Error('CHATWOOT_POLL_MESSAGE_INVALID')
+    return Object.freeze({
+      conversation_id: conversationId,
+      message_id: latest.message_id,
+      content: latest.transcript.content,
+      occurred_at: new Date(latest.occurred_at * 1000).toISOString(),
     })
   }
 
