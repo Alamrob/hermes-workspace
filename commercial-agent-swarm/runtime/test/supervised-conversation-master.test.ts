@@ -113,6 +113,23 @@ test('unsupported Chatwoot features remain proposals and cannot be treated as ex
   assert.ok(result.uncertainties.some(item => /borrador persistente/.test(item)))
 })
 
+test('verified label capability proposes only the two owned operational labels', () => {
+  const review = compileSupervisedMasterCase({
+    case_ref: 'case:label-review', transcript: [{ kind: 'incoming', content: 'Quiero conocer sus servicios.' }],
+    authorized_facts: [], capabilities: { ...capabilities, labels: true },
+  })
+  const handoff = compileSupervisedMasterCase({
+    case_ref: 'case:label-handoff', transcript: [{ kind: 'incoming', content: 'Quiero hablar con una persona.' }],
+    authorized_facts: [], capabilities: { ...capabilities, labels: true },
+  })
+  assert.deepEqual(review.proposed_chatwoot_actions.find(action => action.action === 'label'), {
+    action: 'label', status: 'available_after_review', value: 'proptimiza-supervised-review',
+  })
+  assert.deepEqual(handoff.proposed_chatwoot_actions.find(action => action.action === 'label'), {
+    action: 'label', status: 'available_after_review', value: 'proptimiza-human-handoff',
+  })
+})
+
 test('Hermes profiles are not simulated when dispatch is unavailable', () => {
   const result = compile([{ kind: 'incoming', content: 'Necesito mejorar el seguimiento de ventas.' }])
   assert.ok(result.profiles.every(profile => profile.execution === 'internal_stage' && profile.hermes_profile_id === null))

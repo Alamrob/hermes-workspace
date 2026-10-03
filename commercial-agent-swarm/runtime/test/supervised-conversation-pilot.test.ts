@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import test from 'node:test'
 import type { ChatwootConversationSnapshot } from '../src/comms/chatwoot-outbound.js'
+import { chatwootOwnedLabelsSha256 } from '../src/comms/chatwoot-outbound.js'
 import {
   runSupervisedConversationPilot,
   stageSupervisedReview,
@@ -83,11 +84,17 @@ test('stages one private review note without assigning an ordinary diagnostic ca
   const actions: string[] = []
   const writer: SupervisedReviewWriter = {
     createPrivateNote: async (_conversation, note) => { actions.push(`note:${note.length}`); return { message_id: '91' } },
+    ownedLabelState: async () => { actions.push('label-read'); return { owned_labels_sha256: chatwootOwnedLabelsSha256([]) } },
+    mergeOwnedLabels: async (_conversation, add) => {
+      actions.push(`label:${add.join('+')}`)
+      return { owned_labels_sha256: chatwootOwnedLabelsSha256(add) }
+    },
     assignTeam: async () => { actions.push('assign'); return { team_id: '1' } },
   }
   assert.deepEqual(await stageSupervisedReview(writer, '25', result), { note_message_id: '91', team_assigned: false })
-  assert.equal(actions.length, 1)
+  assert.equal(actions.length, 3)
   assert.match(actions[0]!, /^note:/)
+  assert.deepEqual(actions.slice(1), ['label-read', 'label:proptimiza-supervised-review'])
 })
 
 test('stages a private note then assigns an explicit human handoff to team 1', async () => {
@@ -104,10 +111,15 @@ test('stages a private note then assigns an explicit human handoff to team 1', a
   const actions: string[] = []
   const writer: SupervisedReviewWriter = {
     createPrivateNote: async () => { actions.push('note'); return { message_id: '92' } },
+    ownedLabelState: async () => { actions.push('label-read'); return { owned_labels_sha256: chatwootOwnedLabelsSha256([]) } },
+    mergeOwnedLabels: async (_conversation, add) => {
+      actions.push(`label:${add.join('+')}`)
+      return { owned_labels_sha256: chatwootOwnedLabelsSha256(add) }
+    },
     assignTeam: async (_conversation, team) => { actions.push(`assign:${team}`); return { team_id: team } },
   }
   assert.deepEqual(await stageSupervisedReview(writer, '25', result), { note_message_id: '92', team_assigned: true })
-  assert.deepEqual(actions, ['note', 'assign:1'])
+  assert.deepEqual(actions, ['note', 'label-read', 'label:proptimiza-human-handoff', 'assign:1'])
 })
 
 test('does not retry or continue after an uncertain private-note failure', async () => {
@@ -118,6 +130,8 @@ test('does not retry or continue after an uncertain private-note failure', async
   let notes = 0, assignments = 0
   const writer: SupervisedReviewWriter = {
     createPrivateNote: async () => { notes += 1; throw new Error('NOTE_UNCERTAIN') },
+    ownedLabelState: async () => { throw new Error('UNREACHABLE') },
+    mergeOwnedLabels: async () => { throw new Error('UNREACHABLE') },
     assignTeam: async () => { assignments += 1; return { team_id: '1' } },
   }
   await assert.rejects(() => stageSupervisedReview(writer, '25', result), /NOTE_UNCERTAIN/)

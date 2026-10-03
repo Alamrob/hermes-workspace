@@ -2,7 +2,12 @@ import assert from 'node:assert/strict'
 import { createHash, createHmac } from 'node:crypto'
 import test from 'node:test'
 import { MockAgent } from 'undici'
-import { ChatwootReadClient, ChatwootReviewClient } from '../src/comms/chatwoot-outbound.js'
+import {
+  ChatwootReadClient,
+  ChatwootReviewClient,
+  chatwootOwnedLabelsSha256,
+  type ChatwootOwnedOperationalLabel,
+} from '../src/comms/chatwoot-outbound.js'
 
 const origin = 'http://proptimiza-chatwoot-web-1:3000'
 const timestamp = 1_700_000_000
@@ -37,6 +42,8 @@ test('read-only client exposes no mutation methods', () => {
   assert.equal('send' in client, false)
   assert.equal('createPrivateNote' in client, false)
   assert.equal('assignTeam' in client, false)
+  assert.equal('ownedLabelState' in client, false)
+  assert.equal('mergeOwnedLabels' in client, false)
   return agent.close()
 })
 
@@ -73,5 +80,39 @@ test('review assignment is exact and fails closed on a mismatched team', async (
     ...headers('POST', path, body), 'content-type': 'application/json',
   }, body }).reply(200, { id: 2 })
   await assert.rejects(() => new ChatwootReviewClient(options(agent)).assignTeam('25', '1'), /CHATWOOT_TEAM_ASSIGNMENT_INVALID/)
+  await agent.close()
+})
+
+test('review client reads only the owned-label digest and applies an exact compare-and-merge delta', async () => {
+  const agent = new MockAgent(); agent.disableNetConnect()
+  const path = '/api/v1/accounts/1/conversations/25/labels'
+  const initial = chatwootOwnedLabelsSha256(['proptimiza-human-handoff'])
+  const target = chatwootOwnedLabelsSha256(['proptimiza-supervised-review'])
+  const body = JSON.stringify({
+    add: ['proptimiza-supervised-review'],
+    remove: ['proptimiza-human-handoff'],
+    expected_owned_labels_sha256: initial,
+  })
+  agent.get(origin).intercept({ path, method: 'GET', headers: headers('GET', path) })
+    .reply(200, { owned_labels_sha256: initial })
+  agent.get(origin).intercept({ path, method: 'POST', headers: {
+    ...headers('POST', path, body), 'content-type': 'application/json',
+  }, body }).reply(200, { owned_labels_sha256: target })
+  const client = new ChatwootReviewClient(options(agent))
+  assert.deepEqual(await client.ownedLabelState('25'), { owned_labels_sha256: initial })
+  assert.deepEqual(await client.mergeOwnedLabels('25', ['proptimiza-supervised-review'],
+    ['proptimiza-human-handoff'], initial), { owned_labels_sha256: target })
+  await agent.close()
+})
+
+test('review client rejects foreign labels and expanded label receipts', async () => {
+  const agent = new MockAgent(); agent.disableNetConnect()
+  const client = new ChatwootReviewClient(options(agent))
+  await assert.rejects(() => client.mergeOwnedLabels('25', ['foreign-label' as ChatwootOwnedOperationalLabel], [],
+    'a'.repeat(64)), /CHATWOOT_REVIEW_LABEL_DELTA_INVALID/)
+  const path = '/api/v1/accounts/1/conversations/25/labels'
+  agent.get(origin).intercept({ path, method: 'GET', headers: headers('GET', path) })
+    .reply(200, { owned_labels_sha256: 'a'.repeat(64), labels: ['human-private'] })
+  await assert.rejects(() => client.ownedLabelState('25'), /CHATWOOT_REVIEW_LABEL_RECEIPT_INVALID/)
   await agent.close()
 })

@@ -4,7 +4,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { ChatwootHttpError, type ChatwootConversationSnapshot } from '../src/comms/chatwoot-outbound.js'
+import {
+  ChatwootHttpError,
+  chatwootOwnedLabelsSha256,
+  type ChatwootConversationSnapshot,
+} from '../src/comms/chatwoot-outbound.js'
 import type { ChatwootIncomingEvent } from '../src/comms/chatwoot-webhook.js'
 import type { CommercialFact } from '../src/commercial-fact-authority.js'
 import {
@@ -58,6 +62,15 @@ function clientFor(text: string, actions: string[], overrides: Partial<Supervise
       assert.doesNotMatch(note, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))
       return { message_id: '91' }
     },
+    ownedLabelState: async () => {
+      actions.push('label-read')
+      return { owned_labels_sha256: chatwootOwnedLabelsSha256([]) }
+    },
+    mergeOwnedLabels: async (_conversation, add, remove, expected) => {
+      actions.push(`label:${add.join('+') || 'none'}:${remove.join('+') || 'none'}`)
+      assert.equal(expected, chatwootOwnedLabelsSha256([]))
+      return { owned_labels_sha256: chatwootOwnedLabelsSha256(add) }
+    },
     assignTeam: async (_conversation, team) => { actions.push(`assign:${team}`); return { team_id: team } },
     ...overrides,
   }
@@ -69,9 +82,11 @@ test('stages one private note for review and has no public-send dependency', asy
     const actions: string[] = []
     await processSupervisedReviewEvent(f.store, clientFor(f.text, actions), f.record, true, true)
     const record = await f.store.get(f.record.event_id)
-    assert.deepEqual(actions, ['read', 'private-note'])
+    assert.deepEqual(actions, ['read', 'private-note', 'label-read', 'label:proptimiza-supervised-review:none'])
     assert.equal(record?.status, 'staged')
     assert.equal(record?.private_note_message_id, '91')
+    assert.equal(record?.operational_label, 'proptimiza-supervised-review')
+    assert.equal(record?.owned_labels_sha256, chatwootOwnedLabelsSha256(['proptimiza-supervised-review']))
     assert.equal(record?.team_assigned, false)
   } finally { await rm(f.root, { recursive: true, force: true }) }
 })
@@ -91,7 +106,7 @@ test('uses only a resolved approved fact and records its id in the private revie
       approved_at: '2026-10-02T10:00:00.000Z', expires_at: '2026-10-03T10:00:00.000Z',
     } satisfies CommercialFact)
     await processSupervisedReviewEvent(f.store, client, f.record, true, true, [fact])
-    assert.deepEqual(actions, ['read', 'private-note'])
+    assert.deepEqual(actions, ['read', 'private-note', 'label-read', 'label:proptimiza-supervised-review:none'])
     assert.match(note, /diagnostica y mejora procesos comerciales y operativos/i)
     assert.match(note, /Hechos aplicados: fact:offer:consulting/)
     assert.doesNotMatch(note, /catalog:commercial:v1/)
@@ -105,9 +120,10 @@ test('stages a note before assigning an explicit human handoff to team 1', async
     const actions: string[] = []
     await processSupervisedReviewEvent(f.store, clientFor(f.text, actions), f.record, true, true)
     const record = await f.store.get(f.record.event_id)
-    assert.deepEqual(actions, ['read', 'private-note', 'assign:1'])
+    assert.deepEqual(actions, ['read', 'private-note', 'label-read', 'label:proptimiza-human-handoff:none', 'assign:1'])
     assert.equal(record?.status, 'staged')
     assert.equal(record?.handoff_reason, 'human_requested')
+    assert.equal(record?.operational_label, 'proptimiza-human-handoff')
     assert.equal(record?.team_assigned, true)
   } finally { await rm(f.root, { recursive: true, force: true }) }
 })
@@ -168,7 +184,7 @@ test('keeps the private note and holds a rejected human assignment', async () =>
       assignTeam: async () => { actions.push('assign:1'); throw new ChatwootHttpError(403) },
     })
     await processSupervisedReviewEvent(f.store, client, f.record, true, true)
-    assert.deepEqual(actions, ['read', 'private-note', 'assign:1'])
+    assert.deepEqual(actions, ['read', 'private-note', 'label-read', 'label:proptimiza-human-handoff:none', 'assign:1'])
     const record = await f.store.get(f.record.event_id)
     assert.equal(record?.status, 'held')
     assert.equal(record?.private_note_message_id, '91')
@@ -198,8 +214,72 @@ test('quarantines a mismatched assignment receipt after preserving the private n
     })
     await processSupervisedReviewEvent(f.store, client, f.record, true, true)
     const record = await f.store.get(f.record.event_id)
-    assert.deepEqual(actions, ['read', 'private-note', 'assign:1'])
+    assert.deepEqual(actions, ['read', 'private-note', 'label-read', 'label:proptimiza-human-handoff:none', 'assign:1'])
     assert.equal(record?.status, 'uncertain')
     assert.equal(record?.private_note_message_id, '91')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('holds a rejected label merge after preserving the private note and does not assign', async () => {
+  const f = await fixture('Quiero hablar con una persona.')
+  try {
+    const actions: string[] = []
+    const client = clientFor(f.text, actions, {
+      mergeOwnedLabels: async () => { actions.push('label-write'); throw new ChatwootHttpError(403) },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true)
+    assert.deepEqual(actions, ['read', 'private-note', 'label-read', 'label-write'])
+    const record = await f.store.get(f.record.event_id)
+    assert.equal(record?.status, 'held')
+    assert.equal(record?.private_note_message_id, '91')
+    assert.equal(record?.stop_code, 'OWNED_LABEL_MERGE_REJECTED_403')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('quarantines one uncertain label write without retrying or assigning', async () => {
+  const f = await fixture('Quiero hablar con una persona.')
+  try {
+    const actions: string[] = []
+    const client = clientFor(f.text, actions, {
+      mergeOwnedLabels: async () => { actions.push('label-write'); throw new Error('NETWORK_TIMEOUT') },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true)
+    assert.deepEqual(actions, ['read', 'private-note', 'label-read', 'label-write'])
+    const record = await f.store.get(f.record.event_id)
+    assert.equal(record?.status, 'uncertain')
+    assert.equal(record?.stop_code, 'OWNED_LABEL_MERGE_RESULT_UNCERTAIN')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('does not write when the exact owned operational label is already present', async () => {
+  const f = await fixture()
+  try {
+    const actions: string[] = []
+    const client = clientFor(f.text, actions, {
+      ownedLabelState: async () => {
+        actions.push('label-read')
+        return { owned_labels_sha256: chatwootOwnedLabelsSha256(['proptimiza-supervised-review']) }
+      },
+      mergeOwnedLabels: async () => { actions.push('unexpected-label-write'); throw new Error('UNREACHABLE') },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true)
+    assert.deepEqual(actions, ['read', 'private-note', 'label-read'])
+    assert.equal((await f.store.get(f.record.event_id))?.status, 'staged')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('fails a label-state read without attempting a merge', async () => {
+  const f = await fixture()
+  try {
+    const actions: string[] = []
+    const client = clientFor(f.text, actions, {
+      ownedLabelState: async () => { actions.push('label-read'); throw new Error('NETWORK_TIMEOUT') },
+      mergeOwnedLabels: async () => { actions.push('unexpected-label-write'); throw new Error('UNREACHABLE') },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true)
+    assert.deepEqual(actions, ['read', 'private-note', 'label-read'])
+    const record = await f.store.get(f.record.event_id)
+    assert.equal(record?.status, 'failed')
+    assert.equal(record?.stop_code, 'OWNED_LABEL_STATE_READ_FAILED')
   } finally { await rm(f.root, { recursive: true, force: true }) }
 })

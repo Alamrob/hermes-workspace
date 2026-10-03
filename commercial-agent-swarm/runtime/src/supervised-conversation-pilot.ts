@@ -1,4 +1,10 @@
-import type { ChatwootConversationSnapshot } from './comms/chatwoot-outbound.js'
+import {
+  CHATWOOT_OWNED_OPERATIONAL_LABELS,
+  chatwootOwnedLabelsForSha256,
+  chatwootOwnedLabelsSha256,
+  type ChatwootConversationSnapshot,
+  type ChatwootOwnedOperationalLabel,
+} from './comms/chatwoot-outbound.js'
 import type { CommercialFact } from './commercial-fact-authority.js'
 import {
   compileSupervisedMasterCase,
@@ -17,6 +23,10 @@ export interface SupervisedConversationReader {
 
 export interface SupervisedReviewWriter {
   createPrivateNote(conversationId: string, content: string): Promise<{ message_id: string }>
+  ownedLabelState(conversationId: string): Promise<{ owned_labels_sha256: string }>
+  mergeOwnedLabels(conversationId: string, add: readonly ChatwootOwnedOperationalLabel[],
+    remove: readonly ChatwootOwnedOperationalLabel[], expectedOwnedLabelsSha256: string):
+    Promise<{ owned_labels_sha256: string }>
   assignTeam(conversationId: string, teamId: string): Promise<{ team_id: string }>
 }
 
@@ -84,12 +94,26 @@ export async function stageSupervisedReview(
   conversationId: string,
   result: Extract<SupervisedConversationPilotResult, { status: 'draft_ready' }>,
 ): Promise<Readonly<{ note_message_id: string; team_assigned: boolean }>> {
-  if (!writer || typeof writer.createPrivateNote !== 'function' || typeof writer.assignTeam !== 'function'
+  if (!writer || typeof writer.createPrivateNote !== 'function' || typeof writer.ownedLabelState !== 'function'
+    || typeof writer.mergeOwnedLabels !== 'function' || typeof writer.assignTeam !== 'function'
     || !DECIMAL.test(conversationId) || result.case_file.human_review_required !== true
     || result.case_file.send_permitted !== false || result.case_file.automatic_reply_permitted !== false)
     throw new Error('SUPERVISED_REVIEW_STAGE_INVALID')
   const note = await writer.createPrivateNote(conversationId, result.review_note)
   if (!DECIMAL.test(note.message_id)) throw new Error('SUPERVISED_REVIEW_NOTE_RESULT_INVALID')
+  const desiredLabel: ChatwootOwnedOperationalLabel = result.case_file.next_action === 'human_handoff'
+    ? 'proptimiza-human-handoff' : 'proptimiza-supervised-review'
+  const observed = await writer.ownedLabelState(conversationId)
+  const current = chatwootOwnedLabelsForSha256(observed.owned_labels_sha256)
+  if (!current) throw new Error('SUPERVISED_REVIEW_LABEL_STATE_INVALID')
+  const targetDigest = chatwootOwnedLabelsSha256([desiredLabel])
+  if (observed.owned_labels_sha256 !== targetDigest) {
+    const otherLabels = CHATWOOT_OWNED_OPERATIONAL_LABELS.filter(label => label !== desiredLabel)
+    const receipt = await writer.mergeOwnedLabels(conversationId,
+      current.includes(desiredLabel) ? [] : [desiredLabel],
+      otherLabels.filter(label => current.includes(label)), observed.owned_labels_sha256)
+    if (receipt.owned_labels_sha256 !== targetDigest) throw new Error('SUPERVISED_REVIEW_LABEL_RESULT_INVALID')
+  }
   if (result.case_file.next_action !== 'human_handoff')
     return Object.freeze({ note_message_id: note.message_id, team_assigned: false })
   const assignment = await writer.assignTeam(conversationId, '1')

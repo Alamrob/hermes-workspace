@@ -2,7 +2,13 @@ import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { request, type Dispatcher } from 'undici'
 
 const DECIMAL = /^[1-9][0-9]{0,18}$/
+const SHA256 = /^[0-9a-f]{64}$/
 const SESSION_GAP_SECONDS = 24 * 60 * 60
+export const CHATWOOT_OWNED_OPERATIONAL_LABELS = Object.freeze([
+  'proptimiza-human-handoff',
+  'proptimiza-supervised-review',
+] as const)
+export type ChatwootOwnedOperationalLabel = typeof CHATWOOT_OWNED_OPERATIONAL_LABELS[number]
 
 export interface ChatwootTranscriptMessage {
   message_id: string
@@ -173,6 +179,31 @@ export class ChatwootReviewClient extends ChatwootReadClient {
     if (id !== teamId) throw new Error('CHATWOOT_TEAM_ASSIGNMENT_INVALID')
     return Object.freeze({ team_id: id })
   }
+
+  async ownedLabelState(conversationId: string): Promise<{ owned_labels_sha256: string }> {
+    decimal(conversationId)
+    const path = `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/labels`
+    return ownedLabelReceipt(await this.call('GET', path, await this.options.readToken()))
+  }
+
+  async mergeOwnedLabels(
+    conversationId: string,
+    add: readonly ChatwootOwnedOperationalLabel[],
+    remove: readonly ChatwootOwnedOperationalLabel[],
+    expectedOwnedLabelsSha256: string,
+  ): Promise<{ owned_labels_sha256: string }> {
+    decimal(conversationId)
+    const added = ownedLabelList(add)
+    const removed = ownedLabelList(remove)
+    if (added.length + removed.length < 1 || added.some(label => removed.includes(label))
+      || !SHA256.test(expectedOwnedLabelsSha256)) throw new Error('CHATWOOT_REVIEW_LABEL_DELTA_INVALID')
+    const path = `/api/v1/accounts/${this.options.accountId}/conversations/${conversationId}/labels`
+    return ownedLabelReceipt(await this.call('POST', path, await this.options.readToken(), {
+      add: added,
+      remove: removed,
+      expected_owned_labels_sha256: expectedOwnedLabelsSha256,
+    }))
+  }
 }
 
 export class ChatwootHttpError extends Error {
@@ -230,6 +261,35 @@ function observedTimestamp(value: unknown): number | null {
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('CHATWOOT_RESPONSE_INVALID')
   return value as Record<string, unknown>
+}
+function ownedLabelList(value: readonly ChatwootOwnedOperationalLabel[]): ChatwootOwnedOperationalLabel[] {
+  if (!Array.isArray(value) || value.length > CHATWOOT_OWNED_OPERATIONAL_LABELS.length
+    || value.some(label => !CHATWOOT_OWNED_OPERATIONAL_LABELS.includes(label)))
+    throw new Error('CHATWOOT_REVIEW_LABEL_DELTA_INVALID')
+  const labels = [...new Set(value)].sort()
+  if (labels.length !== value.length) throw new Error('CHATWOOT_REVIEW_LABEL_DELTA_INVALID')
+  return labels
+}
+function ownedLabelReceipt(value: unknown): Readonly<{ owned_labels_sha256: string }> {
+  const input = record(value)
+  if (Object.keys(input).length !== 1 || typeof input.owned_labels_sha256 !== 'string'
+    || !SHA256.test(input.owned_labels_sha256))
+    throw new Error('CHATWOOT_REVIEW_LABEL_RECEIPT_INVALID')
+  return Object.freeze({ owned_labels_sha256: input.owned_labels_sha256 })
+}
+export function chatwootOwnedLabelsSha256(labels: readonly ChatwootOwnedOperationalLabel[]): string {
+  return createHash('sha256').update(JSON.stringify(ownedLabelList(labels)), 'utf8').digest('hex')
+}
+export function chatwootOwnedLabelsForSha256(sha256: string): readonly ChatwootOwnedOperationalLabel[] | null {
+  if (!SHA256.test(sha256)) return null
+  const values: readonly (readonly ChatwootOwnedOperationalLabel[])[] = [
+    [],
+    ['proptimiza-human-handoff'],
+    ['proptimiza-supervised-review'],
+    CHATWOOT_OWNED_OPERATIONAL_LABELS,
+  ]
+  const match = values.find(labels => chatwootOwnedLabelsSha256(labels) === sha256)
+  return match ? Object.freeze([...match]) : null
 }
 function normalizeId(value: unknown): string {
   const id = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value

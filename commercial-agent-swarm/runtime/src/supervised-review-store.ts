@@ -8,6 +8,7 @@ export type SupervisedReviewStatus =
   | 'pending'
   | 'preparing'
   | 'writing'
+  | 'labeling'
   | 'assigning'
   | 'staged'
   | 'held'
@@ -31,18 +32,21 @@ export interface SupervisedReviewRecord {
   review_note_sha256: string | null
   private_note_message_id: string | null
   handoff_reason: string | null
+  operational_label: 'proptimiza-supervised-review' | 'proptimiza-human-handoff' | null
+  owned_labels_sha256: string | null
   team_assigned: boolean | null
   stop_code: string | null
 }
 
 interface StoreFile {
-  schema: 'proptimiza-supervised-review-store.v1'
+  schema: 'proptimiza-supervised-review-store.v2'
   revision: number
   events: Record<string, SupervisedReviewRecord>
 }
 
 type TransitionPatch = Partial<Pick<SupervisedReviewRecord,
-  'review_note_sha256' | 'private_note_message_id' | 'handoff_reason' | 'team_assigned' | 'stop_code'>>
+  'review_note_sha256' | 'private_note_message_id' | 'handoff_reason' | 'operational_label'
+  | 'owned_labels_sha256' | 'team_assigned' | 'stop_code'>>
 
 const SHA = /^[0-9a-f]{64}$/
 const EVENT = /^cw1_[0-9a-f]{64}$/
@@ -50,25 +54,27 @@ const DECIMAL = /^[1-9][0-9]{0,18}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_:-]{1,127}$/
 const STORE_FIELDS = ['schema', 'revision', 'events'] as const
-const RECORD_FIELDS = [
+const RECORD_FIELDS_V1 = [
   'event_id', 'semantic_sha256', 'content_sha256', 'account_id', 'inbox_id', 'conversation_id', 'message_id',
   'trace_id', 'occurred_at', 'accepted_at', 'updated_at', 'status', 'attempts', 'review_note_sha256',
   'private_note_message_id', 'handoff_reason', 'team_assigned', 'stop_code',
 ] as const
+const RECORD_FIELDS = [...RECORD_FIELDS_V1, 'operational_label', 'owned_labels_sha256'] as const
 const STATUS = new Set<SupervisedReviewStatus>([
-  'pending', 'preparing', 'writing', 'assigning', 'staged', 'held', 'failed', 'uncertain',
+  'pending', 'preparing', 'writing', 'labeling', 'assigning', 'staged', 'held', 'failed', 'uncertain',
 ])
 const TRANSITIONS: Readonly<Record<SupervisedReviewStatus, ReadonlySet<SupervisedReviewStatus>>> = Object.freeze({
   pending: new Set<SupervisedReviewStatus>(['preparing', 'held']),
   preparing: new Set<SupervisedReviewStatus>(['writing', 'held', 'failed', 'uncertain']),
-  writing: new Set<SupervisedReviewStatus>(['assigning', 'staged', 'failed', 'uncertain']),
+  writing: new Set<SupervisedReviewStatus>(['labeling', 'failed', 'uncertain']),
+  labeling: new Set<SupervisedReviewStatus>(['assigning', 'staged', 'held', 'failed', 'uncertain']),
   assigning: new Set<SupervisedReviewStatus>(['staged', 'held', 'uncertain']),
   staged: new Set<SupervisedReviewStatus>(), held: new Set<SupervisedReviewStatus>(),
   failed: new Set<SupervisedReviewStatus>(), uncertain: new Set<SupervisedReviewStatus>(),
 })
 
 export class SupervisedReviewStore {
-  private state: StoreFile = { schema: 'proptimiza-supervised-review-store.v1', revision: 0, events: {} }
+  private state: StoreFile = { schema: 'proptimiza-supervised-review-store.v2', revision: 0, events: {} }
   private serial = Promise.resolve()
 
   constructor(private readonly path: string, private readonly now: () => Date = () => new Date()) {
@@ -87,12 +93,19 @@ export class SupervisedReviewStore {
       if (!file.isFile() || file.isSymbolicLink() || file.nlink !== 1 || file.size > 8_388_608
         || (process.platform !== 'win32' && (file.mode & 0o077) !== 0))
         throw new Error('SUPERVISED_REVIEW_STORE_FILE_UNSAFE')
-      this.state = validateStore(JSON.parse(await readFile(this.path, 'utf8')))
-      let changed = false
+      const parsed: unknown = JSON.parse(await readFile(this.path, 'utf8'))
+      const migrated = Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        && (parsed as Record<string, unknown>).schema === 'proptimiza-supervised-review-store.v1')
+      this.state = validateStore(parsed)
+      let changed = migrated
       for (const record of Object.values(this.state.events)) {
         if (record.status === 'preparing') {
           record.status = 'uncertain'
           record.stop_code = 'PREPARATION_RESULT_UNCERTAIN_AFTER_RESTART'
+          changed = true
+        } else if (record.status === 'labeling') {
+          record.status = 'uncertain'
+          record.stop_code = 'CHATWOOT_LABEL_RESULT_UNCERTAIN_AFTER_RESTART'
           changed = true
         } else if (record.status === 'writing' || record.status === 'assigning') {
           record.status = 'uncertain'
@@ -133,6 +146,8 @@ export class SupervisedReviewStore {
         review_note_sha256: null,
         private_note_message_id: null,
         handoff_reason: null,
+        operational_label: null,
+        owned_labels_sha256: null,
         team_assigned: null,
         stop_code: null,
       }
@@ -179,7 +194,7 @@ export class SupervisedReviewStore {
       validatePatch(patch)
       record.status = next
       record.updated_at = iso(this.now())
-      record.attempts += ['preparing', 'writing', 'assigning'].includes(next) ? 1 : 0
+      record.attempts += ['preparing', 'writing', 'labeling', 'assigning'].includes(next) ? 1 : 0
       Object.assign(record, patch)
       await this.persist()
       return Object.freeze(structuredClone(record))
@@ -228,6 +243,11 @@ function validatePatch(patch: TransitionPatch): void {
     && !DECIMAL.test(patch.private_note_message_id)) throw new Error('SUPERVISED_REVIEW_STORE_TRANSITION_INVALID')
   if (patch.handoff_reason !== undefined && patch.handoff_reason !== null
     && !IDENTIFIER.test(patch.handoff_reason)) throw new Error('SUPERVISED_REVIEW_STORE_TRANSITION_INVALID')
+  if (patch.operational_label !== undefined && patch.operational_label !== null
+    && !['proptimiza-supervised-review', 'proptimiza-human-handoff'].includes(patch.operational_label))
+    throw new Error('SUPERVISED_REVIEW_STORE_TRANSITION_INVALID')
+  if (patch.owned_labels_sha256 !== undefined && patch.owned_labels_sha256 !== null
+    && !SHA.test(patch.owned_labels_sha256)) throw new Error('SUPERVISED_REVIEW_STORE_TRANSITION_INVALID')
   if (patch.team_assigned !== undefined && patch.team_assigned !== null
     && typeof patch.team_assigned !== 'boolean') throw new Error('SUPERVISED_REVIEW_STORE_TRANSITION_INVALID')
   if (patch.stop_code !== undefined && patch.stop_code !== null
@@ -237,30 +257,39 @@ function validatePatch(patch: TransitionPatch): void {
 function validateStore(value: unknown): StoreFile {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('SUPERVISED_REVIEW_STORE_INVALID')
   const input = value as Record<string, unknown>
-  if (!hasExactKeys(input, STORE_FIELDS) || input.schema !== 'proptimiza-supervised-review-store.v1'
+  const legacy = input.schema === 'proptimiza-supervised-review-store.v1'
+  if (!hasExactKeys(input, STORE_FIELDS) || (!legacy && input.schema !== 'proptimiza-supervised-review-store.v2')
     || !Number.isSafeInteger(input.revision)
     || Number(input.revision) < 0 || !input.events || typeof input.events !== 'object' || Array.isArray(input.events))
     throw new Error('SUPERVISED_REVIEW_STORE_INVALID')
   const events: Record<string, SupervisedReviewRecord> = {}
   for (const [key, raw] of Object.entries(input.events as Record<string, unknown>)) {
     if (!EVENT.test(key) || !raw || typeof raw !== 'object' || Array.isArray(raw)
-      || !hasExactKeys(raw as Record<string, unknown>, RECORD_FIELDS))
+      || !hasExactKeys(raw as Record<string, unknown>, legacy ? RECORD_FIELDS_V1 : RECORD_FIELDS))
       throw new Error('SUPERVISED_REVIEW_STORE_INVALID')
-    const event = raw as SupervisedReviewRecord
+    const event = structuredClone(raw) as unknown as SupervisedReviewRecord
+    if (legacy) {
+      event.operational_label = null
+      event.owned_labels_sha256 = null
+    }
     if (event.event_id !== key || !SHA.test(event.semantic_sha256) || !SHA.test(event.content_sha256)
       || ![event.account_id, event.inbox_id, event.conversation_id, event.message_id].every(id => DECIMAL.test(id))
       || !UUID.test(event.trace_id) || ![event.occurred_at, event.accepted_at, event.updated_at]
         .every(at => Number.isFinite(Date.parse(at)))
-      || !STATUS.has(event.status) || !Number.isSafeInteger(event.attempts) || event.attempts < 0 || event.attempts > 8
+      || !STATUS.has(event.status) || (legacy && event.status === 'labeling')
+      || !Number.isSafeInteger(event.attempts) || event.attempts < 0 || event.attempts > (legacy ? 8 : 9)
       || (event.review_note_sha256 !== null && !SHA.test(event.review_note_sha256))
       || (event.private_note_message_id !== null && !DECIMAL.test(event.private_note_message_id))
       || (event.handoff_reason !== null && !IDENTIFIER.test(event.handoff_reason))
+      || (event.operational_label !== null
+        && !['proptimiza-supervised-review', 'proptimiza-human-handoff'].includes(event.operational_label))
+      || (event.owned_labels_sha256 !== null && !SHA.test(event.owned_labels_sha256))
       || (event.team_assigned !== null && typeof event.team_assigned !== 'boolean')
       || (event.stop_code !== null && !/^[A-Z][A-Z0-9_:-]{2,160}$/.test(event.stop_code)))
       throw new Error('SUPERVISED_REVIEW_STORE_INVALID')
     events[key] = structuredClone(event)
   }
-  return { schema: 'proptimiza-supervised-review-store.v1', revision: Number(input.revision), events }
+  return { schema: 'proptimiza-supervised-review-store.v2', revision: Number(input.revision), events }
 }
 
 function hasExactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

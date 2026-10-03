@@ -3,9 +3,13 @@ import type { Server } from 'node:http'
 import { createServer } from 'node:http'
 import { createChatwootIngressHandler } from './comms/chatwoot-http.js'
 import {
+  CHATWOOT_OWNED_OPERATIONAL_LABELS,
   ChatwootHttpError,
   ChatwootReviewClient,
+  chatwootOwnedLabelsForSha256,
+  chatwootOwnedLabelsSha256,
   type ChatwootConversationSnapshot,
+  type ChatwootOwnedOperationalLabel,
 } from './comms/chatwoot-outbound.js'
 import { createChatwootWebhookAdapter } from './comms/chatwoot-webhook.js'
 import { createPlatformAdmission } from './platform/admission.js'
@@ -45,6 +49,10 @@ export interface SupervisedReviewConfig {
 export interface SupervisedReviewClientPort {
   snapshot(conversationId: string, messageId: string, expectedContentSha256: string): Promise<ChatwootConversationSnapshot>
   createPrivateNote(conversationId: string, content: string): Promise<{ message_id: string }>
+  ownedLabelState(conversationId: string): Promise<{ owned_labels_sha256: string }>
+  mergeOwnedLabels(conversationId: string, add: readonly ChatwootOwnedOperationalLabel[],
+    remove: readonly ChatwootOwnedOperationalLabel[], expectedOwnedLabelsSha256: string):
+    Promise<{ owned_labels_sha256: string }>
   assignTeam(conversationId: string, teamId: string): Promise<{ team_id: string }>
 }
 
@@ -79,7 +87,7 @@ export async function processSupervisedReviewEvent(
       authorized_facts: authorizedFacts,
       capabilities: {
         internal_notes: true,
-        labels: false,
+        labels: true,
         assignments: true,
         saved_drafts: false,
         hermes_dispatch: false,
@@ -114,18 +122,61 @@ export async function processSupervisedReviewEvent(
     await store.transition(event.event_id, 'writing', 'uncertain', { stop_code: 'REVIEW_NOTE_RESULT_UNCERTAIN' })
     return
   }
+  const desiredLabel: ChatwootOwnedOperationalLabel = result.case_file.next_action === 'human_handoff'
+    ? 'proptimiza-human-handoff' : 'proptimiza-supervised-review'
+  await store.transition(event.event_id, 'writing', 'labeling', {
+    private_note_message_id: note.message_id,
+    operational_label: desiredLabel,
+    team_assigned: false,
+    stop_code: 'OWNED_LABEL_MERGE_PENDING',
+  })
+  let observedOwnedLabelsSha256: string
+  let currentOwnedLabels: readonly ChatwootOwnedOperationalLabel[]
+  try {
+    const observed = await client.ownedLabelState(event.conversation_id)
+    const current = chatwootOwnedLabelsForSha256(observed.owned_labels_sha256)
+    if (!current) {
+      await store.transition(event.event_id, 'labeling', 'failed', { stop_code: 'OWNED_LABEL_STATE_UNKNOWN' })
+      return
+    }
+    observedOwnedLabelsSha256 = observed.owned_labels_sha256
+    currentOwnedLabels = current
+  } catch (error) {
+    const outcome = classifyLabelStateFailure(error)
+    await store.transition(event.event_id, 'labeling', outcome.status, { stop_code: outcome.code })
+    return
+  }
+  const targetDigest = chatwootOwnedLabelsSha256([desiredLabel])
+  let ownedLabelsSha256 = targetDigest
+  if (observedOwnedLabelsSha256 !== targetDigest) {
+    try {
+      const otherLabels = CHATWOOT_OWNED_OPERATIONAL_LABELS.filter(label => label !== desiredLabel)
+      const receipt = await client.mergeOwnedLabels(event.conversation_id,
+        currentOwnedLabels.includes(desiredLabel) ? [] : [desiredLabel],
+        otherLabels.filter(label => currentOwnedLabels.includes(label)), observedOwnedLabelsSha256)
+      if (receipt.owned_labels_sha256 !== targetDigest) {
+        await store.transition(event.event_id, 'labeling', 'uncertain', {
+          stop_code: 'OWNED_LABEL_MERGE_RESULT_UNCERTAIN',
+        })
+        return
+      }
+      ownedLabelsSha256 = receipt.owned_labels_sha256
+    } catch (error) {
+      const outcome = classifyLabelMutationFailure(error)
+      await store.transition(event.event_id, 'labeling', outcome.status, { stop_code: outcome.code })
+      return
+    }
+  }
   if (result.case_file.next_action !== 'human_handoff') {
-    await store.transition(event.event_id, 'writing', 'staged', {
-      private_note_message_id: note.message_id,
-      team_assigned: false,
-      stop_code: 'REVIEW_NOTE_STAGED',
+    await store.transition(event.event_id, 'labeling', 'staged', {
+      owned_labels_sha256: ownedLabelsSha256,
+      stop_code: 'REVIEW_NOTE_STAGED_AND_LABELED',
     })
     return
   }
-  await store.transition(event.event_id, 'writing', 'assigning', {
-    private_note_message_id: note.message_id,
-    team_assigned: false,
-    stop_code: 'REVIEW_NOTE_STAGED_ASSIGNMENT_PENDING',
+  await store.transition(event.event_id, 'labeling', 'assigning', {
+    owned_labels_sha256: ownedLabelsSha256,
+    stop_code: 'REVIEW_NOTE_LABELED_ASSIGNMENT_PENDING',
   })
   try {
     const assignment = await client.assignTeam(event.conversation_id, '1')
@@ -350,8 +401,25 @@ export function parseSupervisedReviewScope(raw: string, accountId: string, inbox
 
 function allowedTerminal(status: SupervisedReviewStatus, preferred: 'failed' | 'uncertain'): 'failed' | 'uncertain' | null {
   if (status === 'preparing' || status === 'writing') return preferred
-  if (status === 'assigning') return 'uncertain'
+  if (status === 'labeling' || status === 'assigning') return 'uncertain'
   return null
+}
+
+function classifyLabelStateFailure(error: unknown): { status: 'held' | 'failed'; code: string } {
+  if (error instanceof ChatwootHttpError && error.status >= 400 && error.status < 500)
+    return { status: 'held', code: `OWNED_LABEL_STATE_REJECTED_${error.status}` }
+  const code = safeCode(error, 'OWNED_LABEL_STATE_READ_FAILED')
+  return { status: 'failed', code: /INVALID|REJECTED|DENIED/.test(code) ? code : 'OWNED_LABEL_STATE_READ_FAILED' }
+}
+
+function classifyLabelMutationFailure(error: unknown): { status: 'held' | 'failed' | 'uncertain'; code: string } {
+  if (error instanceof ChatwootHttpError && error.status >= 400 && error.status < 500)
+    return { status: 'held', code: `OWNED_LABEL_MERGE_REJECTED_${error.status}` }
+  const code = safeCode(error, 'OWNED_LABEL_MERGE_RESULT_UNCERTAIN')
+  if (code === 'CHATWOOT_REVIEW_LABEL_RECEIPT_INVALID')
+    return { status: 'uncertain', code: 'OWNED_LABEL_MERGE_RESULT_UNCERTAIN' }
+  if (/INVALID|REJECTED|DENIED|UNKNOWN/.test(code)) return { status: 'failed', code }
+  return { status: 'uncertain', code: 'OWNED_LABEL_MERGE_RESULT_UNCERTAIN' }
 }
 
 function classifyFailure(error: unknown, prefix: string): { status: 'failed' | 'uncertain'; code: string } {

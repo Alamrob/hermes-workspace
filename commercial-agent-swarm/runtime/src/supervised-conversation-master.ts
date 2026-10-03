@@ -295,7 +295,8 @@ function selectProfiles(state: Diagnosis): MasterProfile[] {
 function proposeChatwootActions(input: SupervisedMasterInput, state: Diagnosis): SupervisedMasterCase['proposed_chatwoot_actions'] {
   const actions: Array<SupervisedMasterCase['proposed_chatwoot_actions'][number]> = [
     { action: 'internal_note', status: input.capabilities.internal_notes ? 'available_after_review' : 'unsupported', value: 'resumen_minimizado_y_borrador' },
-    { action: 'label', status: input.capabilities.labels ? 'available_after_review' : 'unsupported', value: state.handoffReason === 'none' ? 'ai-review-pending' : 'human-review-required' },
+    { action: 'label', status: input.capabilities.labels ? 'available_after_review' : 'unsupported',
+      value: state.handoffReason === 'none' ? 'proptimiza-supervised-review' : 'proptimiza-human-handoff' },
   ]
   if (state.handoffReason !== 'none') actions.push({ action: 'team_assignment',
     status: input.capabilities.assignments ? 'available_after_review' : 'unsupported', value: 'equipo_humano' })
