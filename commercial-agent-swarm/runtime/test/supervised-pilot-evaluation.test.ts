@@ -50,7 +50,7 @@ const suite = Object.freeze([
     case_ref: 'sample:integration-mismatch',
     transcript: [{ kind: 'incoming', content: '¿Se integra con Salesforce?' }],
     authorized_facts: [approvedIntegration], observable_outcome: 'pending',
-    expected: { next_action: 'human_review', handoff_reason: 'none', applied_fact_ids: [], max_questions: 1 },
+    expected: { next_action: 'human_handoff', handoff_reason: 'missing_context', applied_fact_ids: [], max_questions: 0 },
   },
   {
     case_ref: 'sample:presence-route',
@@ -89,6 +89,30 @@ const suite = Object.freeze([
     expected: { next_action: 'human_review', handoff_reason: 'none', applied_fact_ids: [], max_questions: 1 },
   },
   {
+    case_ref: 'sample:public-response-time-claim',
+    transcript: [{ kind: 'incoming', content: 'En el sitio dice que responden el mismo día. ¿Me responden hoy?' }],
+    authorized_facts: [], observable_outcome: 'referred',
+    expected: { next_action: 'human_handoff', handoff_reason: 'missing_context', applied_fact_ids: [], max_questions: 0 },
+  },
+  {
+    case_ref: 'sample:public-delivery-time-claim',
+    transcript: [{ kind: 'incoming', content: '¿La implementación tarda 2 a 3 semanas?' }],
+    authorized_facts: [], observable_outcome: 'referred',
+    expected: { next_action: 'human_handoff', handoff_reason: 'missing_context', applied_fact_ids: [], max_questions: 0 },
+  },
+  {
+    case_ref: 'sample:public-scope-claim',
+    transcript: [{ kind: 'incoming', content: '¿Conversa incluye cinco preguntas y tres responsables?' }],
+    authorized_facts: [], observable_outcome: 'referred',
+    expected: { next_action: 'human_handoff', handoff_reason: 'missing_context', applied_fact_ids: [], max_questions: 0 },
+  },
+  {
+    case_ref: 'sample:public-result-claim',
+    transcript: [{ kind: 'incoming', content: '¿Cuánto mejorarán mis ventas? ¿Me garantizan resultados?' }],
+    authorized_facts: [], observable_outcome: 'referred',
+    expected: { next_action: 'human_handoff', handoff_reason: 'missing_context', applied_fact_ids: [], max_questions: 0 },
+  },
+  {
     case_ref: 'sample:pricing',
     transcript: [{ kind: 'incoming', content: '¿Cuánto cuesta y qué descuento me pueden dar?' }],
     authorized_facts: [], observable_outcome: 'referred',
@@ -110,16 +134,16 @@ const suite = Object.freeze([
 
 test('evaluates a representative supervised suite without external actions or content in the report', () => {
   const report = evaluateSupervisedPilot(suite)
-  assert.equal(report.cases_total, 13)
-  assert.equal(report.cases_passed, 13)
+  assert.equal(report.cases_total, 17)
+  assert.equal(report.cases_passed, 17)
   assert.equal(report.cases_failed, 0)
   assert.deepEqual(report.failures, [])
-  assert.equal(report.metrics.human_review_cases, 10)
-  assert.equal(report.metrics.human_handoff_cases, 3)
+  assert.equal(report.metrics.human_review_cases, 9)
+  assert.equal(report.metrics.human_handoff_cases, 8)
   assert.equal(report.metrics.fact_grounded_cases, 1)
-  assert.equal(report.metrics.outcomes_observed, 12)
+  assert.equal(report.metrics.outcomes_observed, 16)
   assert.equal(report.metrics.outcomes_unknown, 1)
-  assert.equal(report.metrics.one_question_compliant, 13)
+  assert.equal(report.metrics.one_question_compliant, 17)
   assert.equal(report.metrics.automatic_messages_permitted, 0)
   assert.equal(report.metrics.labels_permitted, 0)
   assert.equal(report.metrics.hermes_dispatches, 0)

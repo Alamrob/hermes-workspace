@@ -17,6 +17,9 @@ hechos comerciales aprobados. Cada borrador requiere revisión humana.
 - Si aparecen varios frentes, se pregunta cuál necesita resolver primero.
 - Si la persona pide una cotización, un descuento, una excepción o atención humana, se deriva con
   un resumen mínimo.
+- Si la persona pide confirmar alcance, plazo, horario, disponibilidad, resultado o una integración,
+  el agente usa solo un hecho vigente. Si no existe, explica el límite y deriva sin reiniciar el
+  diagnóstico.
 
 ## Mapa de rutas
 
@@ -29,6 +32,20 @@ hechos comerciales aprobados. Cada borrador requiere revisión humana.
 | Medición y mejora | métricas, analítica, tablero, indicadores | ¿Qué decisión necesitas tomar y hoy no puedes por falta de datos claros? | identificar fuentes y criterio de éxito |
 | WhatsApp y Conversa | WhatsApp, mensajería, Chatwoot, Conversa | ¿Dónde se quiebra hoy el flujo: respuesta, calificación, asignación o seguimiento? | confirmar volumen, responsables y control humano |
 | Necesidad múltiple | señales de dos o más rutas | ¿Cuál necesitas resolver primero? | retomar una ruta sin mezclar propuestas |
+
+## Cobertura por canal público
+
+| Entrada pública | Cobertura supervisada | Límite operativo |
+| --- | --- | --- |
+| WhatsApp desde `proptimiza.com` | cubierta por el texto prellenado y la ruta de operación o seguimiento | el origen del anuncio no se presume si el mensaje no lo conserva |
+| Diagnóstico del sitio enviado por WhatsApp | cubierto por las cuatro prioridades públicas | el agente debe usar las respuestas ya incluidas y preguntar solo el dato siguiente |
+| WhatsApp desde `conversa.proptimiza.com` | cubierta por la ruta WhatsApp y Conversa | precio, plazo y alcance siguen sujetos a hechos autorizados |
+| Correo o formulario a `ventas@proptimiza.com` | contenido conversacional preparado, canal Chatwoot no verificado | no afirmar que llegó a Chatwoot ni que el agente lo procesó |
+| Referencia a Launch, Forge o Automatiza | cubierta como lente de diagnóstico cuando aparece en el mensaje | el nombre del subdominio no confirma oferta, precio, plazo o capacidad |
+| Anuncio de Google o Meta | cubierta si el texto del contacto expresa la necesidad | los metadatos de referral o UTM no forman parte del contrato verificado del reviewer |
+
+Si una entrada llega por un canal no verificado, el equipo puede aplicar este mapa cuando una persona
+la copie o la asigne manualmente. No debe afirmar una ingesta automática que no se haya probado.
 
 ## Derivación humana obligatoria
 
@@ -47,13 +64,15 @@ hechos comerciales aprobados. Cada borrador requiere revisión humana.
    prioridad.
 3. Revisar el borrador del agente contra los hechos autorizados. El texto público del sitio no
    reemplaza esa revisión.
-4. Corregir tono, exactitud y continuidad antes de responder manualmente.
-5. Usar `proptimiza-supervised-review` para borradores en revisión y
+4. Si el contacto pide confirmar un dato comercial no autorizado, conservar el contexto, marcar
+   derivación y evitar volver a preguntar por el negocio o el problema.
+5. Corregir tono, exactitud y continuidad antes de responder manualmente.
+6. Usar `proptimiza-supervised-review` para borradores en revisión y
    `proptimiza-human-handoff` cuando el caso exige una persona. No crear otras etiquetas operativas
    desde este flujo sin verificar su propiedad.
-6. Al derivar, dejar un resumen mínimo con motivo, objetivo, contexto confirmado, dato faltante y
+7. Al derivar, dejar un resumen mínimo con motivo, objetivo, contexto confirmado, dato faltante y
    siguiente acción. No copiar el historial completo.
-7. Registrar un resultado observable cuando exista: resuelto, venta, seguimiento, abandono,
+8. Registrar un resultado observable cuando exista: resuelto, venta, seguimiento, abandono,
    derivación o pendiente. No inferir una venta a partir de una respuesta positiva.
 
 ## Ejemplos de primera respuesta
@@ -80,6 +99,11 @@ Solicitud de precio sin un hecho vigente:
 
 > Para entregarte una cotización real, una persona debe revisar el alcance. Voy a derivar tu
 > consulta al equipo comercial; no hay un precio aprobado que este canal pueda prometer.
+
+Confirmación de alcance o plazo sin un hecho vigente:
+
+> No tengo un hecho comercial vigente para confirmar el alcance o el plazo. Para evitar una promesa
+> incorrecta, voy a derivar tu consulta al equipo con el contexto que ya entregaste.
 
 ## Control de calidad antes de responder
 

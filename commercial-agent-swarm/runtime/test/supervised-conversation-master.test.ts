@@ -95,7 +95,9 @@ test('multiple needs are prioritised before recommending a solution', () => {
 test('a named product or subdomain is context only until an approved fact matches', () => {
   const ungrounded = compile([{ kind: 'incoming', content: 'Entré a conversa.proptimiza.com. ¿Qué incluye Conversa?' }])
   assert.deepEqual(ungrounded.applied_fact_ids, [])
-  assert.match(ungrounded.suggested_response, /dónde se quiebra hoy el flujo/i)
+  assert.equal(ungrounded.next_action, 'human_handoff')
+  assert.equal(ungrounded.handoff_reason, 'missing_context')
+  assert.match(ungrounded.suggested_response, /no tengo un hecho comercial vigente/i)
   assert.doesNotMatch(ungrounded.suggested_response, /organiza el flujo supervisado/i)
 
   const grounded = compileSupervisedMasterCase({
@@ -177,7 +179,33 @@ test('a specific integration question cannot consume an unrelated fact from the 
   })
   assert.deepEqual(result.applied_fact_ids, [])
   assert.doesNotMatch(result.suggested_response, /chatwoot/i)
+  assert.equal(result.next_action, 'human_handoff')
+  assert.equal(result.handoff_reason, 'missing_context')
   assert.ok(result.uncertainties.some(item => /no hay hechos comerciales autorizados aplicables/i.test(item)))
+})
+
+test('public claims about response time, delivery time and scope require current authority', () => {
+  const cases = [
+    ['En el sitio dice que responden el mismo día. ¿Me responden hoy?', /la disponibilidad/i],
+    ['¿La implementación tarda 2 a 3 semanas?', /el plazo/i],
+    ['¿Conversa incluye cinco preguntas y tres responsables?', /el alcance/i],
+    ['¿Cuánto mejorarán mis ventas? ¿Me garantizan resultados?', /el resultado/i],
+  ] as const
+  for (const [message, subject] of cases) {
+    const result = compile([{ kind: 'incoming', content: message }])
+    assert.equal(result.next_action, 'human_handoff')
+    assert.equal(result.handoff_reason, 'missing_context')
+    assert.match(result.suggested_response, subject)
+    assert.deepEqual(result.applied_fact_ids, [])
+    assert.doesNotMatch(result.suggested_response, /\b(?:si|confirmado|garantizado)\b/i)
+  }
+})
+
+test('ordinary business descriptions that use incluye or disponible do not trigger a commercial authority handoff', () => {
+  const result = compile([{ kind: 'incoming', content: 'Nuestro equipo incluye ventas y soporte; queremos ordenar el seguimiento y tenemos una persona disponible.' }])
+  assert.equal(result.next_action, 'human_review')
+  assert.equal(result.handoff_reason, 'none')
+  assert.match(result.contact_reason, /operación o seguimiento/i)
 })
 
 test('a generic integration question may use the sole approved integration fact', () => {
