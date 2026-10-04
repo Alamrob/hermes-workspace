@@ -24,7 +24,14 @@ const admission = {
 } as PlatformAdmission
 
 const scope = Object.freeze({
-  scope_id: 'pilot-test', conversation_ids: Object.freeze(['25', '26']),
+  scope_id: 'pilot-test', conversations: Object.freeze([
+    Object.freeze({ conversation_id: '25', public_entry_context: Object.freeze({
+      channel: 'whatsapp' as const, surface: 'launch' as const, acquisition: 'meta_ads' as const,
+    }) }),
+    Object.freeze({ conversation_id: '26', public_entry_context: Object.freeze({
+      channel: 'whatsapp' as const, surface: 'unknown' as const, acquisition: 'unknown' as const,
+    }) }),
+  ]),
   authorized_fact_ids: Object.freeze([]), commercial_fact_catalog_sha256: null,
   expires_at: '2026-10-03T20:00:00.000Z',
 }) satisfies Readonly<SupervisedReviewScope>
@@ -85,4 +92,3 @@ test('polled and signed-webhook identities converge on the Chatwoot message name
   assert.equal(event.content.trust, 'untrusted_data')
   assert.match(event.trace_id, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
 })
-

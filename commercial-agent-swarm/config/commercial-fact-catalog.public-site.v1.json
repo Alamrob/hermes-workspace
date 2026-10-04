@@ -1,0 +1,72 @@
+{
+  "schema": "proptimiza-commercial-fact-catalog.v1",
+  "status": "active",
+  "catalog_id": "proptimiza-public-site-baseline-2026-10-04",
+  "generated_at": "2026-10-04T15:54:50.260Z",
+  "expires_at": "2026-11-03T23:59:59.000Z",
+  "facts": [
+    {
+      "id": "public.identity.proptimiza",
+      "category": "identity",
+      "statement": "Proptimiza conecta presencia digital, sistemas, automatización y medición para resolver prioridades reales del negocio.",
+      "source_ref": "public_site:proptimiza_main:2026-10-04",
+      "approved_by_role": "commercial_owner",
+      "approved_at": "2026-10-04T15:54:50.260Z",
+      "expires_at": "2026-11-03T23:59:59.000Z"
+    },
+    {
+      "id": "public.offer.portfolio",
+      "category": "offer",
+      "statement": "Proptimiza presenta cuatro rutas de servicio: Conversa, Launch, Forge y Automatiza.",
+      "source_ref": "public_site:proptimiza_main:2026-10-04",
+      "approved_by_role": "commercial_owner",
+      "approved_at": "2026-10-04T15:54:50.260Z",
+      "expires_at": "2026-11-03T23:59:59.000Z"
+    },
+    {
+      "id": "public.offer.conversa",
+      "category": "offer",
+      "statement": "Conversa organiza consultas y cotizaciones por WhatsApp con automatización y control humano.",
+      "source_ref": "public_site:proptimiza_main:2026-10-04",
+      "approved_by_role": "commercial_owner",
+      "approved_at": "2026-10-04T15:54:50.260Z",
+      "expires_at": "2026-11-03T23:59:59.000Z"
+    },
+    {
+      "id": "public.offer.launch",
+      "category": "offer",
+      "statement": "Launch aborda presencia y captación digital.",
+      "source_ref": "public_site:proptimiza_main:2026-10-04",
+      "approved_by_role": "commercial_owner",
+      "approved_at": "2026-10-04T15:54:50.260Z",
+      "expires_at": "2026-11-03T23:59:59.000Z"
+    },
+    {
+      "id": "public.offer.forge",
+      "category": "offer",
+      "statement": "Forge ayuda a comparar rutas de servicio y definir alcance antes de decidir.",
+      "source_ref": "public_site:proptimiza_main:2026-10-04",
+      "approved_by_role": "commercial_owner",
+      "approved_at": "2026-10-04T15:54:50.260Z",
+      "expires_at": "2026-11-03T23:59:59.000Z"
+    },
+    {
+      "id": "public.offer.automatiza",
+      "category": "offer",
+      "statement": "Automatiza conecta procesos, información e intervención humana.",
+      "source_ref": "public_site:proptimiza_main:2026-10-04",
+      "approved_by_role": "commercial_owner",
+      "approved_at": "2026-10-04T15:54:50.260Z",
+      "expires_at": "2026-11-03T23:59:59.000Z"
+    },
+    {
+      "id": "public.policy.site_diagnosis_storage",
+      "category": "policy",
+      "statement": "Las respuestas del diagnóstico del sitio principal no se guardan en WordPress y se incluyen en el canal elegido para revisión del usuario.",
+      "source_ref": "public_site:proptimiza_main:2026-10-04",
+      "approved_by_role": "commercial_owner",
+      "approved_at": "2026-10-04T15:54:50.260Z",
+      "expires_at": "2026-11-03T23:59:59.000Z"
+    }
+  ]
+}

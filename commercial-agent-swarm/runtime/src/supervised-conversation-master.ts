@@ -34,10 +34,42 @@ export interface SupervisedTranscriptMessage {
   content: string
 }
 
+export const PUBLIC_ENTRY_SURFACES = Object.freeze([
+  'unknown',
+  'proptimiza_main',
+  'conversa',
+  'launch',
+  'forge',
+  'automatiza',
+] as const)
+
+export const PUBLIC_ENTRY_ACQUISITIONS = Object.freeze([
+  'unknown',
+  'direct',
+  'organic',
+  'google_ads',
+  'meta_ads',
+  'referral',
+] as const)
+
+export type PublicEntrySurface = typeof PUBLIC_ENTRY_SURFACES[number]
+export type PublicEntryAcquisition = typeof PUBLIC_ENTRY_ACQUISITIONS[number]
+
+/**
+ * Bounded, pre-verified routing context. It intentionally excludes URLs,
+ * campaign identifiers and free text, and never grants commercial authority.
+ */
+export interface PublicEntryContext {
+  channel: 'whatsapp'
+  surface: PublicEntrySurface
+  acquisition: PublicEntryAcquisition
+}
+
 export interface SupervisedMasterInput {
   case_ref: string
   transcript: readonly SupervisedTranscriptMessage[]
   authorized_facts: readonly Readonly<CommercialFact>[]
+  public_entry_context?: Readonly<PublicEntryContext>
   observable_outcome?: ObservableOutcome
   capabilities: {
     chatwoot_read: boolean
@@ -175,7 +207,7 @@ export function compileSupervisedMasterCase(input: SupervisedMasterInput): Reado
   validateInput(input)
   const normalized = input.transcript.map(message => ({ kind: message.kind, text: normalize(message.content) }))
   const latest = [...normalized].reverse().find(message => message.kind === 'incoming')!.text
-  const state = diagnose(latest, normalized, input.authorized_facts)
+  const state = diagnose(latest, normalized, input.authorized_facts, input.public_entry_context)
   const selectedProfiles = selectProfiles(state)
   const availableProfiles = new Set(input.capabilities.hermes_profiles)
   const profiles = selectedProfiles.map(profile => {
@@ -195,10 +227,13 @@ export function compileSupervisedMasterCase(input: SupervisedMasterInput): Reado
   const result: SupervisedMasterCase = {
     schema: 'proptimiza-supervised-conversation-master.v1',
     case_ref: input.case_ref,
-    evidence_fingerprint: fingerprint(input.transcript),
+    evidence_fingerprint: fingerprint(input.transcript, input.public_entry_context),
     contact_reason: state.reason,
     customer_objective: state.objective,
-    known_context: state.known,
+    known_context: Object.freeze([
+      ...state.known,
+      ...(input.public_entry_context ? [formatPublicEntryContext(input.public_entry_context)] : []),
+    ]),
     missing_information: state.missing,
     urgency: state.urgency,
     relevant_questions_or_objections: state.objections,
@@ -236,10 +271,10 @@ interface Diagnosis {
 }
 
 function diagnose(latest: string, transcript: readonly { kind: 'incoming' | 'assistant'; text: string }[],
-  authorizedFacts: readonly Readonly<CommercialFact>[]): Diagnosis {
+  authorizedFacts: readonly Readonly<CommercialFact>[], publicEntryContext?: Readonly<PublicEntryContext>): Diagnosis {
   const askedBusiness = transcript.some(message => message.kind === 'assistant' && message.text === normalize(questions.business))
   const askedProblem = transcript.some(message => message.kind === 'assistant' && message.text === normalize(questions.problem))
-  const route = identifyConversationRoute(latest)
+  const route = identifyConversationRoute(latest) ?? identifyPublicEntryRoute(publicEntryContext)
   const specificSolution = /\b(?:whatsapp|mensajeria|automatiz\w*|cotiz\w*|seguimiento|crm|chatbot|correo|email|formular\w*|integraci\w*|agenda|atencion|ventas)\b/.test(latest)
   const generalInterest = /\b(?:interesad\w*|informacion|productos?|servicios?|soluciones?|que (?:hace|ofrece) proptimiza)\b/.test(latest)
     && !specificSolution && route === null
@@ -328,6 +363,21 @@ function identifyConversationRoute(latest: string): ConversationRoute | null {
   return unique.length > 1 ? 'multi_need' : unique[0] ?? null
 }
 
+function identifyPublicEntryRoute(context?: Readonly<PublicEntryContext>): ConversationRoute | null {
+  if (!context) return null
+  const route: Partial<Record<PublicEntrySurface, ConversationRoute>> = {
+    conversa: 'whatsapp_conversa',
+    launch: 'presence_acquisition',
+    forge: 'scope_decision',
+    automatiza: 'automation_integration',
+  }
+  return route[context.surface] ?? null
+}
+
+function formatPublicEntryContext(context: Readonly<PublicEntryContext>): string {
+  return `origen operativo verificado: ${context.surface}/${context.acquisition}/${context.channel}`
+}
+
 function identifyMissingCommercialAuthority(latest: string): 'scope' | 'timeline' | 'hours' | 'availability' | 'result' | 'integration' | null {
   if (/\b(?:se integra|es compatible|conecta con|integran con)\b/.test(latest)) return 'integration'
   if (/\b(?:horario|horarios|a que hora|atienden|abierto|abren|cierran)\b/.test(latest)) return 'hours'
@@ -392,12 +442,20 @@ function selectDirectFact(latest: string, facts: readonly Readonly<CommercialFac
             : undefined
   if (!category) return undefined
   const candidates = facts.filter(fact => fact.category === category)
-  if (candidates.length !== 1) return undefined
-  const candidate = candidates[0]!
-  if (isGenericFactQuestion(latest, category)) return candidate
+  if (candidates.length === 0) return undefined
+  if (isGenericFactQuestion(latest, category)) return candidates.length === 1 ? candidates[0] : undefined
   const queryTerms = materialTerms(latest, category)
-  const factTerms = materialTerms(normalize(candidate.statement), category)
-  return [...queryTerms].some(term => factTerms.has(term)) ? candidate : undefined
+  const scored = candidates.map(candidate => {
+    const factTerms = materialTerms(normalize(candidate.statement), category)
+    const overlaps = [...queryTerms].filter(term => factTerms.has(term))
+    const normalizedStatement = normalize(candidate.statement)
+    const subjectBoost = overlaps.some(term => normalizedStatement.startsWith(term)) ? 2 : 0
+    return { candidate, score: overlaps.length + subjectBoost }
+  }).filter(item => item.score > 0)
+  if (scored.length === 0) return undefined
+  const max = Math.max(...scored.map(item => item.score))
+  const matching = scored.filter(item => item.score === max)
+  return matching.length === 1 ? matching[0]!.candidate : undefined
 }
 
 function isGenericFactQuestion(latest: string, category: CommercialFactCategory): boolean {
@@ -459,6 +517,15 @@ function validateInput(input: SupervisedMasterInput): void {
     throw Error('SUPERVISED_CAPABILITIES_INVALID')
   for (const key of ['chatwoot_read', 'internal_notes', 'labels', 'assignments', 'saved_drafts', 'hermes_dispatch'] as const)
     if (typeof capabilities[key] !== 'boolean') throw Error('SUPERVISED_CAPABILITIES_INVALID')
+  if (input.public_entry_context !== undefined) {
+    const context = input.public_entry_context as unknown as Record<string, unknown>
+    if (!context || typeof context !== 'object' || Array.isArray(context)
+      || Object.keys(context).sort().join(',') !== ['acquisition', 'channel', 'surface'].sort().join(',')
+      || context.channel !== 'whatsapp'
+      || !PUBLIC_ENTRY_SURFACES.includes(context.surface as PublicEntrySurface)
+      || !PUBLIC_ENTRY_ACQUISITIONS.includes(context.acquisition as PublicEntryAcquisition))
+      throw Error('SUPERVISED_PUBLIC_ENTRY_CONTEXT_INVALID')
+  }
 }
 
 function isAuthorizedFact(fact: Readonly<CommercialFact>): boolean {
@@ -471,8 +538,11 @@ function isAuthorizedFact(fact: Readonly<CommercialFact>): boolean {
     && typeof fact.approved_at === 'string' && typeof fact.expires_at === 'string')
 }
 
-function fingerprint(messages: readonly SupervisedTranscriptMessage[]): string {
-  return createHash('sha256').update(JSON.stringify(messages.map(message => [message.kind, message.content])), 'utf8').digest('hex')
+function fingerprint(messages: readonly SupervisedTranscriptMessage[], context?: Readonly<PublicEntryContext>): string {
+  return createHash('sha256').update(JSON.stringify({
+    messages: messages.map(message => [message.kind, message.content]),
+    public_entry_context: context ?? null,
+  }), 'utf8').digest('hex')
 }
 
 function normalize(value: string): string {

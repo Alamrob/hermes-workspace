@@ -46,24 +46,41 @@ test('rejects raw credentials, sender credentials and Hermes capabilities', () =
 
 test('accepts only a fresh bounded scope for at most ten exact conversations', () => {
   const clock = () => new Date('2026-10-02T12:00:00.000Z')
-  const scope = JSON.stringify({
-    schema: 'proptimiza-supervised-review-scope.v2', scope_id: 'pilot-1', account_id: '1', inbox_id: '1',
-    conversation_ids: ['25', '26'], issued_at: '2026-10-02T11:59:00.000Z', expires_at: '2026-10-02T13:00:00.000Z',
+  const value = {
+    schema: 'proptimiza-supervised-review-scope.v3', scope_id: 'pilot-1', account_id: '1', inbox_id: '1',
+    conversations: [
+      { conversation_id: '25', public_entry_context: { channel: 'whatsapp', surface: 'launch', acquisition: 'meta_ads' } },
+      { conversation_id: '26', public_entry_context: { channel: 'whatsapp', surface: 'unknown', acquisition: 'unknown' } },
+    ],
+    issued_at: '2026-10-02T11:59:00.000Z', expires_at: '2026-10-02T13:00:00.000Z',
     authorized_fact_ids: [], commercial_fact_catalog_sha256: null,
-  })
+  }
+  const scope = JSON.stringify(value)
   assert.deepEqual(parseSupervisedReviewScope(scope, '1', '1', clock), {
-    scope_id: 'pilot-1', conversation_ids: ['25', '26'], authorized_fact_ids: [],
+    scope_id: 'pilot-1', conversations: value.conversations, authorized_fact_ids: [],
     commercial_fact_catalog_sha256: null, expires_at: '2026-10-02T13:00:00.000Z',
   })
   assert.throws(() => parseSupervisedReviewScope(scope.replace('13:00:00', '20:00:00'), '1', '1', clock))
-  assert.throws(() => parseSupervisedReviewScope(scope.replace('"25","26"', '"25","25"'), '1', '1', clock))
+  assert.throws(() => parseSupervisedReviewScope(JSON.stringify({ ...value,
+    conversations: [value.conversations[0], { ...value.conversations[1], conversation_id: '25' }],
+  }), '1', '1', clock))
   assert.throws(() => parseSupervisedReviewScope(scope, '2', '1', clock))
   assert.throws(() => parseSupervisedReviewScope(scope.replace('"authorized_fact_ids":[]',
     '"authorized_fact_ids":["fact:offer:1"]'), '1', '1', clock))
   const bound = scope.replace('"authorized_fact_ids":[]', '"authorized_fact_ids":["fact:offer:1"]')
     .replace('"commercial_fact_catalog_sha256":null', `"commercial_fact_catalog_sha256":"${'a'.repeat(64)}"`)
   assert.deepEqual(parseSupervisedReviewScope(bound, '1', '1', clock).authorized_fact_ids, ['fact:offer:1'])
-  assert.throws(() => parseSupervisedReviewScope(scope.replace('scope.v2', 'scope.v1'), '1', '1', clock))
+  assert.throws(() => parseSupervisedReviewScope(scope.replace('scope.v3', 'scope.v2'), '1', '1', clock))
+  assert.throws(() => parseSupervisedReviewScope(JSON.stringify({ ...value,
+    conversations: [{ conversation_id: '25', public_entry_context: {
+      channel: 'whatsapp', surface: 'https://launch.proptimiza.com', acquisition: 'meta_ads',
+    } }],
+  }), '1', '1', clock))
+  assert.throws(() => parseSupervisedReviewScope(JSON.stringify({ ...value,
+    conversations: [{ conversation_id: '25', public_entry_context: {
+      channel: 'whatsapp', surface: 'launch', acquisition: 'meta_ads', utm_campaign: 'secret-campaign',
+    } }],
+  }), '1', '1', clock))
 })
 
 test('allows staging only for the exact enabled gate value', () => {

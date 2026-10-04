@@ -92,6 +92,23 @@ test('stages one private note for review and has no public-send dependency', asy
   } finally { await rm(f.root, { recursive: true, force: true }) }
 })
 
+test('uses the exact scoped entry context while keeping the result review-only', async () => {
+  const f = await fixture('Hola, quiero información.')
+  try {
+    const actions: string[] = []
+    let note = ''
+    const client = clientFor(f.text, actions, {
+      createPrivateNote: async (_conversation, value) => { actions.push('private-note'); note = value; return { message_id: '91' } },
+    })
+    await processSupervisedReviewEvent(f.store, client, f.record, true, true, [], {
+      channel: 'whatsapp', surface: 'forge', acquisition: 'google_ads',
+    })
+    assert.match(note, /consulta sobre alcance o decisión de compra/i)
+    assert.match(note, /Borrador no enviado/i)
+    assert.equal((await f.store.get(f.record.event_id))?.status, 'staged')
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
 test('uses only a resolved approved fact and records its id in the private review note', async () => {
   const f = await fixture('¿Qué servicios ofrece Proptimiza?')
   try {

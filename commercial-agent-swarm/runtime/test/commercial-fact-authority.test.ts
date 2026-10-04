@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import {
   formatCommercialFactContext,
@@ -61,4 +62,21 @@ test('rejects oversized input, control bytes and unsafe source references', () =
   const baseFact = JSON.parse(catalog()).facts[0]
   assert.throws(() => parseCommercialFactCatalog(catalog({ facts: [{ ...baseFact, source_ref: 'https://source/?token=secret' }] }), now), /FACT_INVALID/)
   assert.throws(() => parseCommercialFactCatalog(catalog({ facts: [{ ...baseFact, statement: 'Línea uno\nLínea dos' }] }), now), /FACT_INVALID/)
+})
+
+test('validates the checked-in public-site baseline without prices, SLAs or result claims', async () => {
+  const raw = await readFile(new URL('../../config/commercial-fact-catalog.public-site.v1.json', import.meta.url), 'utf8')
+  const parsed = parseCommercialFactCatalog(raw, new Date('2026-10-04T16:00:00.000Z'))
+  assert.deepEqual(parsed.facts.map(fact => fact.id), [
+    'public.identity.proptimiza',
+    'public.offer.portfolio',
+    'public.offer.conversa',
+    'public.offer.launch',
+    'public.offer.forge',
+    'public.offer.automatiza',
+    'public.policy.site_diagnosis_storage',
+  ])
+  assert.equal(parsed.facts.some(fact => ['pricing', 'hours', 'integration', 'result'].includes(fact.category)), false)
+  assert.ok(parsed.facts.every(fact => fact.approved_by_role === 'commercial_owner'))
+  assert.match(parsed.catalog_sha256, /^[0-9a-f]{64}$/)
 })

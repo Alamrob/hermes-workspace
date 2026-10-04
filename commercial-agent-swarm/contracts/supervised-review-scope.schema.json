@@ -9,7 +9,7 @@
     "scope_id",
     "account_id",
     "inbox_id",
-    "conversation_ids",
+    "conversations",
     "authorized_fact_ids",
     "commercial_fact_catalog_sha256",
     "issued_at",
@@ -17,7 +17,7 @@
   ],
   "properties": {
     "schema": {
-      "const": "proptimiza-supervised-review-scope.v2"
+      "const": "proptimiza-supervised-review-scope.v3"
     },
     "scope_id": {
       "type": "string",
@@ -31,14 +31,35 @@
       "type": "string",
       "pattern": "^[1-9][0-9]{0,17}$"
     },
-    "conversation_ids": {
+    "conversations": {
       "type": "array",
       "minItems": 1,
       "maxItems": 10,
       "uniqueItems": true,
       "items": {
-        "type": "string",
-        "pattern": "^[1-9][0-9]{0,17}$"
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["conversation_id", "public_entry_context"],
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]{0,17}$"
+          },
+          "public_entry_context": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["channel", "surface", "acquisition"],
+            "properties": {
+              "channel": { "const": "whatsapp" },
+              "surface": {
+                "enum": ["unknown", "proptimiza_main", "conversa", "launch", "forge", "automatiza"]
+              },
+              "acquisition": {
+                "enum": ["unknown", "direct", "organic", "google_ads", "meta_ads", "referral"]
+              }
+            }
+          }
+        }
       }
     },
     "authorized_fact_ids": {

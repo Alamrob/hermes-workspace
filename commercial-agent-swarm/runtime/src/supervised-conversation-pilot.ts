@@ -9,6 +9,7 @@ import type { CommercialFact } from './commercial-fact-authority.js'
 import {
   compileSupervisedMasterCase,
   type ObservableOutcome,
+  type PublicEntryContext,
   type SupervisedMasterCase,
   type SupervisedMasterInput,
 } from './supervised-conversation-master.js'
@@ -35,6 +36,7 @@ export interface SupervisedConversationPilotInput {
   message_id: string
   content_sha256: string
   authorized_facts: readonly Readonly<CommercialFact>[]
+  public_entry_context?: Readonly<PublicEntryContext>
   observable_outcome?: ObservableOutcome
   capabilities: Omit<SupervisedMasterInput['capabilities'], 'chatwoot_read'>
 }
@@ -63,6 +65,7 @@ export async function runSupervisedConversationPilot(
     case_ref: caseRef,
     transcript: snapshot.transcript.map(message => ({ kind: message.kind, content: message.content })),
     authorized_facts: input.authorized_facts,
+    public_entry_context: input.public_entry_context,
     observable_outcome: input.observable_outcome,
     capabilities: { ...input.capabilities, chatwoot_read: true },
   })

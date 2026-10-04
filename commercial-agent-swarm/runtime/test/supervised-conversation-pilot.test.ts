@@ -55,6 +55,19 @@ test('compiles a review-only case through a read-only port', async () => {
   assert.ok(Buffer.byteLength(result.review_note, 'utf8') <= 2000)
 })
 
+test('passes only bounded verified public-entry context into the case compiler', async () => {
+  const reader: SupervisedConversationReader = { snapshot: async () => snapshot() }
+  const result = await runSupervisedConversationPilot(reader, {
+    ...input,
+    public_entry_context: { channel: 'whatsapp', surface: 'automatiza', acquisition: 'google_ads' },
+  })
+  assert.equal(result.status, 'draft_ready')
+  if (result.status !== 'draft_ready') return
+  assert.match(result.case_file.contact_reason, /automatización o integración/i)
+  assert.ok(result.case_file.known_context.includes('origen operativo verificado: automatiza/google_ads/whatsapp'))
+  assert.doesNotMatch(JSON.stringify(result.case_file), /https?:|utm_/i)
+})
+
 test('holds a case when a human has already replied', async () => {
   const reader: SupervisedConversationReader = { snapshot: async () => snapshot({ current: false, human_replied: true }) }
   assert.deepEqual(await runSupervisedConversationPilot(reader, input), {

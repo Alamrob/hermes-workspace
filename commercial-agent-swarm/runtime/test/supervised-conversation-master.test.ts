@@ -38,6 +38,20 @@ const approvedConversaOffer = Object.freeze({
   approved_at: '2026-10-02T12:00:00.000Z', expires_at: '2026-10-03T12:00:00.000Z',
 } satisfies CommercialFact)
 
+const approvedLaunchOffer = Object.freeze({
+  id: 'fact:offer:launch', category: 'offer',
+  statement: 'Launch organiza la presencia y la captación digital de un negocio.',
+  source_ref: 'catalog:commercial:v1', approved_by_role: 'commercial_owner',
+  approved_at: '2026-10-02T12:00:00.000Z', expires_at: '2026-10-03T12:00:00.000Z',
+} satisfies CommercialFact)
+
+const approvedPortfolioOffer = Object.freeze({
+  id: 'fact:offer:portfolio', category: 'offer',
+  statement: 'Proptimiza presenta cuatro rutas de servicio: Conversa, Launch, Forge y Automatiza.',
+  source_ref: 'catalog:commercial:v1', approved_by_role: 'commercial_owner',
+  approved_at: '2026-10-02T12:00:00.000Z', expires_at: '2026-10-03T12:00:00.000Z',
+} satisfies CommercialFact)
+
 test('general interest starts a neutral one-question diagnosis and never sends', () => {
   const result = compile([{ kind: 'incoming', content: 'Hola, estoy interesado en sus productos.' }])
   assert.equal(result.suggested_response, 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?')
@@ -107,6 +121,60 @@ test('a named product or subdomain is context only until an approved fact matche
   })
   assert.deepEqual(grounded.applied_fact_ids, ['fact:offer:conversa'])
   assert.match(grounded.suggested_response, /organiza el flujo supervisado/i)
+})
+
+test('a bounded verified entry surface guides diagnosis without granting commercial authority', () => {
+  const result = compileSupervisedMasterCase({
+    case_ref: 'case:entry-launch',
+    transcript: [{ kind: 'incoming', content: 'Hola, quiero información.' }],
+    authorized_facts: [],
+    public_entry_context: { channel: 'whatsapp', surface: 'launch', acquisition: 'meta_ads' },
+    capabilities,
+  })
+  assert.match(result.contact_reason, /presencia o captación/i)
+  assert.match(result.suggested_response, /qué está fallando hoy/i)
+  assert.deepEqual(result.applied_fact_ids, [])
+  assert.ok(result.known_context.includes('origen operativo verificado: launch/meta_ads/whatsapp'))
+  assert.doesNotMatch(result.suggested_response, /incluye|precio|plazo/i)
+})
+
+test('public entry context is exact, bounded and part of the evidence fingerprint', () => {
+  const base = {
+    case_ref: 'case:entry-fingerprint',
+    transcript: [{ kind: 'incoming' as const, content: 'Hola.' }],
+    authorized_facts: [], capabilities,
+  }
+  const direct = compileSupervisedMasterCase({ ...base,
+    public_entry_context: { channel: 'whatsapp', surface: 'proptimiza_main', acquisition: 'direct' } })
+  const paid = compileSupervisedMasterCase({ ...base,
+    public_entry_context: { channel: 'whatsapp', surface: 'proptimiza_main', acquisition: 'meta_ads' } })
+  assert.notEqual(direct.evidence_fingerprint, paid.evidence_fingerprint)
+  assert.throws(() => compileSupervisedMasterCase({ ...base,
+    public_entry_context: { channel: 'whatsapp', surface: 'launch', acquisition: 'meta_ads',
+      utm_campaign: 'raw-value' } as never,
+  }), /SUPERVISED_PUBLIC_ENTRY_CONTEXT_INVALID/)
+})
+
+test('a product-specific question resolves one matching fact from a multi-product catalog', () => {
+  const result = compileSupervisedMasterCase({
+    case_ref: 'case:multi-offer-facts',
+    transcript: [{ kind: 'incoming', content: '¿Qué incluye Conversa?' }],
+    authorized_facts: [approvedLaunchOffer, approvedConversaOffer], capabilities,
+  })
+  assert.deepEqual(result.applied_fact_ids, ['fact:offer:conversa'])
+  assert.match(result.suggested_response, /flujo supervisado de atención por whatsapp/i)
+  assert.doesNotMatch(result.suggested_response, /captación digital/i)
+})
+
+test('a named product fact outranks a portfolio summary that also mentions the product', () => {
+  const result = compileSupervisedMasterCase({
+    case_ref: 'case:portfolio-overlap',
+    transcript: [{ kind: 'incoming', content: '¿Qué es Launch?' }],
+    authorized_facts: [approvedPortfolioOffer, approvedLaunchOffer, approvedConversaOffer], capabilities,
+  })
+  assert.deepEqual(result.applied_fact_ids, ['fact:offer:launch'])
+  assert.match(result.suggested_response, /presencia y la captación digital/i)
+  assert.doesNotMatch(result.suggested_response, /cuatro rutas/i)
 })
 
 test('explicit product interest and later route context do not fall back to generic questions', () => {

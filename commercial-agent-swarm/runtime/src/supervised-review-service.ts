@@ -24,6 +24,13 @@ import {
 } from './commercial-fact-authority.js'
 import { runSupervisedConversationPilot } from './supervised-conversation-pilot.js'
 import {
+  PUBLIC_ENTRY_ACQUISITIONS,
+  PUBLIC_ENTRY_SURFACES,
+  type PublicEntryAcquisition,
+  type PublicEntryContext,
+  type PublicEntrySurface,
+} from './supervised-conversation-master.js'
+import {
   SupervisedReviewStore,
   type SupervisedReviewRecord,
   type SupervisedReviewStatus,
@@ -81,12 +88,13 @@ export async function pollSupervisedReviewScopeOnce(
   pilotEnabled: boolean,
   now: () => Date = () => new Date(),
 ): Promise<Readonly<SupervisedReviewPollReceipt>> {
-  if (!pilotEnabled) return Object.freeze({ scoped_conversations: scope.conversation_ids.length,
+  if (!pilotEnabled) return Object.freeze({ scoped_conversations: scope.conversations.length,
     observed_incoming: 0, inserted: 0, duplicates: 0 })
   let observed = 0
   let inserted = 0
   let duplicates = 0
-  for (const conversationId of scope.conversation_ids) {
+  for (const scopedConversation of scope.conversations) {
+    const conversationId = scopedConversation.conversation_id
     const incoming = await client.latestIncoming(conversationId)
     if (!incoming) continue
     observed++
@@ -95,7 +103,7 @@ export async function pollSupervisedReviewScopeOnce(
     if (receipt.outcome === 'inserted') inserted++
     else duplicates++
   }
-  return Object.freeze({ scoped_conversations: scope.conversation_ids.length,
+  return Object.freeze({ scoped_conversations: scope.conversations.length,
     observed_incoming: observed, inserted, duplicates })
 }
 
@@ -144,6 +152,7 @@ export async function processSupervisedReviewEvent(
   pilotEnabled: boolean,
   conversationAllowed: boolean,
   authorizedFacts: readonly Readonly<CommercialFact>[] = [],
+  publicEntryContext?: Readonly<PublicEntryContext>,
 ): Promise<void> {
   if (!pilotEnabled) {
     await store.transition(event.event_id, 'pending', 'held', { stop_code: 'SUPERVISED_REVIEW_GATE_DISABLED' })
@@ -166,6 +175,7 @@ export async function processSupervisedReviewEvent(
       message_id: event.message_id,
       content_sha256: event.content_sha256,
       authorized_facts: authorizedFacts,
+      public_entry_context: publicEntryContext,
       capabilities: {
         internal_notes: true,
         labels: true,
@@ -425,8 +435,10 @@ export class SupervisedReviewService {
         ])
         const scope = parseSupervisedReviewScope(rawScope, this.config.accountId, this.config.inboxId)
         const authorizedFacts = await this.resolveScopeFacts(scope)
+        const scopedConversation = scope.conversations.find(item => item.conversation_id === event.conversation_id)
         await processSupervisedReviewEvent(this.store, this.client, event,
-          supervisedReviewGateAllowsStaging(gate), scope.conversation_ids.includes(event.conversation_id), authorizedFacts)
+          supervisedReviewGateAllowsStaging(gate), scopedConversation !== undefined, authorizedFacts,
+          scopedConversation?.public_entry_context)
       } catch (error) {
         await this.failSafe(event.event_id, error)
       }
@@ -467,9 +479,14 @@ export function supervisedReviewGateAllowsStaging(value: string): boolean {
   return value === 'enabled'
 }
 
+export interface SupervisedReviewScopeConversation {
+  conversation_id: string
+  public_entry_context: Readonly<PublicEntryContext>
+}
+
 export interface SupervisedReviewScope {
   scope_id: string
-  conversation_ids: readonly string[]
+  conversations: readonly Readonly<SupervisedReviewScopeConversation>[]
   authorized_fact_ids: readonly string[]
   commercial_fact_catalog_sha256: string | null
   expires_at: string
@@ -482,14 +499,14 @@ export function parseSupervisedReviewScope(raw: string, accountId: string, inbox
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('SUPERVISED_REVIEW_SCOPE_INVALID')
   const value = parsed as Record<string, unknown>
   const keys = Object.keys(value).sort()
-  if (keys.join(',') !== ['account_id', 'authorized_fact_ids', 'commercial_fact_catalog_sha256', 'conversation_ids',
+  if (keys.join(',') !== ['account_id', 'authorized_fact_ids', 'commercial_fact_catalog_sha256', 'conversations',
     'expires_at', 'inbox_id', 'issued_at', 'schema', 'scope_id'].sort().join(',')
-    || value.schema !== 'proptimiza-supervised-review-scope.v2'
+    || value.schema !== 'proptimiza-supervised-review-scope.v3'
     || typeof value.scope_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.scope_id)
     || value.account_id !== accountId || value.inbox_id !== inboxId
-    || !Array.isArray(value.conversation_ids) || value.conversation_ids.length < 1 || value.conversation_ids.length > 10
-    || value.conversation_ids.some(id => typeof id !== 'string' || !DECIMAL.test(id))
-    || new Set(value.conversation_ids).size !== value.conversation_ids.length
+    || !Array.isArray(value.conversations) || value.conversations.length < 1 || value.conversations.length > 10
+    || value.conversations.some(item => !isScopeConversation(item))
+    || new Set(value.conversations.map(item => (item as Record<string, unknown>).conversation_id)).size !== value.conversations.length
     || !Array.isArray(value.authorized_fact_ids) || value.authorized_fact_ids.length > 24
     || value.authorized_fact_ids.some(id => typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(id))
     || new Set(value.authorized_fact_ids).size !== value.authorized_fact_ids.length
@@ -506,10 +523,27 @@ export function parseSupervisedReviewScope(raw: string, accountId: string, inbox
     || issued > current.getTime() + 60_000 || expires <= current.getTime() || expires - issued > 8 * 60 * 60 * 1000)
     throw new Error('SUPERVISED_REVIEW_SCOPE_INVALID')
   return Object.freeze({ scope_id: value.scope_id as string,
-    conversation_ids: Object.freeze([...(value.conversation_ids as string[])]),
+    conversations: Object.freeze((value.conversations as Array<Record<string, unknown>>).map(item => Object.freeze({
+      conversation_id: item.conversation_id as string,
+      public_entry_context: Object.freeze({ ...(item.public_entry_context as PublicEntryContext) }),
+    }))),
     authorized_fact_ids: Object.freeze([...(value.authorized_fact_ids as string[])]),
     commercial_fact_catalog_sha256: value.commercial_fact_catalog_sha256 as string | null,
     expires_at: value.expires_at as string })
+}
+
+function isScopeConversation(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const item = value as Record<string, unknown>
+  if (Object.keys(item).sort().join(',') !== ['conversation_id', 'public_entry_context'].sort().join(',')
+    || typeof item.conversation_id !== 'string' || !DECIMAL.test(item.conversation_id)) return false
+  const context = item.public_entry_context
+  if (!context || typeof context !== 'object' || Array.isArray(context)) return false
+  const entry = context as Record<string, unknown>
+  return Object.keys(entry).sort().join(',') === ['acquisition', 'channel', 'surface'].sort().join(',')
+    && entry.channel === 'whatsapp'
+    && PUBLIC_ENTRY_SURFACES.includes(entry.surface as PublicEntrySurface)
+    && PUBLIC_ENTRY_ACQUISITIONS.includes(entry.acquisition as PublicEntryAcquisition)
 }
 
 function allowedTerminal(status: SupervisedReviewStatus, preferred: 'failed' | 'uncertain'): 'failed' | 'uncertain' | null {
