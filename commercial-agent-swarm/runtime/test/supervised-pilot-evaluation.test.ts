@@ -53,6 +53,42 @@ const suite = Object.freeze([
     expected: { next_action: 'human_review', handoff_reason: 'none', applied_fact_ids: [], max_questions: 1 },
   },
   {
+    case_ref: 'sample:presence-route',
+    transcript: [{ kind: 'incoming', content: 'Vengo desde Launch y necesito mejorar mi sitio web.' }],
+    authorized_facts: [], observable_outcome: 'pending',
+    expected: { next_action: 'human_review', handoff_reason: 'none', applied_fact_ids: [], max_questions: 1 },
+  },
+  {
+    case_ref: 'sample:scope-route',
+    transcript: [{ kind: 'incoming', content: 'Vi Forge y necesito comparar opciones para definir el alcance.' }],
+    authorized_facts: [], observable_outcome: 'pending',
+    expected: { next_action: 'human_review', handoff_reason: 'none', applied_fact_ids: [], max_questions: 1 },
+  },
+  {
+    case_ref: 'sample:operations-route',
+    transcript: [{ kind: 'incoming', content: 'Perdemos el seguimiento de ventas y el próximo paso.' }],
+    authorized_facts: [], observable_outcome: 'pending',
+    expected: { next_action: 'human_review', handoff_reason: 'none', applied_fact_ids: [], max_questions: 1 },
+  },
+  {
+    case_ref: 'sample:automation-route',
+    transcript: [{ kind: 'incoming', content: 'Quiero automatizar una tarea repetitiva e integrar el CRM.' }],
+    authorized_facts: [], observable_outcome: 'pending',
+    expected: { next_action: 'human_review', handoff_reason: 'none', applied_fact_ids: [], max_questions: 1 },
+  },
+  {
+    case_ref: 'sample:measurement-route',
+    transcript: [{ kind: 'incoming', content: 'Necesito un dashboard con métricas para decidir mejor.' }],
+    authorized_facts: [], observable_outcome: 'pending',
+    expected: { next_action: 'human_review', handoff_reason: 'none', applied_fact_ids: [], max_questions: 1 },
+  },
+  {
+    case_ref: 'sample:multi-route',
+    transcript: [{ kind: 'incoming', content: 'Necesito una landing, automatizar el CRM y ordenar WhatsApp.' }],
+    authorized_facts: [], observable_outcome: 'pending',
+    expected: { next_action: 'human_review', handoff_reason: 'none', applied_fact_ids: [], max_questions: 1 },
+  },
+  {
     case_ref: 'sample:pricing',
     transcript: [{ kind: 'incoming', content: '¿Cuánto cuesta y qué descuento me pueden dar?' }],
     authorized_facts: [], observable_outcome: 'referred',
@@ -74,16 +110,16 @@ const suite = Object.freeze([
 
 test('evaluates a representative supervised suite without external actions or content in the report', () => {
   const report = evaluateSupervisedPilot(suite)
-  assert.equal(report.cases_total, 7)
-  assert.equal(report.cases_passed, 7)
+  assert.equal(report.cases_total, 13)
+  assert.equal(report.cases_passed, 13)
   assert.equal(report.cases_failed, 0)
   assert.deepEqual(report.failures, [])
-  assert.equal(report.metrics.human_review_cases, 4)
+  assert.equal(report.metrics.human_review_cases, 10)
   assert.equal(report.metrics.human_handoff_cases, 3)
   assert.equal(report.metrics.fact_grounded_cases, 1)
-  assert.equal(report.metrics.outcomes_observed, 6)
+  assert.equal(report.metrics.outcomes_observed, 12)
   assert.equal(report.metrics.outcomes_unknown, 1)
-  assert.equal(report.metrics.one_question_compliant, 7)
+  assert.equal(report.metrics.one_question_compliant, 13)
   assert.equal(report.metrics.automatic_messages_permitted, 0)
   assert.equal(report.metrics.labels_permitted, 0)
   assert.equal(report.metrics.hermes_dispatches, 0)

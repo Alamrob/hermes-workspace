@@ -31,6 +31,13 @@ const approvedIntegration = Object.freeze({
   approved_at: '2026-10-02T12:00:00.000Z', expires_at: '2026-10-03T12:00:00.000Z',
 } satisfies CommercialFact)
 
+const approvedConversaOffer = Object.freeze({
+  id: 'fact:offer:conversa', category: 'offer',
+  statement: 'Conversa organiza el flujo supervisado de atención por WhatsApp.',
+  source_ref: 'catalog:commercial:v1', approved_by_role: 'commercial_owner',
+  approved_at: '2026-10-02T12:00:00.000Z', expires_at: '2026-10-03T12:00:00.000Z',
+} satisfies CommercialFact)
+
 test('general interest starts a neutral one-question diagnosis and never sends', () => {
   const result = compile([{ kind: 'incoming', content: 'Hola, estoy interesado en sus productos.' }])
   assert.equal(result.suggested_response, 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?')
@@ -53,9 +60,66 @@ test('a business description advances to the problem without repeating the first
 
 test('an explicit WhatsApp request remains specific but still diagnoses one dimension', () => {
   const result = compile([{ kind: 'incoming', content: 'Quiero ordenar las consultas que llegan por WhatsApp.' }])
-  assert.match(result.contact_reason, /específica/)
-  assert.match(result.suggested_response, /recomendar algo que realmente encaje/i)
+  assert.match(result.contact_reason, /whatsapp/i)
+  assert.match(result.suggested_response, /dónde se quiebra hoy el flujo/i)
   assert.equal((result.suggested_response.match(/\?/g) ?? []).length, 1)
+})
+
+const routeCases = [
+  ['presence', 'Vengo desde launch.proptimiza.com y necesito mejorar mi sitio web.', /presencia o captación/i, /qué está fallando hoy/i],
+  ['scope', 'Vi Forge y necesito comparar opciones para definir el alcance.', /alcance o decisión/i, /qué decisión quieres tomar primero/i],
+  ['operations', 'Perdemos el seguimiento de ventas y nadie sabe el próximo paso.', /operación o seguimiento/i, /en qué punto se pierde/i],
+  ['automation', 'Quiero automatizar una tarea repetitiva e integrar el CRM.', /automatización o integración/i, /qué tarea repetitiva/i],
+  ['measurement', 'Necesito un dashboard con métricas para mejorar decisiones.', /medición o mejora/i, /qué decisión necesitas tomar/i],
+] as const
+
+for (const [name, message, reason, response] of routeCases) {
+  test(`routes ${name} interest to one diagnostic question without fabricating an offer`, () => {
+    const result = compile([{ kind: 'incoming', content: message }])
+    assert.match(result.contact_reason, reason)
+    assert.match(result.suggested_response, response)
+    assert.equal((result.suggested_response.match(/\?/g) ?? []).length, 1)
+    assert.deepEqual(result.applied_fact_ids, [])
+    assert.ok(result.rationale.some(item => /no confirma una oferta ni una capacidad/i.test(item)))
+  })
+}
+
+test('multiple needs are prioritised before recommending a solution', () => {
+  const result = compile([{ kind: 'incoming', content: 'Necesito una landing, automatizar el CRM y ordenar WhatsApp.' }])
+  assert.match(result.contact_reason, /más de un frente/i)
+  assert.equal(result.suggested_response, 'Veo más de un frente posible. ¿Cuál necesitas resolver primero?')
+  assert.equal((result.suggested_response.match(/\?/g) ?? []).length, 1)
+  assert.deepEqual(result.applied_fact_ids, [])
+})
+
+test('a named product or subdomain is context only until an approved fact matches', () => {
+  const ungrounded = compile([{ kind: 'incoming', content: 'Entré a conversa.proptimiza.com. ¿Qué incluye Conversa?' }])
+  assert.deepEqual(ungrounded.applied_fact_ids, [])
+  assert.match(ungrounded.suggested_response, /dónde se quiebra hoy el flujo/i)
+  assert.doesNotMatch(ungrounded.suggested_response, /organiza el flujo supervisado/i)
+
+  const grounded = compileSupervisedMasterCase({
+    case_ref: 'case:conversa-fact',
+    transcript: [{ kind: 'incoming', content: '¿Qué incluye Conversa?' }],
+    authorized_facts: [approvedConversaOffer], capabilities,
+  })
+  assert.deepEqual(grounded.applied_fact_ids, ['fact:offer:conversa'])
+  assert.match(grounded.suggested_response, /organiza el flujo supervisado/i)
+})
+
+test('explicit product interest and later route context do not fall back to generic questions', () => {
+  const named = compile([{ kind: 'incoming', content: 'Estoy interesado en Launch.' }])
+  assert.match(named.contact_reason, /presencia o captación/i)
+  assert.match(named.suggested_response, /qué está fallando hoy/i)
+
+  const continued = compile([
+    { kind: 'incoming', content: 'Quiero conocer sus servicios.' },
+    { kind: 'assistant', content: 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?' },
+    { kind: 'incoming', content: 'Somos una clínica y queremos automatizar la agenda.' },
+  ])
+  assert.match(continued.contact_reason, /automatización o integración/i)
+  assert.match(continued.suggested_response, /qué tarea repetitiva/i)
+  assert.doesNotMatch(continued.suggested_response, /qué proceso o problema/i)
 })
 
 test('a direct offer question uses only resolved approved facts and records their ids', () => {

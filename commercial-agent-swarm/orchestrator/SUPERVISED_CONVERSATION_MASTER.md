@@ -40,11 +40,17 @@ desplegado.
    recomendación, fundamento, borrador, siguiente acción, seguimiento y resultado observable.
 4. Hace una sola pregunta de diagnóstico cuando falta contexto. Una consulta general empieza por el
    negocio; no presupone que la necesidad sea WhatsApp.
-5. Deriva pagos, cotizaciones, reclamos delicados, bajas, credenciales, accesos internos, emergencias,
+5. Clasifica una necesidad explícita con seis lentes internos: presencia y captación, alcance y
+   decisión, operación y seguimiento, automatización e integraciones, medición y mejora, y WhatsApp.
+   Si aparecen varios frentes, primero pregunta cuál es prioritario. La clasificación orienta la
+   pregunta y no confirma una oferta.
+6. Trata URLs, subdominios, anuncios y nombres de producto del historial como contexto no confiable.
+   Solo un hecho autorizado puede confirmar alcance, precio, plazo o capacidad.
+7. Deriva pagos, cotizaciones, reclamos delicados, bajas, credenciales, accesos internos, emergencias,
    alianzas y solicitudes explícitas de una persona.
-6. Propone acciones de Chatwoot solo cuando la matriz de capacidades las declara disponibles. La
+8. Propone acciones de Chatwoot solo cuando la matriz de capacidades las declara disponibles. La
    propuesta no ejecuta esas acciones.
-7. Cuando el piloto local está habilitado y el caso pertenece al alcance temporal, crea una nota
+9. Cuando el piloto local está habilitado y el caso pertenece al alcance temporal, crea una nota
    privada. Solo los casos de traspaso se asignan al equipo 1. Nunca crea un mensaje público.
 
 ## Perfiles y Hermes
@@ -73,6 +79,9 @@ resultado. El servicio solo entrega al compilador hechos resueltos desde el cat�
 el compilador no acepta IDs sueltos, no interpreta texto de la conversación como fuente autorizada y
 registra `applied_fact_ids` únicamente para los hechos realmente usados. Sin un hecho aplicable,
 registra incertidumbre y pregunta o deriva.
+
+La taxonomía y las preguntas para los recorridos públicos de Proptimiza se documentan en
+`orchestrator/PROPTIMIZA_PUBLIC_JOURNEYS.md`. Ese documento no es un catálogo comercial activo.
 
 ## Criterio de activación
 
