@@ -11,6 +11,7 @@ export interface GuardedConversationMessage {
 const responses = Object.freeze({
   diagnosticStart: 'Hola. Para orientarte bien, primero necesito entender tu negocio. ¿A qué se dedica?',
   diagnosticProblem: 'Gracias. ¿Qué proceso o problema comercial u operativo te gustaría mejorar primero?',
+  diagnosticOutcome: 'Entiendo el foco. ¿Qué resultado necesitas conseguir primero con ese proceso?',
   optOut: 'Entendido. No continuaré con la calificación automática. Voy a derivar tu solicitud de baja al equipo para que aplique la supresión correspondiente.',
   emergency: 'No puedo atender emergencias médicas ni situaciones de riesgo. Si existe peligro inmediato, contacta ahora a los servicios de emergencia de tu zona. No compartas datos sensibles por este chat.',
   credential: 'No compartas contraseñas, códigos, tokens, claves API ni enlaces de acceso por este chat. Voy a derivar el caso para una revisión segura.',
@@ -83,7 +84,13 @@ export function applyConversationGuardrails(
     || /\b(?:como|pueden|podrian) (?:ayudar|resolver|mejorar|automatizar|integrar)\b/.test(text)
   if (priorAssistantAskedBusinessType && !priorAssistantAskedProblem && !latestStatesSpecificNeed)
     return Object.freeze({ response: responses.diagnosticProblem, handoff_reason: 'none' })
+  if (reply.handoff_reason === 'none' && questionCount(reply.response) > 1)
+    return Object.freeze({ response: responses.diagnosticOutcome, handoff_reason: 'none' })
   return Object.freeze({ response: reply.response, handoff_reason: reply.handoff_reason })
+}
+
+function questionCount(value: string): number {
+  return value.match(/\?/g)?.length ?? 0
 }
 
 function normalize(value: string): string {

@@ -108,6 +108,27 @@ test('does not repeat the deterministic problem question after it was already as
   assert.deepEqual(applyConversationGuardrails(transcript.at(-1)!.content, clarifyingReply, transcript), clarifyingReply)
 })
 
+test('reduces multi-question model replies to one diagnostic decision point', () => {
+  const broadReply = {
+    response: '¿Cuántas consultas reciben? ¿Cuántas personas atienden? ¿Qué plan prefieren?',
+    handoff_reason: 'none',
+  }
+  const result = applyConversationGuardrails('Necesito ordenar el seguimiento de mis cotizaciones', broadReply)
+  assert.deepEqual(result, {
+    response: 'Entiendo el foco. ¿Qué resultado necesitas conseguir primero con ese proceso?',
+    handoff_reason: 'none',
+  })
+  assert.equal((result.response.match(/\?/g) ?? []).length, 1)
+  assert.doesNotMatch(result.response, /plan|precio|WhatsApp/i)
+  assert.deepEqual(broadReply, {
+    response: '¿Cuántas consultas reciben? ¿Cuántas personas atienden? ¿Qué plan prefieren?',
+    handoff_reason: 'none',
+  })
+
+  const oneQuestion = { response: 'Entiendo. ¿En qué parte del proceso se pierden oportunidades?', handoff_reason: 'none' }
+  assert.deepEqual(applyConversationGuardrails('Quiero mejorar el seguimiento', oneQuestion), oneQuestion)
+})
+
 test('normalizes accents and never mutates the model reply', () => {
   const mutable = { response: 'Texto original.', handoff_reason: 'none' }
   const result = applyConversationGuardrails('Necesito una cotización', mutable)
