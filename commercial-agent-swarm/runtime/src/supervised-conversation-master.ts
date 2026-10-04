@@ -248,7 +248,7 @@ function diagnose(latest: string, transcript: readonly { kind: 'incoming' | 'ass
   const credential = /\b(?:contrasen\w*|password|clave api|api key|token|codigo (?:de )?(?:acceso|verificacion)|otp|secreto)\b/.test(latest)
   const internalAccess = /\b(?:paperclip|hermes|docker|ssh|servidor|base de datos|sistema interno|cuenta interna)\b/.test(latest)
     && /\b(?:ingresa|entra|accede|abre|conecta|usa|ejecuta|corre)\b/.test(latest)
-  const complaint = /\b(?:reclamo|queja|denuncia|estafa|fraude|abogad\w*|legal|demanda|enojad\w*|molest\w*)\b/.test(latest)
+  const complaint = /\b(?:reclamo|queja|denuncia|estafa|fraude|abogad\w*|legal|demandar\w*|demanda (?:legal|judicial)|enojad\w*|molest\w*)\b/.test(latest)
   const payment = /\b(?:pago|transferencia|comprobante|factura|cobro|chargeback|devolucion|reembolso)\b/.test(latest)
   const pricing = /\b(?:precio|precios|cuanto cuesta|cuanto cobran|costo|valor|tarifa\w*|descuento\w*|presupuesto|coti[sz]acion)\b/.test(latest)
   const partnership = /\b(?:alianza|asociarnos|sociedad|socio comercial|partnership|partner)\b/.test(latest)

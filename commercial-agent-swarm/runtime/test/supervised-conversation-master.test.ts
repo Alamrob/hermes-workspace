@@ -122,6 +122,42 @@ test('explicit product interest and later route context do not fall back to gene
   assert.doesNotMatch(continued.suggested_response, /qué proceso o problema/i)
 })
 
+test('current public WhatsApp CTA texts enter the intended supervised route', () => {
+  const institutional = compile([{ kind: 'incoming', content: 'Hola Proptimiza. Quiero conversar sobre cómo mejorar la atención y el seguimiento de mi negocio.' }])
+  assert.match(institutional.contact_reason, /operación o seguimiento/i)
+  assert.match(institutional.suggested_response, /en qué punto se pierde/i)
+
+  const conversa = compile([{ kind: 'incoming', content: 'Hola, quiero evaluar Conversa para ordenar las consultas y cotizaciones de mi negocio.' }])
+  assert.match(conversa.contact_reason, /whatsapp o conversa/i)
+  assert.match(conversa.suggested_response, /dónde se quiebra hoy el flujo/i)
+})
+
+test('the four institutional diagnosis priorities map without claiming a product', () => {
+  const cases = [
+    ['Captar demanda y mejorar presencia', /presencia o captación/i],
+    ['Ordenar la operación y el seguimiento', /operación o seguimiento/i],
+    ['Automatizar procesos e integrar sistemas', /automatización o integración/i],
+    ['Medir y mejorar decisiones', /medición o mejora/i],
+  ] as const
+  for (const [message, route] of cases) {
+    const result = compile([{ kind: 'incoming', content: message }])
+    assert.match(result.contact_reason, route)
+    assert.deepEqual(result.applied_fact_ids, [])
+    assert.equal((result.suggested_response.match(/\?/g) ?? []).length, 1)
+  }
+})
+
+test('commercial demand is not a complaint while a legal claim still requires handoff', () => {
+  const commercial = compile([{ kind: 'incoming', content: 'Necesito captar demanda y mejorar presencia.' }])
+  assert.match(commercial.contact_reason, /presencia o captación/i)
+  assert.equal(commercial.next_action, 'human_review')
+
+  const legal = compile([{ kind: 'incoming', content: 'Quiero presentar una demanda judicial contra la empresa.' }])
+  assert.equal(legal.contact_reason, 'reclamo o situación delicada')
+  assert.equal(legal.next_action, 'human_handoff')
+  assert.equal(legal.handoff_reason, 'sensitive_request')
+})
+
 test('a direct offer question uses only resolved approved facts and records their ids', () => {
   const result = compileSupervisedMasterCase({
     case_ref: 'case:facts', transcript: [{ kind: 'incoming', content: '¿Qué servicios ofrece Proptimiza?' }],
