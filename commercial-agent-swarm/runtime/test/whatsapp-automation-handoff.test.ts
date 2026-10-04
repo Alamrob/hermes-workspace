@@ -16,6 +16,7 @@ const config: WhatsAppAutomationConfig = {
   noProxy: 'proptimiza-chatwoot-web-1,localhost,127.0.0.1', childTimeoutSeconds: 90,
   maximumOutputTokens: 500, maximumTotalTokens: 8192, maximumUsd: 0.05,
   killSwitchFile: '/run/controls/whatsapp-replies-enabled',
+  automaticReplyPolicyFile: '/run/controls/whatsapp-automatic-reply-policy.json',
 }
 
 const event: ReplyEventRecord = {

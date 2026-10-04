@@ -83,3 +83,57 @@ test('a human takeover or model-requested handoff holds later events in the conv
     assert.equal(await f.store.conversationHoldReason('26'), 'specialist_required')
   } finally { await rm(f.root, { recursive: true, force: true }) }
 })
+
+test('counts only known automated replies inside the requested rolling window', async () => {
+  const f = await fixture()
+  try {
+    const sent = event('41', '25')
+    await f.store.commit(sent)
+    await f.store.transition(sent.event_id, 'pending', 'model_running')
+    await f.store.transition(sent.event_id, 'model_running', 'ready', { response_sha256: 'c'.repeat(64) })
+    await f.store.transition(sent.event_id, 'ready', 'sending')
+    await f.store.transition(sent.event_id, 'sending', 'sent', { outbound_message_id: '91' })
+
+    const sentButHeld = event('42', '25')
+    await f.store.commit(sentButHeld)
+    await f.store.transition(sentButHeld.event_id, 'pending', 'model_running')
+    await f.store.transition(sentButHeld.event_id, 'model_running', 'ready', { response_sha256: 'd'.repeat(64) })
+    await f.store.transition(sentButHeld.event_id, 'ready', 'sending')
+    await f.store.transition(sentButHeld.event_id, 'sending', 'held', {
+      outbound_message_id: '92', stop_code: 'REPLY_SENT_HANDOFF_ASSIGNMENT_UNCERTAIN',
+    })
+
+    const notSent = event('43', '25')
+    await f.store.commit(notSent)
+    await f.store.transition(notSent.event_id, 'pending', 'held', { stop_code: 'AUTOMATION_KILL_SWITCH_ACTIVE' })
+
+    const possiblySent = event('44', '25')
+    await f.store.commit(possiblySent)
+    await f.store.transition(possiblySent.event_id, 'pending', 'model_running')
+    await f.store.transition(possiblySent.event_id, 'model_running', 'ready', { response_sha256: 'e'.repeat(64) })
+    await f.store.transition(possiblySent.event_id, 'ready', 'sending')
+    await f.store.transition(possiblySent.event_id, 'sending', 'uncertain', { stop_code: 'CHATWOOT_SEND_UNCERTAIN' })
+
+    assert.equal(await f.store.automatedReplyCountSince('25', new Date('2026-09-29T12:00:00Z')), 3)
+    assert.equal(await f.store.automatedReplyCountSince('25', new Date('2026-10-01T12:00:00Z')), 0)
+    assert.equal(await f.store.automatedReplyCountSince('26', new Date('2026-09-29T12:00:00Z')), 0)
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('failed, uncertain, human takeover and response-policy rejection require a human before future events', async () => {
+  const statuses: Array<{ message: string; conversation: string; status: 'failed' | 'uncertain' | 'held'; code: string }> = [
+    { message: '51', conversation: '31', status: 'failed', code: 'CHATWOOT_REJECTED_403' },
+    { message: '52', conversation: '32', status: 'uncertain', code: 'CHATWOOT_SEND_UNCERTAIN' },
+    { message: '53', conversation: '33', status: 'held', code: 'HUMAN_REPLY_OBSERVED' },
+    { message: '54', conversation: '34', status: 'held', code: 'AUTOMATIC_REPLY_RESPONSE_POLICY_REJECTED' },
+  ]
+  const f = await fixture()
+  try {
+    for (const item of statuses) {
+      const incoming = event(item.message, item.conversation)
+      await f.store.commit(incoming)
+      await f.store.transition(incoming.event_id, 'pending', item.status, { stop_code: item.code })
+      assert.equal(await f.store.conversationHoldReason(item.conversation), item.code)
+    }
+  } finally { await rm(f.root, { recursive: true, force: true }) }
+})

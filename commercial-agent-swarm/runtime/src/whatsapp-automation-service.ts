@@ -13,6 +13,12 @@ import { createPlatformAdmission } from './platform/admission.js'
 import { buildConversationTranscriptRequest, conversationAffinity } from './platform/conversation-request.js'
 import { readGroupSecretFile } from './secret-file.js'
 import { WhatsAppReplyStore, type ReplyEventRecord } from './whatsapp-automation-store.js'
+import {
+  automaticReplyResponseAllowed,
+  decideAutomaticReplyPolicy,
+  parseAutomaticReplyPolicy,
+  type AutomaticReplyPolicy,
+} from './automatic-reply-policy.js'
 
 const ROUTE = '/webhooks/chatwoot/proptimiza'
 
@@ -39,6 +45,7 @@ export interface WhatsAppAutomationConfig {
   maximumTotalTokens: number
   maximumUsd: number
   killSwitchFile: string
+  automaticReplyPolicyFile: string
 }
 export class WhatsAppAutomationService {
   private readonly store: WhatsAppReplyStore
@@ -62,12 +69,13 @@ export class WhatsAppAutomationService {
 
   async start(): Promise<void> {
     await this.store.initialize()
-    const [secret, botToken, readerToken, providerKey, replyGate] = await Promise.all([
+    const [secret, botToken, readerToken, providerKey, replyGate, automaticReplyPolicy] = await Promise.all([
       readGroupSecretFile(this.config.webhookSecretFile, this.config.expectedSecretGid),
       readGroupSecretFile(this.config.agentBotTokenFile, this.config.expectedSecretGid),
       readGroupSecretFile(this.config.readerTokenFile, this.config.expectedSecretGid),
       readGroupSecretFile(this.config.openCodeKeyFile, this.config.expectedSecretGid),
       readGroupSecretFile(this.config.killSwitchFile, this.config.expectedSecretGid),
+      readGroupSecretFile(this.config.automaticReplyPolicyFile, this.config.expectedSecretGid),
     ])
     if (secret.length < 32 || secret.length > 4096
       || botToken.length < 24 || botToken.length > 8192 || /\s/.test(botToken)
@@ -75,6 +83,10 @@ export class WhatsAppAutomationService {
       || readerToken === botToken
       || providerKey.length < 16 || providerKey.length > 8192 || /\s/.test(providerKey)
       || !isValidReplyGateValue(replyGate)) throw new Error('WHATSAPP_AUTOMATION_STARTUP_SECRET_INVALID')
+    const startupPolicy = parseAutomaticReplyPolicy(automaticReplyPolicy)
+    if (startupPolicy.scope.account_id !== this.config.accountId
+      || startupPolicy.scope.inbox_id !== this.config.inboxId)
+      throw new Error('AUTOMATIC_REPLY_POLICY_SCOPE_MISMATCH')
     const pair = generateKeyPairSync('ed25519')
     const publicKey = pair.publicKey.export({ type: 'spki', format: 'pem' }).toString()
     const platform = productionPlatformConfig(this.config.accountId, this.config.inboxId)
@@ -163,8 +175,21 @@ export class WhatsAppAutomationService {
       await this.store.transition(event.event_id, 'pending', 'held', { stop_code: 'CONVERSATION_REQUIRES_HUMAN' })
       return
     }
-    if (!(await killSwitchAllows(this.config.killSwitchFile, this.config.expectedSecretGid))) {
+    if (!(await this.replyGateAllows())) {
       await this.store.transition(event.event_id, 'pending', 'held', { stop_code: 'AUTOMATION_KILL_SWITCH_ACTIVE' })
+      return
+    }
+    const entryPolicy = await this.automaticReplyPolicyDecision(event.account_id, event.inbox_id)
+    if (!entryPolicy.allowed || entryPolicy.policy === null) {
+      await this.store.transition(event.event_id, 'pending', 'held', { stop_code: entryPolicy.stop_code })
+      return
+    }
+    const sentSince = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    if (await this.store.automatedReplyCountSince(event.conversation_id, sentSince)
+      >= entryPolicy.policy.runtime_contract.maximum_automated_replies_per_conversation_per_24h) {
+      await this.store.transition(event.event_id, 'pending', 'held', {
+        stop_code: 'AUTOMATIC_REPLY_DAILY_LIMIT_REACHED',
+      })
       return
     }
     const first = await this.outbound.snapshot(event.conversation_id, event.message_id, event.content_sha256)
@@ -176,13 +201,39 @@ export class WhatsAppAutomationService {
     }
     await this.store.transition(event.event_id, 'pending', 'model_running')
     const reply = applyConversationGuardrails(first.target.content, await this.infer(event, first.transcript), first.transcript)
+    if (!automaticReplyResponseAllowed(reply.response, entryPolicy.policy)) {
+      await this.store.transition(event.event_id, 'model_running', 'held', {
+        response_sha256: digest(reply.response),
+        handoff_reason: reply.handoff_reason,
+        stop_code: 'AUTOMATIC_REPLY_RESPONSE_POLICY_REJECTED',
+      })
+      return
+    }
     await this.store.transition(event.event_id, 'model_running', 'ready', {
       response_sha256: digest(reply.response),
       handoff_reason: reply.handoff_reason,
       stop_code: 'MODEL_COMPLETED',
     })
-    if (!(await killSwitchAllows(this.config.killSwitchFile, this.config.expectedSecretGid))) {
+    if (!(await this.replyGateAllows())) {
       await this.store.transition(event.event_id, 'ready', 'held', { stop_code: 'AUTOMATION_KILL_SWITCH_ACTIVE' })
+      return
+    }
+    const sendPolicy = await this.automaticReplyPolicyDecision(event.account_id, event.inbox_id)
+    if (!sendPolicy.allowed || sendPolicy.policy === null) {
+      await this.store.transition(event.event_id, 'ready', 'held', { stop_code: sendPolicy.stop_code })
+      return
+    }
+    if (!automaticReplyResponseAllowed(reply.response, sendPolicy.policy)) {
+      await this.store.transition(event.event_id, 'ready', 'held', {
+        stop_code: 'AUTOMATIC_REPLY_RESPONSE_POLICY_REJECTED',
+      })
+      return
+    }
+    if (await this.store.automatedReplyCountSince(event.conversation_id, new Date(Date.now() - 24 * 60 * 60 * 1000))
+      >= sendPolicy.policy.runtime_contract.maximum_automated_replies_per_conversation_per_24h) {
+      await this.store.transition(event.event_id, 'ready', 'held', {
+        stop_code: 'AUTOMATIC_REPLY_DAILY_LIMIT_REACHED',
+      })
       return
     }
     const current = await this.outbound.snapshot(event.conversation_id, event.message_id, event.content_sha256)
@@ -192,8 +243,42 @@ export class WhatsAppAutomationService {
       })
       return
     }
+    if (!(await this.replyGateAllows())) {
+      await this.store.transition(event.event_id, 'ready', 'held', { stop_code: 'AUTOMATION_KILL_SWITCH_ACTIVE' })
+      return
+    }
+    const finalPolicy = await this.automaticReplyPolicyDecision(event.account_id, event.inbox_id)
+    if (!finalPolicy.allowed || finalPolicy.policy === null) {
+      await this.store.transition(event.event_id, 'ready', 'held', { stop_code: finalPolicy.stop_code })
+      return
+    }
+    if (!automaticReplyResponseAllowed(reply.response, finalPolicy.policy)) {
+      await this.store.transition(event.event_id, 'ready', 'held', {
+        stop_code: 'AUTOMATIC_REPLY_RESPONSE_POLICY_REJECTED',
+      })
+      return
+    }
+    if (await this.store.automatedReplyCountSince(event.conversation_id, new Date(Date.now() - 24 * 60 * 60 * 1000))
+      >= finalPolicy.policy.runtime_contract.maximum_automated_replies_per_conversation_per_24h) {
+      await this.store.transition(event.event_id, 'ready', 'held', {
+        stop_code: 'AUTOMATIC_REPLY_DAILY_LIMIT_REACHED',
+      })
+      return
+    }
     await this.store.transition(event.event_id, 'ready', 'sending')
     await this.deliver(event, reply)
+  }
+
+  private async replyGateAllows(): Promise<boolean> {
+    return killSwitchAllows(this.config.killSwitchFile, this.config.expectedSecretGid)
+  }
+
+  private async automaticReplyPolicyDecision(accountId: string, inboxId: string): Promise<{
+    allowed: boolean
+    stop_code: string
+    policy: Readonly<AutomaticReplyPolicy> | null
+  }> {
+    return loadAutomaticReplyPolicyDecision(this.config, accountId, inboxId)
   }
 
   private async deliver(event: Readonly<ReplyEventRecord>, reply: {
@@ -298,6 +383,30 @@ async function killSwitchAllows(path: string, expectedGid: number): Promise<bool
   try { return replyGateAllowsReplies(await readGroupSecretFile(path, expectedGid)) } catch { return false }
 }
 
+async function loadAutomaticReplyPolicyDecision(
+  config: Readonly<WhatsAppAutomationConfig>,
+  accountId: string,
+  inboxId: string,
+): Promise<{
+  allowed: boolean
+  stop_code: string
+  policy: Readonly<AutomaticReplyPolicy> | null
+}> {
+  try {
+    const policy = parseAutomaticReplyPolicy(await readGroupSecretFile(
+      config.automaticReplyPolicyFile,
+      config.expectedSecretGid,
+    ))
+    return decideAutomaticReplyPolicy(policy, accountId, inboxId)
+  } catch {
+    return Object.freeze({
+      allowed: false,
+      stop_code: 'AUTOMATIC_REPLY_POLICY_INVALID',
+      policy: null,
+    })
+  }
+}
+
 export function isValidReplyGateValue(value: string): boolean {
   return value === 'enabled' || value === 'disabled'
 }
@@ -332,6 +441,7 @@ function validateConfig(config: WhatsAppAutomationConfig): void {
     || config.expectedSecretGid !== 10000 || config.hermesCwd !== '/tmp'
     || config.httpProxy !== 'http://egress-proxy:3128'
     || config.noProxy !== 'proptimiza-chatwoot-web-1,localhost,127.0.0.1'
+    || config.automaticReplyPolicyFile !== '/run/controls/whatsapp-automatic-reply-policy.json'
     || !Number.isSafeInteger(config.childTimeoutSeconds) || config.childTimeoutSeconds < 10 || config.childTimeoutSeconds > 300
     || !Number.isSafeInteger(config.maximumOutputTokens) || config.maximumOutputTokens < 64 || config.maximumOutputTokens > 2000
     || config.maximumTotalTokens !== 8192 || config.maximumTotalTokens < config.maximumOutputTokens

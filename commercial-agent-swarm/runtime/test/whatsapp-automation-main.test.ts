@@ -20,6 +20,7 @@ function environment(): Record<string, string> {
     WHATSAPP_AUTOMATION_MAXIMUM_TOTAL_TOKENS: '8192',
     WHATSAPP_AUTOMATION_MAXIMUM_USD: '0.05',
     WHATSAPP_AUTOMATION_REPLY_GATE_FILE: '/run/controls/whatsapp-replies-enabled',
+    WHATSAPP_AUTOMATION_POLICY_FILE: '/run/controls/whatsapp-automatic-reply-policy.json',
   }
 }
 
@@ -28,13 +29,16 @@ test('loads only the pinned production topology and file-backed credentials', ()
   assert.equal(config.port, 8787)
   assert.equal(config.maximumTotalTokens, 8192)
   assert.equal(config.maximumUsd, 0.05)
+  assert.equal(config.automaticReplyPolicyFile, '/run/controls/whatsapp-automatic-reply-policy.json')
   assert.equal(Object.isFrozen(config), true)
 })
 test('rejects raw credentials and topology drift', () => {
   for (const patch of [
     { CHATWOOT_AGENT_BOT_TOKEN: 'not-allowed' }, { CHATWOOT_READER_TOKEN: 'not-allowed' },
+    { WHATSAPP_AUTOMATION_POLICY: '{"status":"active"}' },
     { CHATWOOT_API_BASE: 'https://chat.alam.cl' },
     { HTTP_PROXY: 'http://other:3128' }, { WHATSAPP_AUTOMATION_REPLY_GATE_FILE: '/tmp/enabled' },
+    { WHATSAPP_AUTOMATION_POLICY_FILE: '/tmp/policy.json' },
     { WHATSAPP_AUTOMATION_MAXIMUM_TOTAL_TOKENS: '8193' },
     { WHATSAPP_AUTOMATION_MAXIMUM_USD: '0.11' },
     { CHATWOOT_HANDOFF_TEAM_ID: '2' },

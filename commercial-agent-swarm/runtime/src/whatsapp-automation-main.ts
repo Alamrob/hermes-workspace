@@ -47,6 +47,8 @@ export function loadWhatsAppAutomationConfig(
       'WHATSAPP_AUTOMATION_BUDGET_INVALID'),
     killSwitchFile: secretPath(environment.WHATSAPP_AUTOMATION_REPLY_GATE_FILE,
       '/run/controls/whatsapp-replies-enabled', 'WHATSAPP_AUTOMATION_REPLY_GATE_FILE_INVALID'),
+    automaticReplyPolicyFile: secretPath(environment.WHATSAPP_AUTOMATION_POLICY_FILE,
+      '/run/controls/whatsapp-automatic-reply-policy.json', 'WHATSAPP_AUTOMATION_POLICY_FILE_INVALID'),
   }
   return Object.freeze(config)
 }
@@ -67,7 +69,7 @@ function assertIdentity(): void {
 
 function forbidRawSecrets(environment: Record<string, string | undefined>): void {
   for (const key of ['CHATWOOT_AGENT_BOT_SECRET', 'CHATWOOT_AGENT_BOT_TOKEN', 'CHATWOOT_READER_TOKEN',
-    'OPENCODE_GO_API_KEY'])
+    'OPENCODE_GO_API_KEY', 'WHATSAPP_AUTOMATION_POLICY'])
     if (environment[key] !== undefined) throw new Error(`WHATSAPP_AUTOMATION_RAW_SECRET_FORBIDDEN:${key}`)
 }
 function exact(value: string | undefined, expected: string, code: string): string {

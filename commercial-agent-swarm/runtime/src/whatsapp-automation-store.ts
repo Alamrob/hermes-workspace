@@ -135,10 +135,24 @@ export class WhatsAppReplyStore {
       const held = Object.values(this.state.events)
         .filter((entry) => entry.conversation_id === conversationId)
         .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-        .find((entry) => (['sent', 'held'].includes(entry.status)
+        .find((entry) => ['failed', 'uncertain'].includes(entry.status)
+          || (['sent', 'held'].includes(entry.status)
           && entry.handoff_reason !== null && entry.handoff_reason !== 'none')
-          || (entry.status === 'held' && entry.stop_code === 'HUMAN_REPLY_OBSERVED'))
+          || (entry.status === 'held' && ['HUMAN_REPLY_OBSERVED',
+            'AUTOMATIC_REPLY_RESPONSE_POLICY_REJECTED'].includes(entry.stop_code ?? '')))
       return held ? (held.handoff_reason ?? held.stop_code ?? 'CONVERSATION_HELD') : null
+    })
+  }
+
+  async automatedReplyCountSince(conversationId: string, since: Date): Promise<number> {
+    return this.exclusive(async () => {
+      if (!DECIMAL.test(conversationId) || !(since instanceof Date) || !Number.isFinite(since.getTime()))
+        throw new Error('WHATSAPP_REPLY_COUNT_QUERY_INVALID')
+      const threshold = since.toISOString()
+      return Object.values(this.state.events).filter((entry) => entry.conversation_id === conversationId
+        && entry.updated_at >= threshold
+        && (entry.outbound_message_id !== null || (entry.status === 'uncertain'
+          && ['CHATWOOT_SEND_UNCERTAIN', 'SEND_RESULT_UNCERTAIN_AFTER_RESTART'].includes(entry.stop_code ?? '')))).length
     })
   }
 
