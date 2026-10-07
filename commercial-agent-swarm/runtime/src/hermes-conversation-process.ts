@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { validateHermesUsage, type TrustedUsage } from './executor-contract.js'
-import { assertOpenCodeGoExecutionPreflight, priceOpenCodeGoUsage } from './opencode-go-pricing.js'
+import { validateHermesUsage, type ConversationTrustedUsage, type TrustedUsage } from './executor-contract.js'
+import { assertConversationPricingPreflight, priceConversationUsage } from './opencode-go-conversation-pricing.js'
 import { type ProcessInvocation, type ProcessRunner } from './hermes-executor.js'
 
 const SCHEMA = 'proptimiza-conversation-child.v1'
@@ -22,7 +22,7 @@ function childFailureCode(code: unknown): string {
 export interface ConversationProcessResult {
   executionState: 'not_started' | 'unknown' | 'finished'
   reply: RecordValue | null
-  usage: TrustedUsage | null
+  usage: ConversationTrustedUsage | TrustedUsage | null
   usageRecordId: string | null
   stopCode: string | null
   sendPermitted: false
@@ -103,8 +103,11 @@ export class HermesConversationProcess {
       if (!(signal instanceof AbortSignal) || typeof leaseLive !== 'function' ||
           !Number.isSafeInteger(reservation.maximum_tokens) || reservation.maximum_tokens < binding.maximumOutputTokens)
         throw Error('PERMIT_INVALID')
-      assertOpenCodeGoExecutionPreflight(reservation, this.clock())
-    } catch { return deny('HERMES_CONVERSATION_INPUT_INVALID') }
+      assertConversationPricingPreflight(reservation, this.clock())
+    } catch (error) {
+      return deny(error instanceof Error && error.message === 'OPENCODE_GO_CONVERSATION_PRICING_REVALIDATION_REQUIRED'
+        ? 'HERMES_CONVERSATION_PRICING_EXPIRED' : 'HERMES_CONVERSATION_INPUT_INVALID')
+    }
     let revoked = false
     const live = () => {
       try { revoked ||= signal.aborted || leaseLive() !== true } catch { revoked = true }
@@ -138,8 +141,8 @@ export class HermesConversationProcess {
         // Native usage export is not required to use this stdio JSON encoding.
         if (typeof value.native_usage_json !== 'string' || Buffer.byteLength(value.native_usage_json) > 8192) throw Error('USAGE_INVALID')
         const nativeUsage = JSON.parse(value.native_usage_json)
-        result.usage = validateHermesUsage(nativeUsage, reservation)
-        result.usage = priceOpenCodeGoUsage(result.usage, this.clock())
+        const trustedUsage = validateHermesUsage(nativeUsage, reservation, 'glm-5.3-flash')
+        result.usage = priceConversationUsage(trustedUsage, this.clock())
         if (typeof nativeUsage.session_id === 'string' && /^[A-Za-z0-9._:-]{1,256}$/.test(nativeUsage.session_id))
           result.usageRecordId = `opencode-session:${nativeUsage.session_id}`
       }

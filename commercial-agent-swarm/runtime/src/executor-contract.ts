@@ -78,6 +78,10 @@ export interface TrustedUsage {
       }
 }
 
+export type ConversationTrustedUsage = Omit<TrustedUsage, 'model'> & {
+  model: 'glm-5.3-flash'
+}
+
 export const MAX_RESERVED_TOKENS = 1_000_000
 export const MAX_RESERVED_API_CALLS = 100
 export const MAX_INSTRUCTION_CHARS = 16_384
@@ -973,7 +977,22 @@ function validApprovedPublicUrl(value: unknown): value is string {
 export function validateHermesUsage(
   value: unknown,
   reservation: { maximum_tokens: number; maximum_api_calls: number },
-): TrustedUsage {
+): TrustedUsage
+export function validateHermesUsage(
+  value: unknown,
+  reservation: { maximum_tokens: number; maximum_api_calls: number },
+  expectedModel: 'deepseek-v4-flash',
+): TrustedUsage
+export function validateHermesUsage(
+  value: unknown,
+  reservation: { maximum_tokens: number; maximum_api_calls: number },
+  expectedModel: 'glm-5.3-flash',
+): ConversationTrustedUsage
+export function validateHermesUsage(
+  value: unknown,
+  reservation: { maximum_tokens: number; maximum_api_calls: number },
+  expectedModel: 'deepseek-v4-flash' | 'glm-5.3-flash' = 'deepseek-v4-flash',
+): TrustedUsage | ConversationTrustedUsage {
   if (!validUsageReservation(reservation as unknown as Record<string, unknown>))
     invalid('INVALID_USAGE_RESERVATION')
   if (!isRecord(value)) invalid('HERMES_USAGE_SHAPE_INVALID')
@@ -1023,7 +1042,7 @@ export function validateHermesUsage(
   // with the reservation and settles the job as budget_exceeded; rejecting the
   // report here would discard known cost and incorrectly quarantine it as
   // usage_unknown.
-  if (value.model !== 'deepseek-v4-flash')
+  if (value.model !== expectedModel)
     invalid('HERMES_USAGE_MODEL_MISMATCH')
   if (value.provider !== 'opencode-go')
     invalid('HERMES_USAGE_PROVIDER_MISMATCH')
@@ -1096,7 +1115,7 @@ export function validateHermesUsage(
       total: Number(value.total_tokens),
     },
     api_calls: Number(value.api_calls),
-    model: 'deepseek-v4-flash',
+    model: expectedModel,
     provider: 'opencode-go',
     completed: true,
     failed: false,

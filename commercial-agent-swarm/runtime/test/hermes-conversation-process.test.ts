@@ -18,14 +18,14 @@ const request = { schema, scope, context_json: context, context_sha256: createHa
   turn_sha256: 'b'.repeat(64), maximum_output_tokens: 16, timeout_seconds: 2 }
 const raw = JSON.stringify(request)
 const usage = { input_tokens: 20, output_tokens: 10, cache_read_tokens: 0, cache_write_tokens: 0, reasoning_tokens: 0,
-  total_tokens: 30, api_calls: 1, model: 'deepseek-v4-flash', provider: 'opencode-go', completed: true, failed: false,
+  total_tokens: 30, api_calls: 1, model: 'glm-5.3-flash', provider: 'opencode-go', completed: true, failed: false,
   estimated_cost_usd: null, cost_status: 'unknown', cost_source: 'none', session_id: null, service_tier: null }
 function output() { return { schema, status: 'completed', execution_state: 'finished', native_usage_json: JSON.stringify(usage),
   reply: { conversation_key: key, last_message_id: '101', turn_sha256: request.turn_sha256, context_sha256: request.context_sha256,
     response: 'Respuesta ficticia.', fact_ids: ['fixture'], handoff_reason: 'none', send_permitted: false },
   transport_attempts: 1, stop_code: null } }
 const invocation = { command: '/synthetic', args: [], env: {}, uid: 10002, gid: 10002, shell: false as const, detached: true as const, cwd: '/synthetic' }
-const clock = () => new Date('2026-09-28T23:00:00Z')
+const clock = () => new Date('2026-10-07T01:00:00Z')
 const permit = () => ({ signal: new AbortController().signal, leaseLive: () => true, maximumTokens: 64, maximumUsd: .001 })
 const stub = (value: unknown): ProcessRunner => ({ async run() { return { stdout: JSON.stringify(value) + '\n', stderr: '', exitCode: 0 } } })
 
@@ -36,7 +36,7 @@ test('binds the child reply and prices native usage without authorizing delivery
   assert.equal(result.stopCode, null)
   assert.equal(result.executionState, 'finished')
   assert.equal(result.reply?.last_message_id, '101')
-  assert.equal(result.usage?.cost.usage_value_usd, .000009)
+  assert.equal(result.usage?.cost.usage_value_usd, .000008)
   assert.equal(result.usageRecordId, null)
   assert.equal(result.sendPermitted, false)
   assert.equal(call?.stdin, raw)
@@ -59,6 +59,15 @@ test('denies invalid input and a dead lease before the runner', async () => {
   }
   const result = await new HermesConversationProcess(runner, invocation, clock).run(raw, { ...permit(), leaseLive: () => false })
   assert.equal(result.executionState, 'not_started'); assert.equal(calls, 0)
+})
+test('expired conversation pricing stops before a model request with a specific code', async () => {
+  let calls = 0
+  const runner: ProcessRunner = { async run() { calls++; throw Error('unexpected model execution') } }
+  const expired = () => new Date('2026-11-06T00:00:00Z')
+  const result = await new HermesConversationProcess(runner, invocation, expired).run(raw, permit())
+  assert.equal(result.executionState, 'not_started')
+  assert.equal(result.stopCode, 'HERMES_CONVERSATION_PRICING_EXPIRED')
+  assert.equal(calls, 0)
 })
 test('revocation after child completion discards reply but retains known usage', async () => {
   let live = true
@@ -183,7 +192,7 @@ test('native Node parent invokes Python Hermes child with mock HTTP, then cancel
           assert.equal(result.stopCode, null, JSON.stringify({ result, diagnostic }))
           assert.equal(result.reply?.last_message_id, binding.transcript.messages.at(-1).message_id)
           assert.equal(result.usage?.tokens.total, 30)
-          assert.equal(result.usage?.cost.usage_value_usd, .000009)
+          assert.equal(result.usage?.cost.usage_value_usd, .000008)
           assert.equal(diagnostic?.phases.filter(code => code.startsWith('FIXTURE_MOCK_REQUEST_MS_')).length, 1)
           assert(diagnostic?.phases.some(code => code.startsWith('FIXTURE_CLOSED_MS_')))
         }

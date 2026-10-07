@@ -32,6 +32,8 @@ lo autoriza, declara el límite y deriva con missing_context sin reiniciar el di
 varios frentes, pregunta cuál es prioritario. No repitas datos ni preguntas.
 Devuelve únicamente un objeto JSON con response (texto), fact_ids (IDs de los hechos utilizados)
 y handoff_reason (none, missing_context, human_requested, sensitive_request u out_of_scope).
+Sin Markdown, comentarios ni texto antes o después. Formato exacto:
+{"response":"respuesta breve","fact_ids":[],"handoff_reason":"none"}.
 La respuesta será evaluada por el host; generarla no implica que se haya enviado.`
 
 export const conversationSha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')

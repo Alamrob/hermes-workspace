@@ -8,7 +8,7 @@ import hashlib
 import re
 
 PROVIDER = 'opencode-go'
-MODEL = 'deepseek-v4-flash'
+MODEL = 'glm-5.3-flash'
 BASE_URL = 'https://opencode.ai/zen/go/v1'
 SOURCE = 'proptimiza-whatsapp'
 _SCOPE_FIELDS = {'schema', 'source', 'gateway_session_key'}

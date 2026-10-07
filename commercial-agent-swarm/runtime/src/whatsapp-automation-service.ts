@@ -8,6 +8,7 @@ import { createChatwootWebhookAdapter } from './comms/chatwoot-webhook.js'
 import { liveBusinessContext } from './business/proptimiza-live-context.js'
 import { applyConversationGuardrails } from './business/conversation-guardrails.js'
 import { HermesConversationProcess } from './hermes-conversation-process.js'
+import { conversationPricingSnapshotState } from './opencode-go-conversation-pricing.js'
 import { NodeProcessRunner } from './hermes-executor.js'
 import { createPlatformAdmission } from './platform/admission.js'
 import { buildConversationTranscriptRequest, conversationAffinity } from './platform/conversation-request.js'
@@ -120,7 +121,8 @@ export class WhatsAppAutomationService {
       if (request.method === 'GET' && request.url === '/healthz') {
         const snapshot = this.store.snapshot()
         response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-        response.end(JSON.stringify({ status: this.stopping ? 'stopping' : 'ok', ...snapshot }))
+        response.end(JSON.stringify({ status: this.stopping ? 'stopping' : 'ok',
+          conversation_pricing_snapshot: conversationPricingSnapshotState(new Date()), ...snapshot }))
         return
       }
       void ingress(request, response)
@@ -453,5 +455,5 @@ function digest(value: string): string { return createHash('sha256').update(valu
 function safeCode(error: unknown): { code: string; uncertain: boolean } {
   const raw = error instanceof Error ? error.message : 'WHATSAPP_AUTOMATION_FAILED'
   const code = /^[A-Z][A-Z0-9_:-]{2,128}$/.test(raw) ? raw : 'WHATSAPP_AUTOMATION_FAILED'
-  return { code, uncertain: !/INVALID|REJECTED|DENIED|NOT_STARTED/.test(code) }
+  return { code, uncertain: !/INVALID|REJECTED|DENIED|NOT_STARTED|EXPIRED/.test(code) }
 }
