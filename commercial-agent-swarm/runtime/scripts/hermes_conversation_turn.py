@@ -116,6 +116,19 @@ def _json(raw, maximum):
         _deny()
 
 
+def _reply_json(raw, maximum):
+    if type(raw) is not bytes or not 1 <= len(raw) <= maximum:
+        _deny()
+    try:
+        text = raw.decode('utf-8').strip()
+    except UnicodeError:
+        _deny()
+    fenced = re.fullmatch(r'```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```', text)
+    if fenced is not None:
+        text = fenced.group(1).strip()
+    return _json(text.encode('utf-8'), maximum)
+
+
 def _encode(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
 
@@ -178,7 +191,10 @@ def prepare_conversation_turn(scope, context_bytes, transcript, *, expected_cont
 def bind_conversation_reply(turn, reply_bytes):
     if type(turn) is not PreparedTurn:
         _deny()
-    reply = _json(reply_bytes, 8192)
+    # GLM can wrap an otherwise exact object in one whole JSON fence. Accept
+    # only that bounded transport variation; never extract JSON from prose or
+    # multiple fences.
+    reply = _reply_json(reply_bytes, 8192)
     _closed(reply, ['response', 'fact_ids', 'handoff_reason'])
     _text(reply['response'], 2000)
     refs = reply['fact_ids']
