@@ -90,6 +90,25 @@ test('never fabricates zero usage for timeout, malformed output or a thrown runn
     assert(!JSON.stringify(result).includes('private'))
   }
 })
+test('maps closed child failures to diagnostic categories without exposing child text', async () => {
+  const cases = [
+    ['HERMES_CONVERSATION_INPUT_INVALID', 'HERMES_CHILD_INPUT_REJECTED'],
+    ['HERMES_CONVERSATION_MODEL_FAILED', 'HERMES_CHILD_MODEL_REJECTED'],
+    ['HERMES_CONVERSATION_EXECUTION_FAILED', 'HERMES_CHILD_EXECUTION_REJECTED'],
+    ['HERMES_CONVERSATION_RESULT_INVALID', 'HERMES_CHILD_RESULT_REJECTED'],
+    ['HERMES_CONVERSATION_REPLAY_DENIED', 'HERMES_CHILD_TRANSPORT_REJECTED'],
+    ['HERMES_CONVERSATION_LEASE_EXPIRED', 'HERMES_CONVERSATION_LEASE_EXPIRED'],
+    ['PRIVATE_FREE_FORM', 'HERMES_CONVERSATION_CHILD_REJECTED'],
+  ] as const
+  for (const [childCode, expected] of cases) {
+    const value = { ...output(), status: 'failed', execution_state: 'unknown', reply: null,
+      native_usage_json: null, transport_attempts: 1, stop_code: childCode }
+    const result = await new HermesConversationProcess(stub(value), invocation, clock).run(raw, permit())
+    assert.equal(result.stopCode, expected)
+    assert.equal(result.reply, null)
+    assert.equal(JSON.stringify(result).includes('PRIVATE_FREE_FORM'), false)
+  }
+})
 test('bridges lease loss and AbortSignal to the process runner without retry', async () => {
   for (const external of [false, true]) {
     const controller = new AbortController(); let live = true, calls = 0
@@ -177,7 +196,7 @@ test('native Node parent invokes Python Hermes child with mock HTTP, then cancel
             ...nativeInvocation, args: ['-B', resolve('scripts/hermes_conversation_child.py')],
           }, clock).run(JSON.stringify({ ...binding, turn_sha256: 'f'.repeat(64) }), { ...permit(), maximumTokens: 128 })
           assert.equal(rejected.executionState, 'not_started')
-          assert.equal(rejected.stopCode, 'HERMES_CONVERSATION_CHILD_REJECTED')
+          assert.equal(rejected.stopCode, 'HERMES_CHILD_INPUT_REJECTED')
           assert.equal(rejected.usage, null); assert.equal(rejected.reply, null)
         }
       } finally { await rm(home, { recursive: true, force: true }) }

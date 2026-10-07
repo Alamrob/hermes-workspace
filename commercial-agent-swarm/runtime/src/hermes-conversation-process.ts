@@ -5,6 +5,20 @@ import { type ProcessInvocation, type ProcessRunner } from './hermes-executor.js
 
 const SCHEMA = 'proptimiza-conversation-child.v1'
 type RecordValue = Record<string, any>
+
+function childFailureCode(code: unknown): string {
+  if (code === 'HERMES_CONVERSATION_INPUT_INVALID') return 'HERMES_CHILD_INPUT_REJECTED'
+  if (code === 'HERMES_CONVERSATION_MODEL_FAILED') return 'HERMES_CHILD_MODEL_REJECTED'
+  if (['HERMES_CONVERSATION_CHILD_FAILED', 'HERMES_CONVERSATION_EXECUTION_FAILED'].includes(String(code)))
+    return 'HERMES_CHILD_EXECUTION_REJECTED'
+  if (['HERMES_CONVERSATION_ATTEMPT_INVALID', 'HERMES_CONVERSATION_RESULT_INVALID',
+    'HERMES_CONVERSATION_CLEANUP_FAILED'].includes(String(code))) return 'HERMES_CHILD_RESULT_REJECTED'
+  if (['HERMES_CONVERSATION_CLIENT_DENIED', 'HERMES_CONVERSATION_REQUEST_DENIED',
+    'HERMES_CONVERSATION_REPLAY_DENIED'].includes(String(code))) return 'HERMES_CHILD_TRANSPORT_REJECTED'
+  if (code === 'HERMES_CONVERSATION_LEASE_EXPIRED') return code
+  return 'HERMES_CONVERSATION_CHILD_REJECTED'
+}
+
 export interface ConversationProcessResult {
   executionState: 'not_started' | 'unknown' | 'finished'
   reply: RecordValue | null
@@ -130,7 +144,7 @@ export class HermesConversationProcess {
           result.usageRecordId = `opencode-session:${nativeUsage.session_id}`
       }
       if (!live()) return deny('HERMES_CONVERSATION_LEASE_EXPIRED')
-      if (value.status !== 'completed') return deny('HERMES_CONVERSATION_CHILD_REJECTED')
+      if (value.status !== 'completed') return deny(childFailureCode(value.stop_code))
       if (value.stop_code !== null || value.execution_state !== 'finished' || value.transport_attempts !== 1 || !result.usage)
         throw Error('PROTOCOL_INVALID')
       const reply = value.reply
