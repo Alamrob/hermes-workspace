@@ -41,6 +41,8 @@ lo autoriza, declara el límite y deriva con missing_context sin reiniciar el di
 varios frentes, pregunta cuál es prioritario. No repitas datos ni preguntas.
 Devuelve únicamente un objeto JSON con response (texto), fact_ids (IDs de los hechos utilizados)
 y handoff_reason (none, missing_context, human_requested, sensitive_request u out_of_scope).
+Sin Markdown, comentarios ni texto antes o después. Formato exacto:
+{"response":"respuesta breve","fact_ids":[],"handoff_reason":"none"}.
 La respuesta será evaluada por el host; generarla no implica que se haya enviado.'''
 
 
@@ -123,10 +125,23 @@ def _reply_json(raw, maximum):
         text = raw.decode('utf-8').strip()
     except UnicodeError:
         _deny()
-    fenced = re.fullmatch(r'```(?:json)?[\t ]*\r?\n([\s\S]*?)\r?\n```', text)
+    # Accept one whole fence even when the provider omits the conventional
+    # newline immediately after the language tag or before the closing fence.
+    # The entire response must still be the fence: prose and multiple fences
+    # remain invalid.
+    fenced = re.fullmatch(
+        r'```(?:(?i:json))?[\t ]*(?:\r?\n)?([\s\S]*?)(?:\r?\n)?```', text)
     if fenced is not None:
         text = fenced.group(1).strip()
-    return _json(text.encode('utf-8'), maximum)
+    value = _json(text.encode('utf-8'), maximum)
+    # Some OpenAI-compatible transports serialize the assistant's JSON object
+    # once more as a JSON string. Unwrap exactly one complete JSON string, then
+    # apply the same strict object validation in bind_conversation_reply. Never
+    # search for braces or extract an object from surrounding prose.
+    if type(value) is str:
+        nested = value.strip()
+        value = _json(nested.encode('utf-8'), maximum)
+    return value
 
 
 def _encode(value):

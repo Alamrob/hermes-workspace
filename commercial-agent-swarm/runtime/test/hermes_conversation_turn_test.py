@@ -42,18 +42,28 @@ class HermesConversationTurnTest(unittest.TestCase):
             'handoff_reason': 'none',
         }, ensure_ascii=False, separators=(',', ':'))
 
-    def test_accepts_raw_json_and_one_whole_json_fence(self):
+    def test_accepts_raw_json_and_bounded_transport_variants(self):
         raw = bind_conversation_reply(self.turn, self.reply.encode('utf-8'))
-        fenced = bind_conversation_reply(
-            self.turn, f'```json\n{self.reply}\n```'.encode('utf-8'))
-        self.assertEqual(raw, fenced)
-        self.assertFalse(fenced.send_permitted)
+        variants = [
+            f'```json\n{self.reply}\n```',
+            f'```json\n{self.reply}```',
+            f'```JSON{self.reply}```',
+            f'```{self.reply}```',
+            json.dumps(self.reply, ensure_ascii=False),
+        ]
+        for value in variants:
+            with self.subTest(value=value[:24]):
+                bound = bind_conversation_reply(self.turn, value.encode('utf-8'))
+                self.assertEqual(raw, bound)
+                self.assertFalse(bound.send_permitted)
 
     def test_rejects_wrapping_prose_multiple_fences_and_malformed_json(self):
         values = [
             f'Resultado:\n```json\n{self.reply}\n```',
             f'```json\n{self.reply}\n```\n```json\n{self.reply}\n```',
             '```json\n{"response":\n```',
+            json.dumps(json.dumps(self.reply)),
+            json.dumps(f'Resultado: {self.reply}'),
         ]
         for value in values:
             with self.subTest(value=value[:16]):
