@@ -162,9 +162,19 @@ def _create_guarded_agent(scope, options, guard):
 
     agent = BoundAgent(**kwargs)
     try:
+        # This bounded child has one provider-call reservation. Disable the
+        # streaming transport because it owns a separate reconnect loop, then
+        # pin the ordinary application retry loop to one total attempt. The
+        # OpenAI SDK layer is already pinned above.
+        agent._disable_streaming = True
+        agent._api_max_retries = 1
         assert_bound_agent(agent, scope)
         if agent.tools != []:
             raise ValueError('HERMES_CONVERSATION_TOOLS_DENIED')
+        if agent._disable_streaming is not True:
+            raise ValueError('HERMES_CONVERSATION_STREAM_GUARD_DRIFT')
+        if agent._api_max_retries != 1:
+            raise ValueError('HERMES_CONVERSATION_RETRY_GUARD_DRIFT')
         return agent
     except BaseException:
         agent.close()
